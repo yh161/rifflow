@@ -30,51 +30,65 @@ interface UpstreamNodeInternal extends UpstreamNode {
 export function useUpstreamNodes(nodeId: string): UpstreamNode[] {
   const { getNodes, getEdges } = useReactFlow()
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
+  const [upstreamList, setUpstreamList] = useState<UpstreamNodeInternal[]>([])
   
-  // Get fresh nodes and edges from ReactFlow instance
-  const nodes = getNodes()
-  const edges = getEdges()
-
-  // Find upstream nodes (nodes that connect TO this node)
-  const upstreamList = useMemo((): UpstreamNodeInternal[] => {
-    if (!nodeId) return []
-    
-    // Find edges where target is this node
-    const incomingEdges = edges.filter((e) => e.target === nodeId)
-    
-    // Get unique source node IDs
-    const sourceIds = [...new Set(incomingEdges.map((e) => e.source))]
-    
-    // Find source nodes and build upstream list
-    const result: UpstreamNodeInternal[] = []
-    
-    for (const sourceId of sourceIds) {
-      const node = nodes.find((n) => n.id === sourceId)
-      if (!node) continue
-      
-      const data = node.data as CustomNodeData
-      const nodeType = data.type || 'text'
-      
-      // Determine if this node has meaningful output
-      const hasOutput = !!(
-        data.src ||           // Image node with image
-        data.videoSrc ||      // Video node with video
-        data.content ||       // Text node with content
-        data.type === 'seed'  // Seed node always has potential output
-      )
-      
-      result.push({
-        id: node.id,
-        type: nodeType as UpstreamNode['type'],
-        label: data.label || nodeType,
-        thumbnail: null, // Will be populated async
-        hasOutput,
-        _src: data.src || data.videoPoster,
-      })
+  // Use effect to avoid infinite re-renders - poll for changes
+  useEffect(() => {
+    if (!nodeId) {
+      setUpstreamList([])
+      return
     }
     
-    return result
-  }, [nodeId, nodes, edges])
+    // Function to compute upstream nodes
+    const computeUpstream = () => {
+      const nodes = getNodes()
+      const edges = getEdges()
+      
+      // Find edges where target is this node
+      const incomingEdges = edges.filter((e: Edge) => e.target === nodeId)
+      
+      // Get unique source node IDs
+      const sourceIds = [...new Set(incomingEdges.map((e: Edge) => e.source))]
+      
+      // Find source nodes and build upstream list
+      const result: UpstreamNodeInternal[] = []
+      
+      for (const sourceId of sourceIds) {
+        const node = nodes.find((n: Node) => n.id === sourceId)
+        if (!node) continue
+        
+        const data = node.data as CustomNodeData
+        const nodeType = data.type || 'text'
+        
+        // Determine if this node has meaningful output
+        const hasOutput = !!(
+          data.src ||           // Image node with image
+          data.videoSrc ||      // Video node with video
+          data.content ||       // Text node with content
+          data.type === 'seed'  // Seed node always has potential output
+        )
+        
+        result.push({
+          id: node.id,
+          type: nodeType as UpstreamNode['type'],
+          label: data.label || nodeType,
+          thumbnail: null, // Will be populated async
+          hasOutput,
+          _src: data.src || data.videoPoster,
+        })
+      }
+      
+      setUpstreamList(result)
+    }
+    
+    // Compute immediately
+    computeUpstream()
+    
+    // Set up polling to detect changes
+    const interval = setInterval(computeUpstream, 500)
+    
+    return () => clearInterval(interval)
+  }, [nodeId, getNodes, getEdges])
 
   // Async: generate thumbnails for image nodes
   useEffect(() => {
