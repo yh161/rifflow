@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { JobService } from "@/app/services/job.service"
+import { resolvePromptToMultimodal } from "@/lib/prompt-resolver"
 import type { MultimodalContent } from "@/lib/prompt-resolver"
+import type { UpstreamNodeData } from "@/hooks/useUpstreamData"
 
 // ─────────────────────────────────────────────
 // POST /api/jobs
@@ -18,7 +20,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { nodeId, nodeType, prompt, content, model } = await req.json()
+    const { nodeId, nodeType, prompt, content, model, upstreamData } = await req.json()
 
     // Support both legacy string prompt and new multimodal content format
     const hasContent = content && Array.isArray(content) && content.length > 0
@@ -33,7 +35,12 @@ export async function POST(req: NextRequest) {
     if (hasContent) {
       normalizedContent = content as MultimodalContent[]
     } else if (typeof prompt === "string") {
-      normalizedContent = [{ type: "text", text: prompt }]
+      // Resolve {{nodeId}} references if upstreamData is provided
+      if (upstreamData && Array.isArray(upstreamData) && upstreamData.length > 0) {
+        normalizedContent = await resolvePromptToMultimodal(prompt, upstreamData as UpstreamNodeData[])
+      } else {
+        normalizedContent = [{ type: "text", text: prompt }]
+      }
     } else {
       normalizedContent = prompt as MultimodalContent[]
     }

@@ -22,6 +22,7 @@ import { useStore, useNodes, useReactFlow } from "reactflow"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CustomNodeData } from "../modules/_types"
+import { useUpstreamData } from "@/hooks/useUpstreamData"
 
 import { NodeActionBar }                          from "./_action_bar"
 import { GeneratingOverlay }                      from "./_overlay"
@@ -75,6 +76,9 @@ export function NodeEditor({
 
   const node = nodes.find((n) => n.id === nodeId)
   const data = node?.data as CustomNodeData | undefined
+
+  // ── Upstream data for resolving {{nodeId}} references ──
+  const upstreamData = useUpstreamData(nodeId)
 
   // ── Mode toggle ──────────────────────────────
   const [mode, setMode] = useState<NodeMode>(() => (data?.mode ?? "manual") as NodeMode)
@@ -270,6 +274,7 @@ export function NodeEditor({
             nodeType: data?.type ?? "text",
             prompt,
             model,
+            upstreamData,
           }),
         })
         const json = await res.json()
@@ -293,7 +298,7 @@ export function NodeEditor({
         stopGenerating()
       }
     },
-    [nodeId, data?.type, setNodes, startPolling, stopGenerating],
+    [nodeId, data?.type, setNodes, startPolling, stopGenerating, upstreamData],
   )
 
   const handleStopGenerate = useCallback(() => {
