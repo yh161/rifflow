@@ -153,6 +153,7 @@ function ContainerActionBar({
   onDeleteInstance,
   onGoTo,
   nodeType,
+  isGenerating,
 }: {
   instanceCount: number
   currentInstance: number
@@ -161,6 +162,7 @@ function ContainerActionBar({
   onDeleteInstance: () => void
   onGoTo: (idx: number) => void
   nodeType: "batch" | "cycle"
+  isGenerating?: boolean
 }) {
   const isTemplate = currentInstance === -1
   const total      = instanceCount
@@ -191,6 +193,22 @@ function ContainerActionBar({
       {children}
     </button>
   )
+
+  // ── Generating state — show running indicator ──
+  if (isGenerating) {
+    return (
+      <>
+        <ActionButton
+          icon={Play}
+          label="Generating..."
+          disabled={true}
+          className={nodeType === "batch" ? "text-indigo-500" : "text-violet-500"}
+        />
+        <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
+        <ActionButton icon={Trash2} label={releaseLabel} onClick={onRelease} danger />
+      </>
+    )
+  }
 
   // ── State 1: Template view, zero instances — minimal bar ──
   if (isTemplate && total === 0) {
@@ -405,6 +423,7 @@ export function NodeActionBar({
           onDeleteInstance={onLoopDeleteInstance ?? (() => {})}
           onGoTo={onLoopGoTo ?? (() => {})}
           nodeType={data.type as "batch" | "cycle"}
+          isGenerating={isExecuting}
         />
       )}
 

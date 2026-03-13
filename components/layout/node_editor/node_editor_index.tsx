@@ -18,7 +18,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from "react"
-import { useStore, useNodes, useReactFlow } from "reactflow"
+import { useStore, useNodes, useReactFlow, type Node, type Edge } from "reactflow"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CustomNodeData } from "../modules/_types"
@@ -69,7 +69,7 @@ export function NodeEditor({
   onLoopRelease,
 }: NodeEditorProps) {
   const nodes        = useNodes()
-  const { setNodes, getEdges } = useReactFlow()
+  const { setNodes, getNodes, getEdges } = useReactFlow()
   const edges = getEdges()
   const transform    = useStore((s) => s.transform)
   const [tx, ty, zoom] = transform
@@ -106,6 +106,17 @@ export function NodeEditor({
   const [isExecutingWorkflow, setIsExecutingWorkflow] = useState(false)
   const workflowPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const workflowJobRef  = useRef<string | null>(null)
+
+  // ── Batch generation state ───────────────────
+  const [isBatchGenerating, setIsBatchGenerating] = useState(false)
+  const batchAbortRef = useRef<AbortController | null>(null)
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 })
+
+  // ── Refs for accessing latest nodes/edges in async operations ──
+  const getNodesRef = useRef(() => getNodes())
+  const getEdgesRef = useRef(() => getEdges())
+  getNodesRef.current = () => getNodes()
+  getEdgesRef.current = () => getEdges()
 
   // ── Cleanup on unmount ───────────────────────
   useEffect(() => () => {
@@ -686,10 +697,222 @@ export function NodeEditor({
     }
   }, [node, data?.type, nodeId, nodes, edges, startWorkflowPolling])
 
+  // ── Batch generation with auto-execution ─────────────────────
+  /**
+   * Batch auto-generation logic:
+   * 1. Call batch API to get seeds from LLM
+   * 2. For each seed:
+   *    - Call onLoopAddInstance (reuses manual creation logic)
+   *    - Fill the seed node with generated content
+   *    - Execute the subflow using workflow service
+   * 
+   * This approach reuses the proven manual instance creation logic
+   * to avoid conflicts with existing action bar functionality.
+   */
+  const handleBatchGenerate = useCallback(async (prompt: string, model: string, params: Record<string, string>) => {
+    if (!node || data?.type !== "batch") return
+
+    const maxInstances = parseInt(params.instanceMax || "3", 10)
+
+    // Abort any previous batch generation
+    if (batchAbortRef.current) {
+      batchAbortRef.current.abort()
+    }
+    batchAbortRef.current = new AbortController()
+    const abortSignal = batchAbortRef.current.signal
+
+    setIsBatchGenerating(true)
+    setBatchProgress({ current: 0, total: 0 })
+
+    try {
+      // Step 0: Call batch API to get seeds
+      const batchRes = await fetch("/api/execute/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          model,
+          maxInstances,
+          upstreamContent: upstreamData.map(u => u.content).join("\n"),
+        }),
+        signal: abortSignal,
+      })
+
+      if (!batchRes.ok) {
+        const err = await batchRes.json()
+        throw new Error(err.error || `Batch API error ${batchRes.status}`)
+      }
+
+      const batchResult = await batchRes.json() as {
+        count: number
+        seeds: Array<{ content: string; description?: string }>
+      }
+
+      const seeds = batchResult.seeds
+      if (!seeds || seeds.length === 0) {
+        throw new Error("No seeds generated")
+      }
+
+      setBatchProgress({ current: 0, total: seeds.length })
+
+      // Step 1-3: For each seed, create instance, fill seed, execute subflow
+      for (let i = 0; i < seeds.length; i++) {
+        if (abortSignal.aborted) break
+
+        const seed = seeds[i]
+
+        // Step 1: Create instance using the same logic as manual "Add instance" button
+        // This ensures all the existing logic (node cloning, edge cloning, visibility) works correctly
+        onLoopAddInstance?.(nodeId)
+
+        // Wait for React to render the new instance and update refs
+        await new Promise(r => setTimeout(r, 100))
+
+        // Get the latest nodes/edges from refs (they're updated by handleLoopAddInstance)
+        const currentNodes = getNodesRef.current()
+        const currentEdges = getEdgesRef.current()
+
+        // Find the batch node to get current instance index
+        const batchNode = currentNodes.find((n: Node) => n.id === nodeId)
+        if (!batchNode) continue
+
+        // The new instance index (handleLoopAddInstance sets currentInstance to newIdx)
+        const instanceIdx = batchNode.data?.currentInstance ?? i
+
+        // Find the seed node in the current instance (seed is auto-created with isSeed flag)
+        const seedNode = currentNodes.find((n: Node) =>
+          n.data?.loopId === nodeId &&
+          n.data?.instanceIdx === instanceIdx &&
+          n.data?.type === "seed"
+        )
+
+        if (seedNode) {
+          // Step 2: Fill seed content with generated content
+          setNodes((ns) => ns.map((n: Node) => {
+            if (n.id !== seedNode.id) return n
+            return {
+              ...n,
+              data: { ...n.data, content: seed.content }
+            }
+          }))
+        } else {
+          console.warn(`[batch] No seed node found for instance ${instanceIdx}`)
+        }
+
+        // Wait for seed content to be applied
+        await new Promise(r => setTimeout(r, 50))
+
+        // Step 3: Execute the subflow for this instance
+        // Get fresh nodes/edges after seed update
+        const latestNodes = getNodesRef.current()
+        const latestEdges = getEdgesRef.current()
+
+        // Find all nodes and edges in this instance
+        const instanceNodes = latestNodes.filter((n: Node) =>
+          n.data?.loopId === nodeId && n.data?.instanceIdx === instanceIdx
+        )
+        const instanceNodeIds = new Set(instanceNodes.map((n: Node) => n.id))
+        const instanceEdges = latestEdges.filter((e: Edge) =>
+          instanceNodeIds.has(e.source) && instanceNodeIds.has(e.target)
+        )
+
+        if (instanceNodes.length > 0) {
+          // Execute workflow for this instance using the workflow service
+          try {
+            const wfRes = await fetch("/api/execute/workflow", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                lassoNodeId: `${nodeId}-instance-${instanceIdx}`,
+                nodes: instanceNodes,
+                edges: instanceEdges,
+              }),
+              signal: abortSignal,
+            })
+
+            if (!wfRes.ok) {
+              const err = await wfRes.json()
+              throw new Error(err.error || `Workflow error ${wfRes.status}`)
+            }
+
+            const { workflowJobId } = await wfRes.json()
+
+            // Poll for workflow completion
+            await pollWorkflowToCompletion(workflowJobId, abortSignal)
+
+          } catch (wfErr) {
+            console.error(`[batch] Instance ${instanceIdx + 1} workflow failed:`, wfErr)
+            // Continue with next instance even if this one failed
+          }
+        }
+
+        setBatchProgress({ current: i + 1, total: seeds.length })
+      }
+
+    } catch (err) {
+      console.error("[batch] generation failed:", err)
+    } finally {
+      setIsBatchGenerating(false)
+      batchAbortRef.current = null
+    }
+  }, [node, data?.type, nodeId, upstreamData, onLoopAddInstance, setNodes])
+
+  /**
+   * Poll workflow until completion or failure
+   */
+  const pollWorkflowToCompletion = async (workflowJobId: string, abortSignal: AbortSignal): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const checkStatus = async () => {
+        if (abortSignal.aborted) {
+          reject(new Error("Aborted"))
+          return
+        }
+
+        try {
+          const statusRes = await fetch(`/api/execute/workflow?workflowJobId=${workflowJobId}`, { signal: abortSignal })
+          if (!statusRes.ok) {
+            reject(new Error("Failed to check workflow status"))
+            return
+          }
+          const status = await statusRes.json()
+
+          if (status.status === "completed") {
+            // Apply results to nodes
+            if (status.results) {
+              setNodes((ns) => ns.map((n) => {
+                const nodeResult = status.results[n.id]
+                if (!nodeResult) return n
+                return { ...n, data: { ...n.data, ...nodeResult, isGenerating: false } }
+              }))
+            }
+            resolve()
+          } else if (status.status === "failed") {
+            reject(new Error(status.error || "Workflow failed"))
+          } else {
+            // Still running, check again after delay
+            setTimeout(checkStatus, POLL_INTERVAL_MS)
+          }
+        } catch (e) {
+          reject(e)
+        }
+      }
+      checkStatus()
+    })
+  }
+
+  const handleStopBatch = useCallback(() => {
+    if (batchAbortRef.current) {
+      batchAbortRef.current.abort()
+      batchAbortRef.current = null
+    }
+    setIsBatchGenerating(false)
+  }, [])
+
   // Cleanup workflow polling on unmount
   useEffect(() => {
     return () => {
       if (workflowPollRef.current) clearInterval(workflowPollRef.current)
+      if (batchAbortRef.current) batchAbortRef.current.abort()
     }
   }, [])
 
@@ -807,6 +1030,19 @@ export function NodeEditor({
         {(() => {
           const mod = MODULE_BY_ID[data.type]
           if (!mod?.ModalContent) return null
+          
+          // For batch nodes, use the batch-specific generation handler
+          const isBatch = data.type === 'batch'
+          const generationProps = isBatch ? {
+            isGenerating: isBatchGenerating,
+            onGenerate: handleBatchGenerate,
+            onStop: handleStopBatch,
+          } : {
+            isGenerating,
+            onGenerate: handleStartGenerate,
+            onStop: handleStopGenerate,
+          }
+          
           return (
             <mod.ModalContent
               key={nodeId}
@@ -816,9 +1052,7 @@ export function NodeEditor({
               onClose={onClose}
               onDelete={() => handleDeleteNode()}
               mode={mode}
-              isGenerating={isGenerating}
-              onGenerate={handleStartGenerate}
-              onStop={handleStopGenerate}
+              {...generationProps}
             />
           )
         })()}
@@ -828,14 +1062,14 @@ export function NodeEditor({
       {/* Release confirmation dialog */}
       {showReleaseConfirm && (
         <div
-          className="absolute z-[600] pointer-events-auto"
+          className="absolute z-[800] pointer-events-auto max-w-[400px]"
           style={{
-            left: centerX, top: actionBarBottom - 8,
+            left: centerX, top: actionBarBottom + 8,
             transform: "translate(-50%, -100%)",
           }}
         >
           <div
-            className="bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/80 p-4 min-w-[300px]"
+            className="bg-white/95 backdrop-blur-md rounded-xl border border-slate-200/80 p-4 min-w-[300px]"
             style={{ animation: "pickerIn 150ms ease-out both" }}
           >
             <style>{`
