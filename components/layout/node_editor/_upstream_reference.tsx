@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useMemo, useState, useEffect, useCallback } from "react"
-import { useNodes, useEdges } from "reactflow"
+import { useReactFlow, type Node, type Edge } from "reactflow"
 import { cn } from "@/lib/utils"
 import { getThumbnail, getTypeColor } from "@/lib/image-compress"
 import type { CustomNodeData } from "../modules/_types"
@@ -28,12 +28,17 @@ interface UpstreamNodeInternal extends UpstreamNode {
 // ─────────────────────────────────────────────
 
 export function useUpstreamNodes(nodeId: string): UpstreamNode[] {
-  const nodes = useNodes()
-  const edges = useEdges()
+  const { getNodes, getEdges } = useReactFlow()
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
+  
+  // Get fresh nodes and edges from ReactFlow instance
+  const nodes = getNodes()
+  const edges = getEdges()
 
   // Find upstream nodes (nodes that connect TO this node)
   const upstreamList = useMemo((): UpstreamNodeInternal[] => {
+    if (!nodeId) return []
+    
     // Find edges where target is this node
     const incomingEdges = edges.filter((e) => e.target === nodeId)
     

@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useLayoutEffect, useCallback } from "react"
+import { useReactFlow } from "reactflow"
 import { Sparkles, Zap, RefreshCw, Square, Bot, Hand, ChevronUp, Infinity, Hash } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {

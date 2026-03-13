@@ -161,7 +161,7 @@ export class WorkflowEngine {
               }
             }
           } else {
-            console.error(`[WorkflowEngine] Node ${nodeId} execution failed:`, result.error || "Unknown error")
+            console.error(`[WorkflowEngine] Node ${nodeId} execution failed:`, (result as any).error || "Unknown error")
             failed.add(nodeId)
           }
         }).catch((err) => {
