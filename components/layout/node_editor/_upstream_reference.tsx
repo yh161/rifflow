@@ -151,6 +151,9 @@ export function UpstreamReference({
 }: UpstreamReferenceProps) {
   const upstreamNodes = useUpstreamNodes(nodeId)
 
+  // Debug logging
+  console.log('[UpstreamReference] nodeId:', nodeId, 'upstreamNodes:', upstreamNodes)
+
   // No upstream nodes → don't render
   if (upstreamNodes.length === 0) return null
 

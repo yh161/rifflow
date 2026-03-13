@@ -706,6 +706,7 @@ export function NodeEditor({
           return (
             <mod.ModalContent
               key={nodeId}
+              nodeId={nodeId}
               data={data as any}
               onUpdate={handleUpdate}
               onClose={onClose}
