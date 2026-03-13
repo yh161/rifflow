@@ -133,7 +133,7 @@ export function useNodeOperations(canvasState: CanvasState) {
 
     removeGhost()
 
-    if (type === "batch" || type === "cycle") {
+    if (type === "batch" || type === "cycle" || type === "lasso") {
       setNodes((nds) => nds.map((n) => n.selected ? { ...n, selected: false } : n))
       clearQuickAddMenu()
       return
@@ -241,7 +241,7 @@ export function useNodeOperations(canvasState: CanvasState) {
     position: { x: number; y: number },
     onActiveTool: (tool: string | null) => void,
   ) => {
-    if (type === "batch" || type === "cycle") return
+    if (type === "batch" || type === "cycle" || type === "lasso") return
 
     const mod = MODULE_BY_ID[type]
     onActiveTool(null)
@@ -251,9 +251,9 @@ export function useNodeOperations(canvasState: CanvasState) {
       const id = `${type}-${Date.now()}`
       setNodes((nds) => nds.concat({
         id,
-        type: type === "batch" ? "BatchNode" : type === "cycle" ? "CycleNode" : "CustomNode",
+        type: type === "batch" ? "BatchNode" : type === "cycle" ? "CycleNode" : type === "lasso" ? "LassoNode" : "CustomNode",
         position: centeredPos,
-        ...(( type === "batch" || type === "cycle") && { style: { width: mod?.defaultData?.width ?? 520, height: mod?.defaultData?.height ?? 400 }, zIndex: -1 }),
+        ...(( type === "batch" || type === "cycle" || type === "lasso") && { style: { width: mod?.defaultData?.width ?? 520, height: mod?.defaultData?.height ?? 400 }, zIndex: -1 }),
         data: { ...mod?.defaultData, type: type as any },
       }))
       setEditorNodeId(id)

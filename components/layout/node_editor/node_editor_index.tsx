@@ -68,7 +68,8 @@ export function NodeEditor({
   onLoopRelease,
 }: NodeEditorProps) {
   const nodes        = useNodes()
-  const { setNodes } = useReactFlow()
+  const { setNodes, getEdges } = useReactFlow()
+  const edges = getEdges()
   const transform    = useStore((s) => s.transform)
   const [tx, ty, zoom] = transform
 
@@ -96,6 +97,11 @@ export function NodeEditor({
   const genTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
   const activeJobRef  = useRef<string | null>(null) // jobId currently being polled
+
+  // ── Workflow execution state (for lasso) ─────
+  const [isExecutingWorkflow, setIsExecutingWorkflow] = useState(false)
+  const workflowPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const workflowJobRef  = useRef<string | null>(null)
 
   // ── Cleanup on unmount ───────────────────────
   useEffect(() => () => {
@@ -495,6 +501,94 @@ export function NodeEditor({
     a.click()
   }, [data?.type, data?.videoSrc, data?.src, data?.fileName])
 
+  // ── Lasso workflow execution ─────────────────
+  const stopWorkflowPolling = useCallback(() => {
+    if (workflowPollRef.current) {
+      clearInterval(workflowPollRef.current)
+      workflowPollRef.current = null
+    }
+    workflowJobRef.current = null
+    setIsExecutingWorkflow(false)
+  }, [])
+
+  const startWorkflowPolling = useCallback((workflowJobId: string) => {
+    workflowJobRef.current = workflowJobId
+    setIsExecutingWorkflow(true)
+
+    workflowPollRef.current = setInterval(async () => {
+      if (workflowJobRef.current !== workflowJobId) {
+        stopWorkflowPolling()
+        return
+      }
+
+      try {
+        const res = await fetch(`/api/execute/workflow?workflowJobId=${workflowJobId}`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const json = await res.json()
+
+        if (json.status === "completed") {
+          console.log("[workflow] completed:", json.results)
+          stopWorkflowPolling()
+        } else if (json.status === "failed") {
+          console.error("[workflow] failed:", json.error, "jobs:", json.jobs)
+          stopWorkflowPolling()
+        }
+        // pending | running → continue polling
+      } catch (err) {
+        console.error("[workflow] poll error:", err)
+      }
+    }, POLL_INTERVAL_MS)
+  }, [stopWorkflowPolling])
+
+  const handleExecuteWorkflow = useCallback(async () => {
+    if (!node || data?.type !== "lasso") return
+
+    // Find all child nodes (nodes that have this lasso as parentNode)
+    const childNodes = nodes.filter((n) => n.parentNode === nodeId)
+    if (childNodes.length === 0) {
+      console.warn("[workflow] No nodes inside lasso")
+      return
+    }
+
+    // Get edges between child nodes
+    const childNodeIds = new Set(childNodes.map((n) => n.id))
+    const childEdges = edges.filter(
+      (e) => childNodeIds.has(e.source) && childNodeIds.has(e.target)
+    )
+
+    setIsExecutingWorkflow(true)
+
+    try {
+      const res = await fetch("/api/execute/workflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lassoNodeId: nodeId,
+          nodes: childNodes,
+          edges: childEdges,
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || `Server error ${res.status}`)
+      }
+
+      const { workflowJobId } = await res.json()
+      startWorkflowPolling(workflowJobId)
+    } catch (err) {
+      console.error("[workflow] execute failed:", err)
+      setIsExecutingWorkflow(false)
+    }
+  }, [node, data?.type, nodeId, nodes, edges, startWorkflowPolling])
+
+  // Cleanup workflow polling on unmount
+  useEffect(() => {
+    return () => {
+      if (workflowPollRef.current) clearInterval(workflowPollRef.current)
+    }
+  }, [])
+
   if (!node || !data) return null
 
   // ── Screen coordinates ────────────────────────
@@ -561,6 +655,8 @@ export function NodeEditor({
           onLoopDeleteInstance={handleLoopDeleteInstance}
           onLoopGoTo={handleLoopGoTo}
           loopInstanceCount={loopInstanceCount}
+          onExecute={handleExecuteWorkflow}
+          isExecuting={isExecutingWorkflow}
         />
       </div>
 
@@ -610,7 +706,7 @@ export function NodeEditor({
           return (
             <mod.ModalContent
               key={nodeId}
-              data={data}
+              data={data as any}
               onUpdate={handleUpdate}
               onClose={onClose}
               onDelete={() => handleDeleteNode()}

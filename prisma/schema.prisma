@@ -17,6 +17,7 @@ model User {
   name          String?
   accounts      Account[]
   jobs          Job[]
+  workflowJobs  WorkflowJob[]
   riffDraft     RiffDraft?
   sessions      Session[]
   wallet        Wallet?
@@ -86,18 +87,47 @@ model RiffDraft {
 }
 
 model Job {
-  id        String   @id @default(cuid())
-  userId    String
-  nodeId    String
-  nodeType  String
-  status    String   @default("pending")
-  result    Json?
-  error     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String   @id @default(cuid())
+  userId        String
+  nodeId        String
+  nodeType      String
+  status        String   @default("pending")
+  result        Json?
+  error         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  // Workflow execution support
+  workflowJobId String?
+  dependsOn     String[] @default([])
+  inputData     Json?
+  outputData    Json?
+  
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workflowJob   WorkflowJob? @relation(fields: [workflowJobId], references: [id], onDelete: SetNull)
 
   @@index([userId, status])
+  @@index([workflowJobId])
+  @@index([nodeId])
+}
+
+model WorkflowJob {
+  id             String   @id @default(cuid())
+  userId         String
+  status         String   @default("pending")
+  totalNodes     Int      @default(0)
+  completedCount Int      @default(0)
+  failedCount    Int      @default(0)
+  results        Json     @default("{}")
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobs           Job[]
+
+  @@index([userId])
+  @@index([status])
 }
 
 model ExecutionLog {

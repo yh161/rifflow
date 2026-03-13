@@ -41,7 +41,7 @@ export interface LoopInstance {
 
 export interface CustomNodeData {
   label?: string
-  type: 'text' | 'image' | 'video' | 'gate' | 'batch' | 'cycle' | 'seed'
+  type: 'text' | 'image' | 'video' | 'gate' | 'batch' | 'cycle' | 'seed' | 'lasso'
   width?: number
   height?: number
   // text
@@ -60,7 +60,8 @@ export interface CustomNodeData {
   videoDuration?: string
   // container data (batch / cycle)
   seedContent?: string
-  loopPrompt?: string        // batch only
+  loopPrompt?: string        // cycle only
+  batchPrompt?: string       // batch only
   loopCount?: number
   currentInstance?: number   // -1 = template view, 0+ = instance index
   instanceCount?: number     // total instances (flat model)
@@ -85,12 +86,13 @@ export interface CustomNodeData {
   onDelete?: () => void
 }
 
-export type AnyNodeData = StandardNodeData & CustomNodeData
+export type AnyNodeData = StandardNodeData & CustomNodeData & Record<string, unknown>
 
 export type NodeMode = "auto" | "manual"
 
 export interface ModuleModalProps {
   data: AnyNodeData
+  nodeId?: string  // Current node ID for upstream reference
   onUpdate: (updates: Partial<AnyNodeData>) => void
   onClose: () => void
   onConfirm?: () => void
@@ -99,4 +101,7 @@ export interface ModuleModalProps {
   isGenerating?: boolean
   onGenerate?: (prompt: string, model: string, params: Record<string, string>) => void
   onStop?: () => void
+  // For batch/cycle — use existing loop instance management
+  onLoopAddInstance?: (loopId: string, seedContent?: string) => void
+  onLoopSwitchView?: (loopId: string, viewIdx: number) => void
 }

@@ -225,12 +225,8 @@ function CanvasLogic({
   useAutosave(nodes, edges, isDraftLoaded && status === "authenticated")
 
   // ─────────────────────────────────────────────
-  // Loop — wraps selected nodes in a Loop container
+  // Batch — wraps selected nodes in a Batch container
   // ─────────────────────────────────────────────
-  const handleContainerSelectionChange = useCallback(({ nodes: selected }: { nodes: Node[]; edges: Edge[] }) => {
-    if (activeTool === "batch" || activeTool === "cycle") loopSelectionRef.current = selected
-  }, [activeTool, loopSelectionRef])
-
   const commitBatch = useCallback((selectedNodes: Node[]) => {
     const PAD = 24, SEED_W = 180, SEED_H = 180, SEED_GAP = 32
 
@@ -366,16 +362,6 @@ function CanvasLogic({
     setEditorNodeId(cycleId)
   }, [setNodes, setEditorNodeId, onActiveTool, loopSelectionRef])
 
-  const handleContainerMouseDown = useCallback((_e: React.MouseEvent) => {
-    if (activeTool !== "batch" && activeTool !== "cycle") return
-    loopSelectionRef.current = []
-  }, [activeTool, loopSelectionRef])
-
-  const handleContainerMouseUp = useCallback(() => {
-    if (activeTool === "batch")      commitBatch(loopSelectionRef.current)
-    else if (activeTool === "cycle") commitCycle(loopSelectionRef.current)
-  }, [activeTool, commitBatch, commitCycle, loopSelectionRef])
-
   // ─────────────────────────────────────────────
   // Quick-add
   // ─────────────────────────────────────────────
@@ -440,7 +426,7 @@ function CanvasLogic({
   // Double-click on pane → quick-add
   // ─────────────────────────────────────────────
   const handleWrapperDoubleClick = useCallback((e: React.MouseEvent) => {
-    if (activeTool === "batch" || activeTool === "cycle") return
+    if (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso") return
     if ((e.target as Element).closest(".react-flow__node, .react-flow__edge, .react-flow__controls, .react-flow__minimap")) return
     const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY })
     openQuickAdd(flowPos)
@@ -457,7 +443,7 @@ function CanvasLogic({
     const nativeEvent = event.nativeEvent as MouseEvent & { touches?: TouchList }
     if (nativeEvent.touches && nativeEvent.touches.length > 1) return
     if (quickAddMenu) return
-    if (activeTool === "batch" || activeTool === "cycle") return
+    if (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso") return
 
     setEditorNodeId(null)
     onBgClick?.()
@@ -515,10 +501,81 @@ function CanvasLogic({
     if (exportRef) exportRef.current = () => handleExportPack()
   }, [exportRef, handleExportPack])
 
+  // ─────────────────────────────────────────────
+  // Lasso — wraps selected nodes in a Lasso container
+  // ─────────────────────────────────────────────
+  const commitLasso = useCallback((selectedNodes: Node[]) => {
+    const PAD = 24
+
+    const selectedIds = new Set(selectedNodes.map(n => n.id))
+    const topLevel = selectedNodes.filter(n =>
+      n.id !== GHOST_NODE_ID &&
+      (!n.parentNode || !selectedIds.has(n.parentNode))
+    )
+    if (topLevel.length === 0) return
+
+    const getW = (n: Node) => (n.style?.width  as number | undefined) ?? n.data?.width  ?? 180
+    const getH = (n: Node) => (n.style?.height as number | undefined) ?? n.data?.height ?? 180
+
+    const minX = Math.min(...topLevel.map(n => n.position.x))
+    const minY = Math.min(...topLevel.map(n => n.position.y))
+    const maxX = Math.max(...topLevel.map(n => n.position.x + getW(n)))
+    const maxY = Math.max(...topLevel.map(n => n.position.y + getH(n)))
+    const encW = maxX - minX
+    const encH = maxY - minY
+
+    const lassoId = `lasso-${Date.now()}`
+    const lassoX  = minX - PAD
+    const lassoY  = minY - PAD
+    const lassoW  = encW + PAD * 2
+    const lassoH  = encH + PAD * 2
+
+    const lassoNode: Node = {
+      id:       lassoId,
+      type:     "LassoNode",
+      position: { x: lassoX, y: lassoY },
+      style:    { width: lassoW, height: lassoH },
+      data:     { ...MODULE_BY_ID["lasso"]?.defaultData, width: lassoW, height: lassoH, instanceCount: 0 },
+      zIndex:   -1,
+    }
+
+    const topLevelIds  = new Set(topLevel.map(n => n.id))
+    const childOffsetX = PAD - minX
+    const childOffsetY = PAD - minY
+
+    setNodes((prev) => {
+      const updated = prev.map(n => {
+        if (!topLevelIds.has(n.id)) return { ...n, selected: false }
+        return { ...n, selected: false, parentNode: lassoId, extent: "parent" as const,
+          position: { x: n.position.x + childOffsetX, y: n.position.y + childOffsetY } }
+      })
+      return [lassoNode, ...updated]
+    })
+
+    onActiveTool(null)
+    loopSelectionRef.current = []
+    setEditorNodeId(lassoId)
+  }, [setNodes, setEditorNodeId, onActiveTool, loopSelectionRef])
+
+  const handleContainerSelectionChange = useCallback(({ nodes: selected }: { nodes: Node[]; edges: Edge[] }) => {
+    if (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso") loopSelectionRef.current = selected
+  }, [activeTool, loopSelectionRef])
+
+  const handleContainerMouseDown = useCallback((_e: React.MouseEvent) => {
+    if (activeTool !== "batch" && activeTool !== "cycle" && activeTool !== "lasso") return
+    loopSelectionRef.current = []
+  }, [activeTool, loopSelectionRef])
+
+  const handleContainerMouseUp = useCallback(() => {
+    if (activeTool === "batch")      commitBatch(loopSelectionRef.current)
+    else if (activeTool === "cycle") commitCycle(loopSelectionRef.current)
+    else if (activeTool === "lasso") commitLasso(loopSelectionRef.current)
+  }, [activeTool, commitBatch, commitCycle, commitLasso, loopSelectionRef])
+
   // ── Escape cancels container selection tool ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && (activeTool === "batch" || activeTool === "cycle")) onActiveTool(null)
+      if (e.key === "Escape" && (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso")) onActiveTool(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -538,7 +595,7 @@ function CanvasLogic({
       className="w-full h-full relative"
       style={{
         touchAction: "none",
-        cursor: (activeTool === "batch" || activeTool === "cycle") ? "crosshair" : undefined,
+        cursor: (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso") ? "crosshair" : undefined,
       }}
       onDoubleClick={handleWrapperDoubleClick}
       onMouseDown={handleContainerMouseDown}
@@ -579,8 +636,8 @@ function CanvasLogic({
         minZoom={0.1}
         maxZoom={10}
         defaultEdgeOptions={{ type: "default", style: { stroke: "#94a3b8", strokeWidth: 1.5 } }}
-        panOnDrag={activeTool !== "batch" && activeTool !== "cycle"}
-        selectionOnDrag={activeTool === "batch" || activeTool === "cycle"}
+        panOnDrag={activeTool !== "batch" && activeTool !== "cycle" && activeTool !== "lasso"}
+        selectionOnDrag={activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso"}
         zoomOnPinch={true}
         zoomOnScroll={false}
         zoomOnDoubleClick={false}

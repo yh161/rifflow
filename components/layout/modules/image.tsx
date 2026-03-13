@@ -160,10 +160,11 @@ export const ReactFlowNode = memo(({ data, selected }: NodeProps<CustomNodeData>
 ))
 ReactFlowNode.displayName = 'ImageNode'
 
-export function ModalContent({ data, onUpdate, mode = 'auto', isGenerating = false, onGenerate, onStop }: ModuleModalProps) {
+export function ModalContent({ data, nodeId, onUpdate, mode = 'auto', isGenerating = false, onGenerate, onStop }: ModuleModalProps) {
   return (
     <GenerateImagePanel
       data={data as CustomNodeData}
+      nodeId={nodeId}
       onDataChange={onUpdate as (u: Partial<CustomNodeData>) => void}
       hasSrc={!!(data as CustomNodeData).src}
       mode={mode}

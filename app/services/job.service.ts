@@ -5,12 +5,13 @@ import { WalletRepository } from "@/app/repositories/wallet.repository"
 import { ExecutionLogRepository } from "@/app/repositories/executionLog.repository"
 import { IJobRepository } from "@/app/repositories/types"
 import { CREDIT_COST, TEXT_MODEL_MAP, IMAGE_MODEL_MAP } from "./constants"
+import type { MultimodalContent } from "@/lib/prompt-resolver"
 
 export interface JobCreationParams {
   userId: string
   nodeId: string
   nodeType: string
-  prompt: string
+  content: MultimodalContent[]
   model: string
 }
 
@@ -38,7 +39,7 @@ export class JobService {
 
   async createJob(params: JobCreationParams): Promise<JobExecutionResult> {
     try {
-      const { userId, nodeId, nodeType, prompt, model } = params
+      const { userId, nodeId, nodeType, content, model } = params
       const cost = CREDIT_COST[nodeType] ?? 1
 
       // Check user's credits
@@ -75,7 +76,7 @@ export class JobService {
 
   async executeJob(jobId: string, params: Omit<JobCreationParams, 'nodeId'>): Promise<void> {
     try {
-      const { userId, nodeType, prompt, model } = params
+      const { userId, nodeType, content, model } = params
       const cost = CREDIT_COST[nodeType] ?? 1
 
       // Update job status to running
@@ -84,9 +85,9 @@ export class JobService {
       let result: TextGenerationResult | ImageGenerationResult
 
       if (nodeType === "image") {
-        result = await this.executeImageGeneration(prompt, model)
+        result = await this.executeImageGeneration(content, model)
       } else {
-        result = await this.executeTextGeneration(nodeType, prompt, model)
+        result = await this.executeTextGeneration(nodeType, content, model)
       }
 
       // Deduct credits and log execution
@@ -119,7 +120,11 @@ export class JobService {
     }
   }
 
-  private async executeTextGeneration(nodeType: string, prompt: string, model: string): Promise<TextGenerationResult> {
+  private async executeTextGeneration(
+    _nodeType: string, 
+    content: MultimodalContent[], 
+    model: string
+  ): Promise<TextGenerationResult> {
     const orModel = TEXT_MODEL_MAP[model] ?? "google/gemini-2.0-flash-001"
     
     const headers = this.getBaseHeaders()
@@ -128,7 +133,7 @@ export class JobService {
       headers,
       body: JSON.stringify({
         model: orModel,
-        messages: [{ role: "user", content: prompt }]
+        messages: [{ role: "user", content }]
       })
     })
 
@@ -144,7 +149,10 @@ export class JobService {
     }
   }
 
-  private async executeImageGeneration(prompt: string, model: string): Promise<ImageGenerationResult> {
+  private async executeImageGeneration(
+    content: MultimodalContent[], 
+    model: string
+  ): Promise<ImageGenerationResult> {
     const modelDef = IMAGE_MODEL_MAP[model] ?? IMAGE_MODEL_MAP["seedream-4.5"]
     
     const headers = this.getBaseHeaders()
@@ -159,7 +167,7 @@ export class JobService {
             role: "system",
             content: "You are an image generation assistant. Always generate an image directly based on the user's description. Never ask for clarification."
           },
-          { role: "user", content: prompt }
+          { role: "user", content }
         ]
       })
     })

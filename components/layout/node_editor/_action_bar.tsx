@@ -7,6 +7,7 @@ import {
   AlignLeft, AlignCenter, AlignRight,
   ChevronDown, ChevronsLeft,
   ChevronLeft, ChevronRight, Plus, LayoutTemplate,
+  Play, X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
@@ -303,6 +304,9 @@ export function NodeActionBar({
   onLoopDeleteInstance,
   onLoopGoTo,
   loopInstanceCount,
+  // lasso-specific
+  onExecute,
+  isExecuting,
 }: {
   data: CustomNodeData
   isTextEditing: boolean
@@ -315,6 +319,8 @@ export function NodeActionBar({
   onLoopDeleteInstance?: () => void
   onLoopGoTo?: (idx: number) => void
   loopInstanceCount?: number
+  onExecute?: () => void
+  isExecuting?: boolean
 }) {
   const ease = "cubic-bezier(0.4, 0, 0.2, 1)"
 
@@ -400,6 +406,20 @@ export function NodeActionBar({
           onGoTo={onLoopGoTo ?? (() => {})}
           nodeType={data.type as "batch" | "cycle"}
         />
+      )}
+
+      {data.type === "lasso" && (
+        <>
+          <ActionButton
+            icon={Play}
+            label={isExecuting ? "Running..." : "Execute"}
+            onClick={onExecute}
+            disabled={isExecuting}
+            className={isExecuting ? "text-amber-500" : "text-amber-500 hover:text-amber-600 hover:bg-amber-50"}
+          />
+          <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
+          <ActionButton icon={Trash2} label="Delete" onClick={onDelete} danger />
+        </>
       )}
 
     </div>

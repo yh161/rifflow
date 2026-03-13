@@ -143,10 +143,11 @@ export const ReactFlowNode = memo(({ data, selected }: NodeProps<CustomNodeData>
 ReactFlowNode.displayName = 'TextNode'
 
 /** ModalContent — text generate panel */
-export function ModalContent({ data, onUpdate, mode = 'auto', isGenerating = false, onGenerate, onStop }: ModuleModalProps) {
+export function ModalContent({ data, nodeId, onUpdate, mode = 'auto', isGenerating = false, onGenerate, onStop }: ModuleModalProps) {
   return (
     <GenerateTextPanel
       data={data as CustomNodeData}
+      nodeId={nodeId}
       onDataChange={onUpdate as (u: Partial<CustomNodeData>) => void}
       mode={mode}
       isGenerating={isGenerating}

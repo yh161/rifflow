@@ -14,6 +14,7 @@ import * as Gate     from './gate'
 import * as Batch    from './batch'   // ← was Loop
 import * as Cycle    from './cycle'   // ← new
 import * as Seed     from './seed'
+import * as Lasso    from './lasso'   // ← new
 
 // ─────────────────────────────────────────────
 // Module registry
@@ -34,7 +35,7 @@ export interface ModuleDefinition {
 }
 
 export const MODULES: ModuleDefinition[] = [
-  Standard, Text, Image, Video, Gate, Batch, Cycle, Seed,
+  Standard, Text, Image, Video, Gate, Batch, Cycle, Seed, Lasso,
 ] as any[]
 
 export const MODULE_BY_ID = Object.fromEntries(MODULES.map((m) => [m.meta.id, m]))
@@ -140,6 +141,14 @@ const CycleNodeInner = ({ data, selected }: NodeProps<any>) => (
 )
 export const CycleNode = memo(CycleNodeInner)
 
+// LassoNode — no external handles (pure container)
+const LassoNodeInner = ({ data, selected }: NodeProps<any>) => (
+  <NodeWrapper handles={[]}>
+    <Lasso.NodeUI data={data} selected={selected} />
+  </NodeWrapper>
+)
+export const LassoNode = memo(LassoNodeInner)
+
 // StandardNode — KG entity nodes
 const StandardNodeInner = ({ data, selected }: NodeProps<any>) => {
   if (!data) return null
@@ -167,5 +176,6 @@ export const nodeTypes = {
   CustomNode,
   BatchNode,
   CycleNode,
+  LassoNode,
   GhostNode,
 }

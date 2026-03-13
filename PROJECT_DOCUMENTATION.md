@@ -41,7 +41,7 @@ graph-app/
 │   │   ├── draft/                # 草稿相关 API
 │   │   ├── execute/              # 节点执行 API
 │   │   ├── jobs/                 # 任务管理 API
-│   │   ├── upload/               # 文件上传 API
+│   │   └── upload/               # 文件上传 API
 │   │   └── user/                 # 用户相关 API
 │   ├── middleware/               # 中间件
 │   ├── repositories/             # 数据访问层
@@ -110,6 +110,9 @@ graph-app/
 - 文件上传
 - MinIO 对象存储
 - 节点图片管理
+
+### 7. 工作流执行器
+- **已完成** - 支持节点工作流的创建、编辑和执行。
 
 ## 数据库模型
 

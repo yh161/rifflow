@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
+import type { MultimodalContent } from "@/lib/prompt-resolver"
 
 const CREDIT_COST: Record<string, number> = { text: 1, gate: 1, image: 1 }
 
@@ -39,9 +40,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { nodeType, prompt, model } = await req.json()
-    if (!prompt?.trim()) {
-      return NextResponse.json({ error: "Prompt is required" }, { status: 400 })
+    const { nodeType, prompt, content, model } = await req.json()
+    
+    // Support both legacy string prompt and new multimodal content format
+    const hasContent = content && Array.isArray(content) && content.length > 0
+    const hasPrompt = prompt && (typeof prompt === "string" ? prompt.trim().length > 0 : true)
+    
+    if (!hasContent && !hasPrompt) {
+      return NextResponse.json({ error: "Prompt or content is required" }, { status: 400 })
+    }
+
+    // Normalize content to MultimodalContent[] format
+    let normalizedContent: MultimodalContent[]
+    if (hasContent) {
+      normalizedContent = content as MultimodalContent[]
+    } else if (typeof prompt === "string") {
+      normalizedContent = [{ type: "text", text: prompt }]
+    } else {
+      normalizedContent = prompt as MultimodalContent[]
     }
 
     const cost = CREDIT_COST[nodeType] ?? 1
@@ -54,8 +70,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Insufficient credits" }, { status: 402 })
     }
 
-    if (nodeType === "image") return handleImage({ user, prompt, model, cost })
-    return handleText({ user, nodeType, prompt, model, cost })
+    if (nodeType === "image") return handleImage({ user, content: normalizedContent, model, cost })
+    return handleText({ user, nodeType, content: normalizedContent, model, cost })
 
   } catch (err: any) {
     console.error("[execute/node] unhandled:", err)
@@ -67,14 +83,14 @@ export async function POST(req: NextRequest) {
 // Text / Gate
 // ─────────────────────────────────────────────
 async function handleText({
-  user, nodeType, prompt, model, cost,
-}: { user: any; nodeType: string; prompt: string; model: string; cost: number }) {
+  user, nodeType, content, model, cost,
+}: { user: any; nodeType: string; content: MultimodalContent[]; model: string; cost: number }) {
   const orModel = TEXT_MODEL_MAP[model] ?? "google/gemini-2.0-flash-001"
 
   const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: baseHeaders(),
-    body: JSON.stringify({ model: orModel, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model: orModel, messages: [{ role: "user", content }] }),
   })
 
   if (!aiRes.ok) {
@@ -84,7 +100,7 @@ async function handleText({
   }
 
   const aiJson = await aiRes.json()
-  const content = aiJson.choices?.[0]?.message?.content ?? ""
+  const resultContent = aiJson.choices?.[0]?.message?.content ?? ""
   const inputTokens  = aiJson.usage?.prompt_tokens     ?? 0
   const outputTokens = aiJson.usage?.completion_tokens ?? 0
 
@@ -95,7 +111,7 @@ async function handleText({
     }),
   ])
 
-  return NextResponse.json({ content })
+  return NextResponse.json({ content: resultContent })
 }
 
 // ─────────────────────────────────────────────
@@ -105,11 +121,13 @@ async function handleText({
 //   { type: "image_url", image_url: { url: "data:image/png;base64,..." } }
 // ─────────────────────────────────────────────
 async function handleImage({
-  user, prompt, model, cost,
-}: { user: any; prompt: string; model: string; cost: number }) {
+  user, content, model, cost,
+}: { user: any; content: MultimodalContent[]; model: string; cost: number }) {
   const modelDef = IMAGE_MODEL_MAP[model] ?? IMAGE_MODEL_MAP["seedream-4.5"]
 
-  console.log("[image] model:", modelDef.id, "| modalities:", modelDef.modalities, "| prompt:", prompt.slice(0, 80))
+  // Log first text content for debugging
+  const firstText = content.find(c => c.type === "text")?.text ?? ""
+  console.log("[image] model:", modelDef.id, "| modalities:", modelDef.modalities, "| prompt:", firstText.slice(0, 80))
 
   const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method:  "POST",
@@ -122,7 +140,7 @@ async function handleImage({
           role:    "system",
           content: "You are an image generation assistant. Always generate an image directly based on the user's description. Never ask for clarification — interpret the prompt creatively and produce an image immediately.",
         },
-        { role: "user", content: prompt },
+        { role: "user", content },
       ],
     }),
   })
