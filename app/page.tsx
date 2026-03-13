@@ -1,65 +1,144 @@
-import Image from "next/image";
+"use client"
 
-export default function Home() {
+import { useState, useRef } from "react"
+import { ReactFlowProvider } from "reactflow"
+
+import Sidebar from "@/components/layout/sidebar"
+import Canvas from "@/components/layout/canvas/canvas"
+import CanvasToolbar from "@/components/layout/canvas/canvas-toolbar"
+import Panel from "@/components/layout/browser/browser"
+import Toolbar from "@/components/layout/toolbar"
+import { useDemoLogs } from "@/components/layout/run-console"
+import UserAvatar from "@/components/layout/user-avatar"
+
+import LoginModal from "@/components/layout/login-modal"
+
+
+export default function Screen() {
+  const [activeTool, setActiveTool] = useState<string | null>(null)
+
+  // ── Import / Export refs — populated by Canvas, consumed by Panel menu ──
+  const importRef = useRef<(() => void) | null>(null)
+  const exportRef = useRef<(() => void) | null>(null)
+
+  // ── UI layout ────────────────────────────
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [isPanelOpen, setIsPanelOpen] = useState(true)
+
+  // ── Run state ────────────────────────────
+  const [isRunning, setIsRunning] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
+
+  // ── Favorites — shared between Canvas (export/import) and Toolbar (quick-launch) ──
+  const [favorites, setFavorites] = useState<string[]>([])
+  const handleToggleFavorite = (typeId: string) =>
+    setFavorites((prev) => prev.includes(typeId) ? prev.filter((x) => x !== typeId) : [...prev, typeId])
+  const [preRunSidebar, setPreRunSidebar] = useState(true)
+  const [preRunPanel, setPreRunPanel] = useState(true)
+
+  const { logs, addLog } = useDemoLogs(isRunning, isPaused)
+  const [snapToGrid, setSnapToGrid] = useState(false)
+  const [isLoginOpen, setIsLoginOpen] = useState(true)
+
+  const handleRun = () => {
+    setPreRunSidebar(isSidebarOpen)
+    setPreRunPanel(isPanelOpen)
+    setIsSidebarOpen(false)
+    setIsPanelOpen(false)
+    setActiveTool(null)
+    setIsRunning(true)
+    setIsPaused(false)
+  }
+  const handlePause  = () => setIsPaused(true)
+  const handleResume = () => setIsPaused(false)
+  const handleStop   = () => {
+    setIsRunning(false)
+    setIsPaused(false)
+    setTimeout(() => {
+      setIsSidebarOpen(preRunSidebar)
+      setIsPanelOpen(preRunPanel)
+    }, 100)
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <ReactFlowProvider>
+    <main className="flex h-screen w-screen overflow-hidden bg-slate-50 relative">
+      <Canvas
+        activeTool={activeTool}
+        onActiveTool={setActiveTool}
+        onBgClick={() => setIsPanelOpen(false)}
+        favorites={favorites}
+        onToggleFavorite={handleToggleFavorite}
+        onFavoritesImport={setFavorites}
+        importRef={importRef}
+        exportRef={exportRef}
+        isSidebarOpen={isSidebarOpen} 
+        isRunning={isRunning}
+        snapToGrid={snapToGrid}
+        onSnapToggle={() => setSnapToGrid(v => !v)}
+      />
+
+      {/* Canvas toolbar — outside Canvas so it's above all canvas stacking contexts */}
+      <CanvasToolbar
+        isSidebarOpen={isSidebarOpen}
+        isRunning={isRunning}
+        snapToGrid={snapToGrid}
+        onSnapToggle={() => setSnapToGrid(v => !v)}
+      />
+
+      {/* Toolbar */}
+      <div
+        className="absolute z-30 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        style={{
+          left: isRunning ? 16 : (isSidebarOpen ? 320 + 16 : 16),
+          top: "50%",
+          transform: "translateY(-50%)",
+        }}
+        onClick={!isRunning ? () => setIsPanelOpen(false) : undefined}
+      >
+        <Toolbar
+          onSelectTool={setActiveTool}
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen((v) => !v)}
+          isRunning={isRunning}
+          isPaused={isPaused}
+          onRun={handleRun}
+          onPause={handlePause}
+          onResume={handleResume}
+          onStop={handleStop}
+          logs={logs}
+          onSendInput={addLog}
+          favorites={favorites}
+          onToggleFavorite={handleToggleFavorite}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+      </div>
+
+      <UserAvatar
+        isSidebarOpen={isSidebarOpen}
+        isRunning={isRunning}
+        // avatarUrl={user.avatarUrl}
+        // displayName={user.name}
+        // credits={user.credits}
+      />
+
+      <Sidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        isRunning={isRunning}
+      />
+
+      <Panel
+        isSidebarOpen={isSidebarOpen}
+        isOpen={isPanelOpen}
+        onOpenChange={setIsPanelOpen}
+        isRunning={isRunning}
+        importRef={importRef}
+        exportRef={exportRef}
+      />
+
+      <LoginModal open={isLoginOpen} onOpenChange={setIsLoginOpen} />
+
+    </main>
+    </ReactFlowProvider>
+  )
 }
