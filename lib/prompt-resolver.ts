@@ -20,21 +20,45 @@ export interface ImageContent {
 export type MultimodalContent = TextContent | ImageContent
 
 /**
- * Check if URL is a local address that LLM cannot access
+ * Check if URL is a local/private address that remote LLM cannot access
  */
 function isLocalUrl(url: string): boolean {
   try {
     const urlObj = new URL(url)
     const hostname = urlObj.hostname.toLowerCase()
-    return (
+    
+    // Standard local addresses
+    if (
       hostname === "localhost" ||
       hostname === "127.0.0.1" ||
       hostname.startsWith("192.168.") ||
       hostname.startsWith("10.") ||
       hostname.startsWith("172.")
-    )
-  } catch {
+    ) {
+      return true
+    }
+    
+    // Docker internal hostnames (container names, docker hosts)
+    if (
+      hostname === "minio" ||
+      hostname === "host.docker.internal" ||
+      hostname === "docker.for.mac.localhost" ||
+      hostname === "docker.for.win.localhost" ||
+      hostname.endsWith(".local") ||
+      hostname.endsWith(".internal")
+    ) {
+      return true
+    }
+    
+    // Protocol-relative URLs or missing protocol (likely relative/local)
+    if (!urlObj.protocol || urlObj.protocol === "file:") {
+      return true
+    }
+    
     return false
+  } catch {
+    // If URL parsing fails, assume it's a relative/local path
+    return true
   }
 }
 

@@ -533,6 +533,50 @@ export function NodeEditor({
 
         if (json.status === "completed") {
           console.log("[workflow] completed:", json.results)
+          
+          // Apply workflow results to child nodes
+          const results = json.results as Record<string, Record<string, unknown>>
+          if (results) {
+            setNodes((ns) => ns.map((n) => {
+              const nodeResult = results[n.id]
+              if (!nodeResult) return n
+
+              const nodeType = n.data?.type
+              
+              // Handle image node results
+              if (nodeType === "image" && nodeResult.b64 && nodeResult.mime) {
+                // For image nodes, we need to upload and apply the result
+                // Use a helper to handle async image processing
+                handleWorkflowImageResult(n.id, String(nodeResult.b64), String(nodeResult.mime))
+                return { ...n, data: { ...n.data, isGenerating: false } }
+              }
+              
+              // Handle text/gate/seed node results
+              if ((nodeType === "text" || nodeType === "gate" || nodeType === "seed") && nodeResult.content !== undefined) {
+                return {
+                  ...n,
+                  data: { ...n.data, content: String(nodeResult.content), isGenerating: false }
+                }
+              }
+              
+              // Handle video node results
+              if (nodeType === "video" && nodeResult.videoSrc) {
+                return {
+                  ...n,
+                  data: { 
+                    ...n.data, 
+                    videoSrc: String(nodeResult.videoSrc),
+                    videoDuration: nodeResult.videoDuration ? String(nodeResult.videoDuration) : n.data?.videoDuration,
+                    isGenerating: false 
+                  }
+                }
+              }
+              
+              // Default: merge result data into node data
+              return { ...n, data: { ...n.data, ...nodeResult, isGenerating: false } }
+            }))
+          }
+          
           stopWorkflowPolling()
         } else if (json.status === "failed") {
           console.error("[workflow] failed:", json.error, "jobs:", json.jobs)
@@ -543,7 +587,62 @@ export function NodeEditor({
         console.error("[workflow] poll error:", err)
       }
     }, POLL_INTERVAL_MS)
-  }, [stopWorkflowPolling])
+  }, [stopWorkflowPolling, setNodes])
+
+  // Helper to handle async image result from workflow
+  const handleWorkflowImageResult = useCallback(async (targetNodeId: string, b64: string, mime: string) => {
+    const byteString = atob(b64)
+    const ab = new ArrayBuffer(byteString.length)
+    const ia = new Uint8Array(ab)
+    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i)
+    const blob = new Blob([ab], { type: mime })
+
+    // Upload to MinIO → persistent URL
+    let src: string
+    try {
+      const form = new FormData()
+      form.append(
+        'file',
+        new File([blob], `generated.${mime.split('/')[1] || 'png'}`, { type: mime }),
+      )
+      const res = await fetch('/api/upload', { method: 'POST', body: form })
+      const json = await res.json()
+      if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
+      src = json.url as string
+    } catch (err) {
+      console.error('[workflow image] MinIO upload failed, falling back to blob URL:', err)
+      src = URL.createObjectURL(blob)
+    }
+
+    const img = new window.Image()
+    img.src = src
+    await new Promise<void>((resolve) => { img.onload = () => resolve() })
+
+    const nw = img.naturalWidth
+    const nh = img.naturalHeight
+    const minSide = Math.min(nw, nh)
+    const scale = 180 / minSide
+    const w = Math.round(nw * scale)
+    const h = Math.round(nh * scale)
+
+    setNodes((ns) => ns.map((n) => {
+      if (n.id !== targetNodeId) return n
+      return {
+        ...n,
+        style: { ...n.style, width: w, height: h },
+        data: {
+          ...n.data,
+          src,
+          naturalWidth: nw,
+          naturalHeight: nh,
+          width: w,
+          height: h,
+          isGenerating: false,
+          activeJobId: undefined,
+        },
+      }
+    }))
+  }, [setNodes])
 
   const handleExecuteWorkflow = useCallback(async () => {
     if (!node || data?.type !== "lasso") return

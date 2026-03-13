@@ -254,7 +254,7 @@ export class WorkflowEngine {
     let shouldExecuteLLM = true
     let passThroughResult: Record<string, unknown> | null = null
     
-    if (nodeType === "text" || nodeType === "gate") {
+    if (nodeType === "text" || nodeType === "gate" || nodeType === "seed") {
       const prompt = node.data.prompt || ""
       const textContent = node.data.content || ""
       
@@ -274,6 +274,13 @@ export class WorkflowEngine {
       const prompt = node.data.prompt || ""
       // Resolve any {{nodeId}} references in the prompt
       content = await this.resolvePromptWithUpstream(prompt, upstreamData)
+    } else if (nodeType === "standard") {
+      // Standard nodes pass through their name/label as content
+      shouldExecuteLLM = false
+      passThroughResult = { 
+        content: node.data.name || node.data.label || "",
+        data: node.data 
+      }
     } else {
       // Default: pass through
       shouldExecuteLLM = false

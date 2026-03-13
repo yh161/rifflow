@@ -8,9 +8,10 @@ import type { UpstreamNodeData } from "@/hooks/useUpstreamData"
 
 // ─────────────────────────────────────────────
 // POST /api/jobs
-// Body: { nodeId, nodeType, prompt?, content?, model }
+// Body: { nodeId, nodeType, prompt?, content?, model, upstreamData? }
 //   - prompt: string (legacy, for backward compatibility)
 //   - content: MultimodalContent[] (new format, preferred)
+//   - upstreamData: UpstreamNodeData[] (for resolving {{nodeId}} references)
 // Returns: { jobId }
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
       normalizedContent = content as MultimodalContent[]
     } else if (typeof prompt === "string") {
       // Resolve {{nodeId}} references if upstreamData is provided
+      // upstreamData.src is already base64 (converted by useUpstreamData hook)
       if (upstreamData && Array.isArray(upstreamData) && upstreamData.length > 0) {
         normalizedContent = await resolvePromptToMultimodal(prompt, upstreamData as UpstreamNodeData[])
       } else {

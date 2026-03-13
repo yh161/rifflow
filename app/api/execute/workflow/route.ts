@@ -41,8 +41,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    // Filter executable nodes (exclude container/seed nodes)
-    const executableTypes = ["text", "image", "video", "gate"]
+    // Filter executable nodes (exclude container nodes)
+    const executableTypes = ["text", "image", "video", "gate", "seed", "standard"]
     const executableNodes = nodes.filter(
       (n) => executableTypes.includes(n.data?.type) || executableTypes.includes(n.type)
     )
