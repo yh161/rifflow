@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useRef, useEffect, useCallback } from 'react'
-import { Handle, Position } from 'reactflow'
+import { Handle, Position, useReactFlow, useStore } from 'reactflow'
 import { CirclePlus } from 'lucide-react'
 
 // ─────────────────────────────────────────────
@@ -213,6 +213,170 @@ export function MagneticZone({
           strokeWidth={1.5}
           style={{ display: 'block', color: 'rgba(148,163,184,0.75)' }}
         />
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// ResizeHandle — iPadOS-style corner resize grip
+//
+// Renders a quarter-circle arc just outside the bottom-right corner.
+// Appears only when the mouse is nearby (DOM-direct, zero React re-renders).
+// Drag to resize the node by updating node.style + node.data dimensions.
+// ─────────────────────────────────────────────
+
+const RH_PROXIMITY = 44   // px — hover detection radius
+const RH_SIZE      = 20   // SVG width / height (px)
+const RH_MIN_W     = 80   // minimum node width  (flow units)
+const RH_MIN_H     = 60   // minimum node height (flow units)
+
+type ResizeZoneEntry = {
+  zoneEl:    HTMLDivElement
+  innerEl:   HTMLDivElement
+  isHovered: () => boolean
+}
+
+type DragState = {
+  nodeId:   string
+  startX:   number
+  startY:   number
+  startW:   number
+  startH:   number
+  setNodes: (fn: (nodes: any[]) => any[]) => void
+  getZoom:  () => number
+}
+
+const resizeZones          = new Set<ResizeZoneEntry>()
+let   resizeListenerReady  = false
+let   activeDrag: DragState | null = null
+
+function ensureResizeListeners() {
+  if (resizeListenerReady) return
+  resizeListenerReady = true
+
+  window.addEventListener('mousemove', (e: MouseEvent) => {
+    // ── proximity show/hide ──────────────────────
+    resizeZones.forEach(({ zoneEl, innerEl, isHovered }) => {
+      const rect = zoneEl.getBoundingClientRect()
+      const cx   = rect.left + rect.width  / 2
+      const cy   = rect.top  + rect.height / 2
+      const dist = Math.sqrt((e.clientX - cx) ** 2 + (e.clientY - cy) ** 2)
+      const show = isHovered() || dist < RH_PROXIMITY
+      innerEl.style.opacity   = show ? '1' : '0'
+      innerEl.style.transition = show ? 'opacity 0.12s ease' : 'opacity 0.22s ease'
+    })
+
+    // ── drag resize ──────────────────────────────
+    if (!activeDrag) return
+    const zoom = activeDrag.getZoom()
+    const dx   = (e.clientX - activeDrag.startX) / zoom
+    const dy   = (e.clientY - activeDrag.startY) / zoom
+    const newW = Math.max(RH_MIN_W, activeDrag.startW + dx)
+    const newH = Math.max(RH_MIN_H, activeDrag.startH + dy)
+    activeDrag.setNodes((nodes: any[]) =>
+      nodes.map((n) => {
+        if (n.id !== activeDrag!.nodeId) return n
+        return {
+          ...n,
+          style: { ...n.style, width: newW, height: newH },
+          data:  { ...n.data,  width: newW, height: newH },
+        }
+      })
+    )
+  }, { passive: true })
+
+  window.addEventListener('mouseup', () => {
+    if (activeDrag) {
+      activeDrag = null
+      document.body.style.userSelect = ''
+      document.body.style.cursor     = ''
+    }
+  })
+}
+
+export function ResizeHandle({
+  nodeId,
+  isHovered,
+}: {
+  nodeId:    string
+  isHovered: () => boolean
+}) {
+  const zoneRef  = useRef<HTMLDivElement>(null)
+  const innerRef = useRef<HTMLDivElement>(null)
+
+  const { setNodes } = useReactFlow()
+  const zoom         = useStore((s: any) => s.transform[2])
+  const zoomRef      = useRef(zoom)
+  useEffect(() => { zoomRef.current = zoom }, [zoom])
+
+  useEffect(() => {
+    ensureResizeListeners()
+    const entry: ResizeZoneEntry = {
+      zoneEl:    zoneRef.current!,
+      innerEl:   innerRef.current!,
+      isHovered,
+    }
+    resizeZones.add(entry)
+    return () => { resizeZones.delete(entry) }
+  }, [isHovered])
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const nodeEl = zoneRef.current?.closest('.react-flow__node') as HTMLElement | null
+    if (!nodeEl) return
+    const rect = nodeEl.getBoundingClientRect()
+    const z    = zoomRef.current
+    activeDrag = {
+      nodeId,
+      startX:   e.clientX,
+      startY:   e.clientY,
+      startW:   rect.width  / z,
+      startH:   rect.height / z,
+      setNodes,
+      getZoom:  () => zoomRef.current,
+    }
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor     = 'nwse-resize'
+  }, [nodeId, setNodes])
+
+  return (
+    <div
+      ref={zoneRef}
+      className="nodrag nopan"
+      style={{
+        position:      'absolute',
+        bottom:        -(RH_SIZE + 8),
+        right:         -(RH_SIZE + 8),
+        width:         RH_SIZE + 24,
+        height:        RH_SIZE + 24,
+        display:       'flex',
+        alignItems:    'flex-start',
+        justifyContent:'flex-start',
+        pointerEvents: 'all',
+        zIndex:        30,
+        cursor:        'nwse-resize',
+      }}
+      onMouseDown={handleMouseDown}
+    >
+      <div
+        ref={innerRef}
+        style={{ opacity: 0, padding: 8 }}
+      >
+        <svg
+          width={RH_SIZE}
+          height={RH_SIZE}
+          viewBox="0 0 20 20"
+          fill="none"
+        >
+          <path
+            d="M 2 18 Q 18 18 18 2"
+            stroke="rgba(148,163,184,0.85)"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          />
+        </svg>
       </div>
     </div>
   )

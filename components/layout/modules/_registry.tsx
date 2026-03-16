@@ -4,7 +4,7 @@ import React, { memo, useRef, useCallback } from 'react'
 import { NodeProps } from 'reactflow'
 import { Handle, Position } from 'reactflow'
 import type { CustomNodeData, ModuleModalProps } from './_types'
-import { HandleDef, MagneticZone, SIDE_TO_POSITION, getHandleStyle, getHandleClassName, sideToHandleType } from './_handle'
+import { HandleDef, MagneticZone, ResizeHandle, SIDE_TO_POSITION, getHandleStyle, getHandleClassName, sideToHandleType } from './_handle'
 
 import * as Standard from './standard'
 import * as Text     from './text'
@@ -70,10 +70,12 @@ function NodeWrapper({
   handles,
   label,
   children,
+  nodeId,
 }: {
   handles:  HandleDef[]
   label?:   string
   children: React.ReactNode
+  nodeId?:  string
 }) {
   const hoveredRef = useRef(false)
   const isHovered  = useCallback(() => hoveredRef.current, [])
@@ -104,6 +106,7 @@ function NodeWrapper({
           <MagneticZone def={def} isHovered={isHovered} />
         </React.Fragment>
       ))}
+      {nodeId && <ResizeHandle nodeId={nodeId} isHovered={isHovered} />}
       {children}
     </div>
   )
@@ -114,11 +117,11 @@ function NodeWrapper({
 // ─────────────────────────────────────────────
 
 // CustomNode — text / image / video / gate / seed
-const CustomNodeInner = ({ data, selected }: NodeProps<CustomNodeData>) => {
+const CustomNodeInner = ({ id, data, selected }: NodeProps<CustomNodeData>) => {
   const mod = MODULE_BY_ID[data.type]
   if (!mod?.NodeUI) return null
   return (
-    <NodeWrapper handles={(mod.handles ?? []) as HandleDef[]} label={data.label}>
+    <NodeWrapper handles={(mod.handles ?? []) as HandleDef[]} label={data.label} nodeId={id}>
       <mod.NodeUI data={data} selected={selected} />
     </NodeWrapper>
   )
@@ -126,34 +129,34 @@ const CustomNodeInner = ({ data, selected }: NodeProps<CustomNodeData>) => {
 export const CustomNode = memo(CustomNodeInner)
 
 // BatchNode — was LoopNode
-const BatchNodeInner = ({ data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={Batch.handles as HandleDef[]}>
+const BatchNodeInner = ({ id, data, selected }: NodeProps<any>) => (
+  <NodeWrapper handles={Batch.handles as HandleDef[]} nodeId={id}>
     <Batch.NodeUI data={data} selected={selected} />
   </NodeWrapper>
 )
 export const BatchNode = memo(BatchNodeInner)
 
 // CycleNode — no external handles (handles rendered inside NodeUI)
-const CycleNodeInner = ({ data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={[]}>
+const CycleNodeInner = ({ id, data, selected }: NodeProps<any>) => (
+  <NodeWrapper handles={[]} nodeId={id}>
     <Cycle.NodeUI data={data} selected={selected} />
   </NodeWrapper>
 )
 export const CycleNode = memo(CycleNodeInner)
 
 // LassoNode — no external handles (pure container)
-const LassoNodeInner = ({ data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={[]}>
+const LassoNodeInner = ({ id, data, selected }: NodeProps<any>) => (
+  <NodeWrapper handles={[]} nodeId={id}>
     <Lasso.NodeUI data={data} selected={selected} />
   </NodeWrapper>
 )
 export const LassoNode = memo(LassoNodeInner)
 
 // StandardNode — KG entity nodes
-const StandardNodeInner = ({ data, selected }: NodeProps<any>) => {
+const StandardNodeInner = ({ id, data, selected }: NodeProps<any>) => {
   if (!data) return null
   return (
-    <NodeWrapper handles={Standard.handles as HandleDef[]} label={data.name || data.label}>
+    <NodeWrapper handles={Standard.handles as HandleDef[]} label={data.name || data.label} nodeId={id}>
       <Standard.NodeUI data={data} selected={selected} />
     </NodeWrapper>
   )
