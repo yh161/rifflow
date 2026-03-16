@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useRef, useEffect, useCallback } from 'react'
-import { Handle, Position, useReactFlow, useStore } from 'reactflow'
+import { Handle, Position, useReactFlow } from 'reactflow'
 import { CirclePlus } from 'lucide-react'
 
 // ─────────────────────────────────────────────
@@ -305,10 +305,7 @@ export function ResizeHandle({
   const zoneRef  = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
 
-  const { setNodes } = useReactFlow()
-  const zoom         = useStore((s: any) => s.transform[2])
-  const zoomRef      = useRef(zoom)
-  useEffect(() => { zoomRef.current = zoom }, [zoom])
+  const { setNodes, getZoom } = useReactFlow()
 
   useEffect(() => {
     ensureResizeListeners()
@@ -327,7 +324,7 @@ export function ResizeHandle({
     const nodeEl = zoneRef.current?.closest('.react-flow__node') as HTMLElement | null
     if (!nodeEl) return
     const rect = nodeEl.getBoundingClientRect()
-    const z    = zoomRef.current
+    const z    = getZoom()
     activeDrag = {
       nodeId,
       startX:   e.clientX,
@@ -335,7 +332,7 @@ export function ResizeHandle({
       startW:   rect.width  / z,
       startH:   rect.height / z,
       setNodes,
-      getZoom:  () => zoomRef.current,
+      getZoom,
     }
     document.body.style.userSelect = 'none'
     document.body.style.cursor     = 'nwse-resize'
@@ -344,7 +341,6 @@ export function ResizeHandle({
   return (
     <div
       ref={zoneRef}
-      className="nodrag nopan"
       style={{
         position:      'absolute',
         bottom:        -(RH_SIZE + 8),
@@ -354,11 +350,12 @@ export function ResizeHandle({
         display:       'flex',
         alignItems:    'flex-start',
         justifyContent:'flex-start',
-        pointerEvents: 'all',
+        // pointerEvents: 'none' — prevents overflow pointer-events from
+        // triggering Chromium compositor layer promotion on the node,
+        // which would rasterize the node at zoom=1 and scale it up → blur.
+        pointerEvents: 'none',
         zIndex:        30,
-        cursor:        'nwse-resize',
       }}
-      onMouseDown={handleMouseDown}
     >
       <div
         ref={innerRef}
@@ -378,6 +375,21 @@ export function ResizeHandle({
           />
         </svg>
       </div>
+      {/* Interactive target sits at the node's corner (inside bounds) so it
+          never creates an overflow hit-region that forces layer promotion. */}
+      <div
+        className="nodrag nopan"
+        style={{
+          position:      'absolute',
+          bottom:        RH_SIZE + 8,
+          right:         RH_SIZE + 8,
+          width:         RH_SIZE,
+          height:        RH_SIZE,
+          pointerEvents: 'all',
+          cursor:        'nwse-resize',
+        }}
+        onMouseDown={handleMouseDown}
+      />
     </div>
   )
 }
