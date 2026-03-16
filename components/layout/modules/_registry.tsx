@@ -5,6 +5,8 @@ import { NodeProps } from 'reactflow'
 import { Handle, Position } from 'reactflow'
 import type { CustomNodeData, ModuleModalProps } from './_types'
 import { HandleDef, MagneticZone, ResizeHandle, SIDE_TO_POSITION, getHandleStyle, getHandleClassName, sideToHandleType } from './_handle'
+import { GeneratingOverlay } from './_overlay'
+import { useNodePolling }    from './_polling'
 
 import * as Standard from './standard'
 import * as Text     from './text'
@@ -71,17 +73,23 @@ function NodeWrapper({
   label,
   children,
   nodeId,
+  data,
 }: {
   handles:  HandleDef[]
   label?:   string
   children: React.ReactNode
   nodeId?:  string
+  data?:    any
 }) {
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const hoveredRef = useRef(false)
   const isHovered  = useCallback(() => hoveredRef.current, [])
 
+  const { genProgress } = useNodePolling(nodeId, data)
+
   return (
     <div
+      ref={wrapperRef}
       className="relative"
       onMouseEnter={() => { hoveredRef.current = true  }}
       onMouseLeave={() => { hoveredRef.current = false }}
@@ -107,6 +115,16 @@ function NodeWrapper({
         </React.Fragment>
       ))}
       {nodeId && <ResizeHandle nodeId={nodeId} isHovered={isHovered} />}
+
+      {/* Generating overlay — lives here so it persists when editor closes */}
+      {data?.isGenerating && wrapperRef.current && (
+        <GeneratingOverlay
+          cssW={wrapperRef.current.offsetWidth}
+          cssH={wrapperRef.current.offsetHeight}
+          progress={genProgress}
+        />
+      )}
+
       {children}
     </div>
   )
@@ -121,7 +139,7 @@ const CustomNodeInner = ({ id, data, selected }: NodeProps<CustomNodeData>) => {
   const mod = MODULE_BY_ID[data.type]
   if (!mod?.NodeUI) return null
   return (
-    <NodeWrapper handles={(mod.handles ?? []) as HandleDef[]} label={data.label} nodeId={id}>
+    <NodeWrapper handles={(mod.handles ?? []) as HandleDef[]} label={data.label} nodeId={id} data={data}>
       <mod.NodeUI data={data} selected={selected} />
     </NodeWrapper>
   )
@@ -130,7 +148,7 @@ export const CustomNode = memo(CustomNodeInner)
 
 // BatchNode — was LoopNode
 const BatchNodeInner = ({ id, data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={Batch.handles as HandleDef[]} nodeId={id}>
+  <NodeWrapper handles={Batch.handles as HandleDef[]} nodeId={id} data={data}>
     <Batch.NodeUI data={data} selected={selected} />
   </NodeWrapper>
 )
@@ -138,7 +156,7 @@ export const BatchNode = memo(BatchNodeInner)
 
 // CycleNode — no external handles (handles rendered inside NodeUI)
 const CycleNodeInner = ({ id, data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={[]} nodeId={id}>
+  <NodeWrapper handles={[]} nodeId={id} data={data}>
     <Cycle.NodeUI data={data} selected={selected} />
   </NodeWrapper>
 )
@@ -146,7 +164,7 @@ export const CycleNode = memo(CycleNodeInner)
 
 // LassoNode — no external handles (pure container)
 const LassoNodeInner = ({ id, data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={[]} nodeId={id}>
+  <NodeWrapper handles={[]} nodeId={id} data={data}>
     <Lasso.NodeUI data={data} selected={selected} />
   </NodeWrapper>
 )
@@ -156,7 +174,7 @@ export const LassoNode = memo(LassoNodeInner)
 const StandardNodeInner = ({ id, data, selected }: NodeProps<any>) => {
   if (!data) return null
   return (
-    <NodeWrapper handles={Standard.handles as HandleDef[]} label={data.name || data.label} nodeId={id}>
+    <NodeWrapper handles={Standard.handles as HandleDef[]} label={data.name || data.label} nodeId={id} data={data}>
       <Standard.NodeUI data={data} selected={selected} />
     </NodeWrapper>
   )

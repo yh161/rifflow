@@ -25,7 +25,6 @@ import type { CustomNodeData } from "../modules/_types"
 import { useUpstreamData } from "@/hooks/useUpstreamData"
 
 import { NodeActionBar }                          from "./_action_bar"
-import { GeneratingOverlay }                      from "./_overlay"
 import { ModeToggle }    from "./_panels"
 import type { NodeMode } from "../modules/_types"
 import { MODULE_BY_ID }  from "../modules/_registry"
@@ -57,6 +56,7 @@ export interface NodeEditorProps {
   onLoopDeleteInstance?: (loopId: string, instanceIdx: number) => void
   onLoopSwitchView?: (loopId: string, viewIdx: number) => void
   onLoopRelease?: (loopId: string) => void
+  onLassoRelease?: (lassoId: string) => void
 }
 
 export function NodeEditor({
@@ -67,6 +67,7 @@ export function NodeEditor({
   onLoopDeleteInstance,
   onLoopSwitchView,
   onLoopRelease,
+  onLassoRelease,
 }: NodeEditorProps) {
   const nodes        = useNodes()
   const { setNodes, getNodes, getEdges } = useReactFlow()
@@ -95,12 +96,8 @@ export function NodeEditor({
   // ── Text-edit mode ───────────────────────────
   const [isTextEditing, setIsTextEditing] = useState(false)
 
-  // ── Generating state ─────────────────────────
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [genProgress,  setGenProgress]  = useState(0)
-  const genTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pollTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
-  const activeJobRef  = useRef<string | null>(null) // jobId currently being polled
+  // ── Generating state — read from node data (polling lives in NodeWrapper) ──
+  const isGenerating = !!data?.isGenerating
 
   // ── Workflow execution state (for lasso) ─────
   const [isExecutingWorkflow, setIsExecutingWorkflow] = useState(false)
@@ -118,163 +115,16 @@ export function NodeEditor({
   getNodesRef.current = () => getNodes()
   getEdgesRef.current = () => getEdges()
 
-  // ── Cleanup on unmount ───────────────────────
-  useEffect(() => () => {
-    if (genTimerRef.current)  clearInterval(genTimerRef.current)
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-  }, [])
-
-  // ── Apply image result to node ───────────────
-  const applyImageResult = useCallback(
-    async (b64: string, mime: string) => {
-      const byteString = atob(b64)
-      const ab         = new ArrayBuffer(byteString.length)
-      const ia         = new Uint8Array(ab)
-      for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i)
-      const blob = new Blob([ab], { type: mime })
-
-      // Upload to MinIO → persistent URL that survives page refreshes
-      let src: string
-      try {
-        const form = new FormData()
-        form.append(
-          'file',
-          new File([blob], `generated.${mime.split('/')[1] || 'png'}`, { type: mime }),
-        )
-        const res  = await fetch('/api/upload', { method: 'POST', body: form })
-        const json = await res.json()
-        if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
-        src = json.url as string
-      } catch (err) {
-        console.error('[applyImageResult] MinIO upload failed, falling back to blob URL:', err)
-        src = URL.createObjectURL(blob)
-      }
-
-      const img = new window.Image()
-      img.src = src
-      await new Promise<void>((resolve) => { img.onload = () => resolve() })
-
-      const nw      = img.naturalWidth
-      const nh      = img.naturalHeight
-      const minSide = Math.min(nw, nh)
-      const scale   = 180 / minSide
-      const w       = Math.round(nw * scale)
-      const h       = Math.round(nh * scale)
-
-      setNodes((ns) => ns.map((n) => {
-        if (n.id !== nodeId) return n
-        return {
-          ...n,
-          style: { ...n.style, width: w, height: h },
-          data: {
-            ...n.data,
-            src,
-            naturalWidth:  nw,
-            naturalHeight: nh,
-            width:  w,
-            height: h,
-            isGenerating:  false,
-            activeJobId:   undefined,
-          },
-        }
-      }))
-    },
-    [nodeId, setNodes],
-  )
-
-  // ── Stop generating UI ───────────────────────
-  const stopGenerating = useCallback(() => {
-    if (genTimerRef.current)  clearInterval(genTimerRef.current)
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-    activeJobRef.current = null
-    setIsGenerating(false)
-    setGenProgress(0)
-    setNodes((ns) => ns.map((n) =>
-      n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
-    ))
-  }, [nodeId, setNodes])
-
-  // ── Poll a job until terminal state ─────────
-  const startPolling = useCallback(
-    (jobId: string) => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-
-      pollTimerRef.current = setInterval(async () => {
-        // Abandon if a newer job has taken over
-        if (activeJobRef.current !== jobId) {
-          clearInterval(pollTimerRef.current!)
-          return
-        }
-
-        try {
-          const res     = await fetch(`/api/jobs/${jobId}`)
-          const rawText = await res.text()
-          let json: any
-          try { json = JSON.parse(rawText) } catch {
-            console.error("[poll] non-JSON response:", rawText.slice(0, 300))
-            return // 网络/服务端临时错误，继续轮询
-          }
-
-          if (json.status === "done") {
-            clearInterval(pollTimerRef.current!)
-            if (genTimerRef.current) clearInterval(genTimerRef.current)
-            setGenProgress(1)
-
-            // Conflict check: if user already started a new job, discard
-            if (activeJobRef.current !== jobId) return
-
-            const result = json.result as Record<string, any>
-
-            if (data?.type === "image") {
-              await applyImageResult(result.b64, result.mime)
-            } else {
-              setNodes((ns) => ns.map((n) =>
-                n.id !== nodeId ? n : {
-                  ...n,
-                  data: { ...n.data, content: result.content, isGenerating: false, activeJobId: undefined },
-                }
-              ))
-            }
-
-            setIsGenerating(false)
-            setGenProgress(0)
-            activeJobRef.current = null
-
-          } else if (json.status === "failed") {
-            clearInterval(pollTimerRef.current!)
-            console.error("[generate] job failed:", json.error)
-            stopGenerating()
-          }
-          // "pending" | "running" → continue polling
-        } catch (err) {
-          console.error("[generate] poll error:", err)
-          // Network error — keep polling (transient)
-        }
-      }, POLL_INTERVAL_MS)
-    },
-    [data?.type, nodeId, setNodes, applyImageResult, stopGenerating],
-  )
-
   // ─────────────────────────────────────────────
-  // handleStartGenerate — creates async job, starts polling
-  // Interface identical to original so ModalContent props unchanged.
+  // handleStartGenerate — creates job, writes to node.data.
+  // Polling and progress live in NodeWrapper (_polling.ts).
   // ─────────────────────────────────────────────
   const handleStartGenerate = useCallback(
     async (prompt: string, model: string, _params: Record<string, string>) => {
-      setIsGenerating(true)
-      setGenProgress(0)
+      // Signal generating immediately so the overlay appears
       setNodes((ns) => ns.map((n) =>
         n.id !== nodeId ? n : { ...n, data: { ...n.data, isEditing: false, isGenerating: true } }
       ))
-
-      // Fake progress crawl while waiting
-      let p = 0
-      if (genTimerRef.current) clearInterval(genTimerRef.current)
-      genTimerRef.current = setInterval(() => {
-        p += 0.006 + Math.random() * 0.006
-        if (p >= 0.9) { clearInterval(genTimerRef.current!); p = 0.9 }
-        setGenProgress(p)
-      }, 50)
 
       try {
         const res  = await fetch("/api/jobs", {
@@ -295,26 +145,27 @@ export function NodeEditor({
         }
 
         const { jobId } = json as { jobId: string }
-        activeJobRef.current = jobId
 
-        // Tag the node so conflict detection works after refresh
+        // Writing activeJobId triggers polling in NodeWrapper
         setNodes((ns) => ns.map((n) =>
           n.id !== nodeId ? n : { ...n, data: { ...n.data, activeJobId: jobId } }
         ))
 
-        startPolling(jobId)
-
       } catch (err) {
         console.error("[generate]", err)
-        stopGenerating()
+        setNodes((ns) => ns.map((n) =>
+          n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+        ))
       }
     },
-    [nodeId, data?.type, setNodes, startPolling, stopGenerating, upstreamData],
+    [nodeId, data?.type, setNodes, upstreamData],
   )
 
   const handleStopGenerate = useCallback(() => {
-    stopGenerating()
-  }, [stopGenerating])
+    setNodes((ns) => ns.map((n) =>
+      n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+    ))
+  }, [nodeId, setNodes])
 
   // ── File input ref ───────────────────────────
   const uploadInputRef      = useRef<HTMLInputElement>(null)
@@ -984,15 +835,9 @@ export function NodeEditor({
           loopInstanceCount={loopInstanceCount}
           onExecute={handleExecuteWorkflow}
           isExecuting={isExecutingWorkflow}
+          onLassoRelease={onLassoRelease ? () => onLassoRelease(nodeId) : undefined}
         />
       </div>
-
-      {/* Generating overlay */}
-      {isGenerating && (
-        <div className="absolute z-[500] pointer-events-none" style={{ left: screenX, top: screenY }}>
-          <GeneratingOverlay screenW={nodeW} screenH={nodeH} progress={genProgress} zoom={zoom} />
-        </div>
-      )}
 
       {/* ModeToggle + Panel */}
       {!isLoopInstanceView && (<>

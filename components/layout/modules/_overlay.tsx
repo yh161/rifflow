@@ -6,27 +6,26 @@ import React from "react"
  * GeneratingOverlay
  *
  * SVG progress bar that crawls along the node border.
- * Two synchronized streams start from the left-mid point:
- *   top stream:    left-mid → top-left corner → top-right corner → right-mid
- *   bottom stream: left-mid → bottom-left corner → bottom-right corner → right-mid
+ * Rendered inside the node's own React tree (CSS coordinate space).
  *
- * progress: 0–1  (fake timer for now — replace with backend signal later)
- * zoom: canvas zoom level, used to scale border-radius to match image.tsx
+ * cssW / cssH : node's CSS pixel dimensions (no zoom multiplier needed)
+ * borderRadius: node's CSS border-radius in pixels (default 12)
+ * progress    : 0–1
  */
 export function GeneratingOverlay({
-  screenW,
-  screenH,
+  cssW,
+  cssH,
+  borderRadius = 12,
   progress,
-  zoom,
 }: {
-  screenW: number
-  screenH: number
-  progress: number
-  zoom: number
+  cssW:          number
+  cssH:          number
+  borderRadius?: number
+  progress:      number
 }) {
-  const r  = 11 * zoom   // matches image.tsx 12px borderRadius scaled to canvas zoom
-  const w  = screenW
-  const h  = screenH
+  const r  = borderRadius
+  const w  = cssW
+  const h  = cssH
   const hw = h / 2
 
   const topPath = [
@@ -55,7 +54,14 @@ export function GeneratingOverlay({
     <svg
       width={w}
       height={h}
-      style={{ position: "absolute", top: 0, left: 0, overflow: "visible", pointerEvents: "none", zIndex: 10 }}
+      style={{
+        position:      "absolute",
+        top:           0,
+        left:          0,
+        overflow:      "visible",
+        pointerEvents: "none",
+        zIndex:        10,
+      }}
     >
       {/* Faint track */}
       <path d={topPath}    fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth={3} />
