@@ -67,7 +67,7 @@ export const NodeUI = ({
   return (
     <div
       className={cn(
-        'relative flex flex-col overflow-hidden transition-all duration-150',
+        'relative flex flex-col overflow-hidden transition-[box-shadow,border-color] duration-150',
         'bg-violet-50/80 border border-violet-200/60',
         selected       && 'border-violet-400/70 bg-violet-50/90',
         data.isEditing && '!border-violet-500 !rounded-none',

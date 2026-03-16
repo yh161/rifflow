@@ -110,7 +110,7 @@ export const NodeUI = ({
       className={cn(
         'relative overflow-hidden',
         'bg-white/80 border border-slate-200/80',
-        'transition-all duration-200',
+        'transition-[box-shadow,border-color] duration-200',
         selected
           ? 'border-amber-300/80'
           : 'shadow-[0_1px_4px_rgba(0,0,0,0.06)]',

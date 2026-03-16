@@ -234,6 +234,34 @@ export function useNodeOperations(canvasState: CanvasState) {
   }, [setEditorNodeId, setNodes, setEdges])
 
   // ─────────────────────────────────────────────
+  // Lasso release — strips children back to canvas
+  // ─────────────────────────────────────────────
+  const handleLassoRelease = useCallback((lassoId: string) => {
+    setEditorNodeId(null)
+    requestAnimationFrame(() => {
+      setNodes((ns) => {
+        const lasso = ns.find((n) => n.id === lassoId)
+        if (!lasso) return ns
+        return ns
+          .filter((n) => n.id !== lassoId)
+          .map((n) => {
+            if (n.parentNode !== lassoId) return n
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { parentNode, extent, ...rest } = n
+            return {
+              ...rest,
+              position: {
+                x: lasso.position.x + n.position.x,
+                y: lasso.position.y + n.position.y,
+              },
+            }
+          })
+      })
+      setEdges((es) => es.filter((e) => e.source !== lassoId && e.target !== lassoId))
+    })
+  }, [setEditorNodeId, setNodes, setEdges])
+
+  // ─────────────────────────────────────────────
   // Node placement operations
   // ─────────────────────────────────────────────
   const handlePlacementRequest = useCallback((
@@ -289,6 +317,7 @@ export function useNodeOperations(canvasState: CanvasState) {
     handleEditUpdate,
     handleDeleteNode,
     handleDeleteCustomNode,
+    handleLassoRelease,
     handlePlacementRequest,
     handleConfirmNode,
     centerPosition,

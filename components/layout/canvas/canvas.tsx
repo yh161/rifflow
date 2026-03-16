@@ -145,6 +145,7 @@ function CanvasLogic({
     handleEditUpdate: handleEditUpdateOp,
     handleDeleteNode: handleDeleteNodeOp,
     handleDeleteCustomNode,
+    handleLassoRelease,
     handlePlacementRequest: handlePlacementRequestOp,
     handleConfirmNode: handleConfirmNodeOp,
   } = nodeOperations
@@ -679,6 +680,7 @@ function CanvasLogic({
           onLoopDeleteInstance={handleLoopDeleteInstance}
           onLoopSwitchView={handleLoopSwitchView}
           onLoopRelease={handleLoopRelease}
+          onLassoRelease={handleLassoRelease}
         />
       )}
 

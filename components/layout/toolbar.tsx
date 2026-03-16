@@ -348,7 +348,7 @@ export default function Toolbar({
             title="Lasso selection"
             className={cn(
               "w-10 h-10 rounded-2xl flex items-center justify-center transition-all duration-200",
-              "text-amber-500 hover:text-amber-600 hover:bg-amber-50",
+              "text-slate-400 hover:text-slate-700 hover:bg-slate-100",
             )}
           >
             <Lasso size={16} strokeWidth={1.8} />

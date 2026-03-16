@@ -1,22 +1,16 @@
 "use client"
 
-import React, { useState } from "react"
+import React from "react"
 import {
   Upload, Download, Trash2, Pencil,
-  Bold, Italic, Underline,
-  AlignLeft, AlignCenter, AlignRight,
-  ChevronDown, ChevronsLeft,
+  Bold, Italic, Code, Quote, List,
+  ChevronsLeft,
   ChevronLeft, ChevronRight, Plus, LayoutTemplate,
-  Play, X,
+  Play, Ungroup,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import type { CustomNodeData } from "../modules/_types"
+import { insertMarkdown } from "../modules/_markdown_insert"
 
 // ─────────────────────────────────────────────
 // ActionButton
@@ -63,70 +57,49 @@ export function ActionButton({
 }
 
 // ─────────────────────────────────────────────
-// TextFormatBar
+// TextFormatBar — Markdown edition
 // ─────────────────────────────────────────────
-const FONT_SIZES = ["12px", "14px", "16px", "18px", "20px", "24px", "28px"]
-
 export function TextFormatBar({ onCollapse }: { onCollapse: () => void }) {
-  const [fontSize, setFontSize] = useState("14px")
-  const exec = (cmd: string) => document.execCommand(cmd, false, undefined)
-
-  const applyFontSize = (sz: string) => {
-    setFontSize(sz)
-    const sel = window.getSelection()
-    if (!sel || sel.rangeCount === 0) return
-    const range = sel.getRangeAt(0)
-    const span = document.createElement("span")
-    span.style.fontSize = sz
-    try { range.surroundContents(span) } catch { /* collapsed */ }
-  }
-
-  const ToolBtn = ({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) => (
+  const ToolBtn = ({
+    onClick,
+    title,
+    children,
+    label,
+  }: {
+    onClick: () => void
+    title: string
+    children: React.ReactNode
+    label?: string
+  }) => (
     <button
       title={title}
       onMouseDown={(e) => { e.preventDefault(); onClick() }}
-      className="p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors flex-shrink-0"
+      className="flex items-center gap-0.5 px-1.5 py-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors flex-shrink-0"
     >
       {children}
+      {label && <span className="text-[10px] font-semibold leading-none">{label}</span>}
     </button>
   )
 
   return (
     <div className="flex items-center gap-0.5 px-1">
-      <ToolBtn title="Bold"      onClick={() => exec("bold")}><Bold size={12} /></ToolBtn>
-      <ToolBtn title="Italic"    onClick={() => exec("italic")}><Italic size={12} /></ToolBtn>
-      <ToolBtn title="Underline" onClick={() => exec("underline")}><Underline size={12} /></ToolBtn>
+      {/* Headings */}
+      <ToolBtn title="Heading 1" onClick={() => insertMarkdown('# ', '', true)}  label="H1" ><span className="sr-only">H1</span></ToolBtn>
+      <ToolBtn title="Heading 2" onClick={() => insertMarkdown('## ', '', true)} label="H2" ><span className="sr-only">H2</span></ToolBtn>
+      <ToolBtn title="Heading 3" onClick={() => insertMarkdown('### ', '', true)}label="H3" ><span className="sr-only">H3</span></ToolBtn>
 
       <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            className="flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-100 text-xs text-slate-500 font-medium transition-colors flex-shrink-0"
-          >
-            {fontSize}<ChevronDown size={9} />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-[80px]">
-          {FONT_SIZES.map((sz) => (
-            <DropdownMenuItem
-              key={sz}
-              onMouseDown={(e) => e.preventDefault()}
-              className={cn("text-xs", fontSize === sz && "font-semibold text-slate-800")}
-              onClick={() => applyFontSize(sz)}
-            >
-              {sz}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {/* Inline */}
+      <ToolBtn title="Bold"          onClick={() => insertMarkdown('**', '**')}><Bold   size={12} /></ToolBtn>
+      <ToolBtn title="Italic"        onClick={() => insertMarkdown('*',  '*' )}><Italic size={12} /></ToolBtn>
+      <ToolBtn title="Inline code"   onClick={() => insertMarkdown('`',  '`' )}><Code   size={12} /></ToolBtn>
 
       <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
 
-      <ToolBtn title="Align left"   onClick={() => exec("justifyLeft")}><AlignLeft size={12} /></ToolBtn>
-      <ToolBtn title="Align center" onClick={() => exec("justifyCenter")}><AlignCenter size={12} /></ToolBtn>
-      <ToolBtn title="Align right"  onClick={() => exec("justifyRight")}><AlignRight size={12} /></ToolBtn>
+      {/* Block */}
+      <ToolBtn title="Blockquote"    onClick={() => insertMarkdown('> ',   '', true)}><Quote size={12} /></ToolBtn>
+      <ToolBtn title="Bullet list"   onClick={() => insertMarkdown('- ',   '', true)}><List  size={12} /></ToolBtn>
 
       <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
 
@@ -323,6 +296,7 @@ export function NodeActionBar({
   onLoopGoTo,
   loopInstanceCount,
   // lasso-specific
+  onLassoRelease,
   onExecute,
   isExecuting,
 }: {
@@ -337,6 +311,7 @@ export function NodeActionBar({
   onLoopDeleteInstance?: () => void
   onLoopGoTo?: (idx: number) => void
   loopInstanceCount?: number
+  onLassoRelease?: () => void
   onExecute?: () => void
   isExecuting?: boolean
 }) {
@@ -436,6 +411,8 @@ export function NodeActionBar({
             disabled={isExecuting}
             className={isExecuting ? "text-amber-500" : "text-amber-500 hover:text-amber-600 hover:bg-amber-50"}
           />
+          <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
+          <ActionButton icon={Ungroup} label="Release" onClick={onLassoRelease} />
           <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
           <ActionButton icon={Trash2} label="Delete" onClick={onDelete} danger />
         </>
