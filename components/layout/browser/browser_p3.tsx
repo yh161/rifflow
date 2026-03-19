@@ -59,7 +59,6 @@ export function P3() {
         if (draftRes.ok) { const d = await draftRes.json(); setDrafts(d.templates ?? []) }
         if (favRes.ok)   {
           const d = await favRes.json()
-          // favorites API 返回带 template 字段的对象
           setFavorites((d.favorites ?? []).map((f: { template: TemplateSummary }) => f.template))
         }
       } catch (e) {
@@ -68,7 +67,12 @@ export function P3() {
         setLoading(false)
       }
     }
+
     loadAll()
+
+    // 监听 PublishModal 保存事件，自动刷新
+    window.addEventListener("template:saved", loadAll)
+    return () => window.removeEventListener("template:saved", loadAll)
   }, [session?.user?.id])
 
   const tabs: { key: Tab; label: string; count: number }[] = [

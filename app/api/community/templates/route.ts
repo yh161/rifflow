@@ -10,6 +10,16 @@ export async function GET(req: NextRequest) {
     const { searchParams } = req.nextUrl
     const session = await getServerSession(authOptions)
 
+    const creatorId = searchParams.get("creatorId") ?? undefined
+    const status    = searchParams.get("status")    ?? undefined
+
+    // 草稿只能由创作者本人查询
+    if (status === "draft") {
+      if (!session?.user?.id || session.user.id !== creatorId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      }
+    }
+
     const filter = {
       category:    searchParams.get("category")    ?? undefined,
       pricingType: searchParams.get("pricingType") ?? undefined,
@@ -17,6 +27,8 @@ export async function GET(req: NextRequest) {
       orderBy:     (searchParams.get("orderBy") ?? "newest") as "newest" | "popular" | "rating",
       limit:       Number(searchParams.get("limit")  ?? 20),
       offset:      Number(searchParams.get("offset") ?? 0),
+      creatorId,
+      status,
     }
 
     const templates = await templateRepository.list(filter)

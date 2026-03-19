@@ -32,9 +32,10 @@ export const templateRepository = {
   async list(filter: TemplateListFilter = {}): Promise<TemplateSummary[]> {
     const {
       category, pricingType, search, isFeatured,
-      creatorId, status = "published",
-      limit = 20, offset = 0, orderBy = "newest",
+      creatorId, limit = 20, offset = 0, orderBy = "newest",
     } = filter
+    // 未指定 status 时默认只查已发布，草稿需显式传 "draft"
+    const status = filter.status ?? "published"
 
     const where: Prisma.TemplateWhereInput = {
       status,

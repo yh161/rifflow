@@ -234,6 +234,8 @@ export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange
 
       // 同步封面预览到 toolbar
       if (form.coverPreview) onCoverChange?.(form.coverPreview)
+      // 通知 browser 刷新草稿/发布列表
+      window.dispatchEvent(new CustomEvent("template:saved"))
       close()
     } catch (e) {
       setError(e instanceof Error ? e.message : "发布失败，请重试")
