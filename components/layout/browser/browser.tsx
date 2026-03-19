@@ -42,6 +42,7 @@ import {
   FolderOpen,
   Video,
   Zap,
+  ChevronLeft,
 } from "lucide-react"
 
 // Sub-page components
@@ -50,6 +51,8 @@ import { P2 } from "./browser_p2"
 import { P3 } from "./browser_p3"
 import { LibraryPage } from "./browser_library"
 import { FavoritesPage } from "./browser_favorites"
+import { AccountPage } from "./browser_account"
+import { PricingPage } from "./browser_pricing"
 
 // User-defined workflow collections (analogous to user-created playlists in Apple Music)
 const workflowCollections = [
@@ -72,7 +75,24 @@ interface PanelProps {
 
 export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChange, isRunning = false, importRef, exportRef }: PanelProps) {
   const setIsOpen = (val: boolean) => onOpenChange?.(val)
-  const [activePage, setActivePage] = useState<"watch" | "browse" | "create" | "library" | "favorites">("watch");
+  const [activePage, setActivePage] = useState<"watch" | "browse" | "create" | "library" | "favorites" | "account" | "pricing">("watch")
+  const [prevPage, setPrevPage]     = useState<typeof activePage>("watch")
+
+  const navigate = (page: typeof activePage) => {
+    setPrevPage(activePage)
+    setActivePage(page)
+  }
+
+  // Avatar click → account page
+  React.useEffect(() => {
+    const handler = () => navigate("account")
+    window.addEventListener("navigate:account", handler)
+    return () => window.removeEventListener("navigate:account", handler)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage])
+
+  // Fullscreen pages (no sidebar)
+  const isFullscreen = activePage === "account" || activePage === "pricing"
 
   // Completely hidden during run mode — no edge, no interaction
   if (isRunning) {
@@ -186,18 +206,13 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
             </MenubarContent>
           </MenubarMenu>
           <MenubarMenu>
-            <MenubarTrigger>Account</MenubarTrigger>
-            <MenubarContent forceMount>
-              <MenubarRadioGroup value="benoit">
-                <MenubarRadioItem value="andy">Andy</MenubarRadioItem>
-                <MenubarRadioItem value="benoit">Benoit</MenubarRadioItem>
-                <MenubarRadioItem value="Luis">Luis</MenubarRadioItem>
-              </MenubarRadioGroup>
-              <MenubarSeparator />
-              <MenubarItem inset>Manage Team...</MenubarItem>
-              <MenubarSeparator />
-              <MenubarItem inset>Add Account...</MenubarItem>
-            </MenubarContent>
+            <MenubarTrigger onClick={() => navigate("account")}>Account</MenubarTrigger>
+          </MenubarMenu>
+          <MenubarMenu>
+            <MenubarTrigger onClick={() => navigate("pricing")}>
+              <Zap className="h-3.5 w-3.5 mr-1 text-blue-500" />
+              定价方案
+            </MenubarTrigger>
           </MenubarMenu>
         
           <button 
@@ -213,10 +228,25 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
 
         {/* --- Main Layout --- */}
         <div className="border-t bg-background">
-          <div className="grid lg:grid-cols-5">
-            
-            {/* --- Left Sidebar (Menu) --- */}
-            <aside className="hidden pb-12 lg:flex flex-col h-[calc(100vh-120px)]">
+          <div className={cn("grid", isFullscreen ? "" : "lg:grid-cols-5")}>
+
+            {/* ── Back button row for fullscreen pages ── */}
+            {isFullscreen && (
+              <div className="px-4 pt-4 pb-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-muted-foreground hover:text-foreground -ml-1"
+                  onClick={() => setActivePage(prevPage)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  返回
+                </Button>
+              </div>
+            )}
+
+            {/* --- Left Sidebar (Menu) — hidden on fullscreen pages --- */}
+            <aside className={cn("hidden pb-12 lg:flex flex-col h-[calc(100vh-120px)]", isFullscreen && "lg:hidden")}>
               <div className="px-6 py-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -320,13 +350,20 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
             </aside>
 
             {/* --- Right Content Area --- */}
-            <div className="col-span-3 lg:col-span-4 lg:border-l flex h-[calc(100vh-120px)]"> 
+            <div className={cn(
+              "flex",
+              isFullscreen
+                ? "col-span-full h-[calc(100vh-80px)]"
+                : "col-span-3 lg:col-span-4 lg:border-l h-[calc(100vh-120px)]",
+            )}>
               <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8">
                 {activePage === "watch"     && <P1 />}
                 {activePage === "browse"    && <P2 />}
                 {activePage === "create"    && <P3 />}
                 {activePage === "library"   && <LibraryPage />}
                 {activePage === "favorites" && <FavoritesPage />}
+                {activePage === "account"   && <AccountPage onPricing={() => navigate("pricing")} />}
+                {activePage === "pricing"   && <PricingPage />}
               </div>
             </div>
 

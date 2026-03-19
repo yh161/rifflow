@@ -37,6 +37,7 @@ export default function UserAvatar({ isSidebarOpen, isRunning }: UserAvatarProps
     >
       {/* ── Avatar ── */}
       <button
+        onClick={() => window.dispatchEvent(new CustomEvent("navigate:account"))}
         className={cn(
           "w-[52px] h-[52px] rounded-full overflow-hidden shrink-0",
           "ring-1 ring-white/70 ring-offset-0",
