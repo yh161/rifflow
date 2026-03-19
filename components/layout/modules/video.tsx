@@ -22,7 +22,7 @@ export const meta = {
 
 export const defaultData: Partial<CustomNodeData> = {
   type: 'video',
-  label: 'New Video',
+  label: 'Video',
 }
 
 export const handles: HandleDef[] = [
@@ -54,7 +54,7 @@ export const NodeUI = ({
       className={cn(
         'overflow-hidden relative select-none',
         'bg-white/70 border border-slate-300/60',
-        'transition-all duration-200',
+        'transition-[box-shadow,border-color] duration-200',
         selected && 'ring-2 ring-violet-300 ring-offset-1 border-violet-200',
       )}
       style={{

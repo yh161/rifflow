@@ -2,10 +2,16 @@ import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { JobService } from "@/app/services/job.service"
+import { resolvePromptToMultimodal } from "@/lib/prompt-resolver"
+import type { MultimodalContent } from "@/lib/prompt-resolver"
+import type { UpstreamNodeData } from "@/hooks/useUpstreamData"
 
 // ─────────────────────────────────────────────
 // POST /api/jobs
-// Body: { nodeId, nodeType, prompt, model }
+// Body: { nodeId, nodeType, prompt?, content?, model, upstreamData? }
+//   - prompt: string (legacy, for backward compatibility)
+//   - content: MultimodalContent[] (new format, preferred)
+//   - upstreamData: UpstreamNodeData[] (for resolving {{nodeId}} references)
 // Returns: { jobId }
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
@@ -15,10 +21,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { nodeId, nodeType, prompt, model } = await req.json()
+    const { nodeId, nodeType, prompt, content, model, upstreamData, batchParams } = await req.json()
 
-    if (!prompt?.trim()) {
-      return NextResponse.json({ error: "Prompt is required" }, { status: 400 })
+    // Support both legacy string prompt and new multimodal content format
+    const hasContent = content && Array.isArray(content) && content.length > 0
+    const hasPrompt = prompt && (typeof prompt === "string" ? prompt.trim().length > 0 : true)
+    
+    if (!hasContent && !hasPrompt) {
+      return NextResponse.json({ error: "Prompt or content is required" }, { status: 400 })
+    }
+
+    // Normalize content to MultimodalContent[] format
+    let normalizedContent: MultimodalContent[]
+    if (hasContent) {
+      normalizedContent = content as MultimodalContent[]
+    } else if (typeof prompt === "string") {
+      // Resolve {{nodeId}} references if upstreamData is provided
+      // upstreamData.src is already base64 (converted by useUpstreamData hook)
+      if (upstreamData && Array.isArray(upstreamData) && upstreamData.length > 0) {
+        normalizedContent = await resolvePromptToMultimodal(prompt, upstreamData as UpstreamNodeData[])
+      } else {
+        normalizedContent = [{ type: "text", text: prompt }]
+      }
+    } else {
+      normalizedContent = prompt as MultimodalContent[]
     }
 
     const jobService = new JobService()
@@ -26,8 +52,9 @@ export async function POST(req: NextRequest) {
       userId: session.user.id,
       nodeId,
       nodeType,
-      prompt,
-      model
+      content: normalizedContent,
+      model,
+      ...(batchParams && { batchParams }),
     })
 
     if (!result.success) {
@@ -42,8 +69,9 @@ export async function POST(req: NextRequest) {
       void jobService.executeJob(result.jobId, {
         userId: session.user.id,
         nodeType,
-        prompt,
-        model
+        content: normalizedContent,
+        model,
+        ...(batchParams && { batchParams }),
       })
     }
 

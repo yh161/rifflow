@@ -10,8 +10,8 @@ interface GhostCursorProps {
 
 export function GhostCursor({ activeTool, mousePos, ghostZoom }: GhostCursorProps) {
   // Ghost cursor only for regular node types (standard, text, image, video, gate, seed, etc.)
-  // Container types (loop, batch, cycle) are created via drag-selection, not click placement
-  if (!activeTool || activeTool === "loop" || activeTool === "batch" || activeTool === "cycle") return null
+  // Container types (batch, cycle, lasso) are created via drag-selection, not click placement
+  if (!activeTool || activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso") return null
 
   return (
     <div

@@ -2,11 +2,11 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { MessageSquare, Play, Pause, Square } from "lucide-react"
+import { MessageSquare, Play, Pause, Square, Lasso } from "lucide-react"
 
 import { MODULES } from "@/components/layout/modules/_registry"
 import { NodePickerMenu } from "@/components/layout/node_picker"
-import RunConsole, { type LogEntry } from "@/components/layout/run-console"
+import RunDetail from "@/components/layout/run-detail/run-detail"
 
 // ─────────────────────────────────────────────
 // Clean plus icon — single path, no intersection seam
@@ -190,8 +190,7 @@ interface ToolbarProps {
   onResume: () => void
   onStop: () => void
   // Console
-  logs: LogEntry[]
-  onSendInput?: (text: string) => void
+  onOpenLog?: () => void
   // Favorites — quick-launch shortcuts
   favorites: string[]
   onToggleFavorite: (typeId: string) => void
@@ -207,8 +206,7 @@ export default function Toolbar({
   onPause,
   onResume,
   onStop,
-  logs,
-  onSendInput,
+  onOpenLog,
   favorites,
   onToggleFavorite,
 }: ToolbarProps) {
@@ -342,6 +340,20 @@ export default function Toolbar({
 
           <div className="w-5 h-px bg-slate-200 my-0.5" />
 
+          {/* Lasso tool */}
+          <button
+            onClick={() => onSelectTool("lasso")}
+            title="Lasso selection"
+            className={cn(
+              "w-10 h-10 rounded-2xl flex items-center justify-center transition-all duration-200",
+              "text-slate-400 hover:text-slate-700 hover:bg-slate-100",
+            )}
+          >
+            <Lasso size={16} strokeWidth={1.8} />
+          </button>
+
+          <div className="w-5 h-px bg-slate-200 my-0.5" />
+
           {/* Sidebar toggle */}
           <button
             onClick={(e) => { e.stopPropagation(); onToggleSidebar() }}
@@ -366,11 +378,15 @@ export default function Toolbar({
               : "opacity-0 scale-90 pointer-events-none",
           )}
         >
-          <RunConsole
+          <RunDetail
             isVisible={isRunning}
+            isRunning={isRunning}
             isPaused={isPaused}
-            logs={logs}
-            onSendInput={onSendInput}
+            onRun={onRun}
+            onPause={onPause}
+            onResume={onResume}
+            onStop={onStop}
+            onOpenLog={onOpenLog}
           />
         </div>
       </div>

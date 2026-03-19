@@ -133,7 +133,7 @@ export function useNodeOperations(canvasState: CanvasState) {
 
     removeGhost()
 
-    if (type === "batch" || type === "cycle") {
+    if (type === "batch" || type === "cycle" || type === "lasso") {
       setNodes((nds) => nds.map((n) => n.selected ? { ...n, selected: false } : n))
       clearQuickAddMenu()
       return
@@ -234,6 +234,34 @@ export function useNodeOperations(canvasState: CanvasState) {
   }, [setEditorNodeId, setNodes, setEdges])
 
   // ─────────────────────────────────────────────
+  // Lasso release — strips children back to canvas
+  // ─────────────────────────────────────────────
+  const handleLassoRelease = useCallback((lassoId: string) => {
+    setEditorNodeId(null)
+    requestAnimationFrame(() => {
+      setNodes((ns) => {
+        const lasso = ns.find((n) => n.id === lassoId)
+        if (!lasso) return ns
+        return ns
+          .filter((n) => n.id !== lassoId)
+          .map((n) => {
+            if (n.parentNode !== lassoId) return n
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { parentNode, extent, ...rest } = n
+            return {
+              ...rest,
+              position: {
+                x: lasso.position.x + n.position.x,
+                y: lasso.position.y + n.position.y,
+              },
+            }
+          })
+      })
+      setEdges((es) => es.filter((e) => e.source !== lassoId && e.target !== lassoId))
+    })
+  }, [setEditorNodeId, setNodes, setEdges])
+
+  // ─────────────────────────────────────────────
   // Node placement operations
   // ─────────────────────────────────────────────
   const handlePlacementRequest = useCallback((
@@ -241,7 +269,7 @@ export function useNodeOperations(canvasState: CanvasState) {
     position: { x: number; y: number },
     onActiveTool: (tool: string | null) => void,
   ) => {
-    if (type === "batch" || type === "cycle") return
+    if (type === "batch" || type === "cycle" || type === "lasso") return
 
     const mod = MODULE_BY_ID[type]
     onActiveTool(null)
@@ -251,9 +279,9 @@ export function useNodeOperations(canvasState: CanvasState) {
       const id = `${type}-${Date.now()}`
       setNodes((nds) => nds.concat({
         id,
-        type: type === "batch" ? "BatchNode" : type === "cycle" ? "CycleNode" : "CustomNode",
+        type: type === "batch" ? "BatchNode" : type === "cycle" ? "CycleNode" : type === "lasso" ? "LassoNode" : "CustomNode",
         position: centeredPos,
-        ...(( type === "batch" || type === "cycle") && { style: { width: mod?.defaultData?.width ?? 520, height: mod?.defaultData?.height ?? 400 }, zIndex: -1 }),
+        ...(( type === "batch" || type === "cycle" || type === "lasso") && { style: { width: mod?.defaultData?.width ?? 520, height: mod?.defaultData?.height ?? 400 }, zIndex: -1 }),
         data: { ...mod?.defaultData, type: type as any },
       }))
       setEditorNodeId(id)
@@ -289,6 +317,7 @@ export function useNodeOperations(canvasState: CanvasState) {
     handleEditUpdate,
     handleDeleteNode,
     handleDeleteCustomNode,
+    handleLassoRelease,
     handlePlacementRequest,
     handleConfirmNode,
     centerPosition,

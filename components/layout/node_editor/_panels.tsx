@@ -1,6 +1,7 @@
 "use client"
 
-import React, { useState, useRef, useLayoutEffect } from "react"
+import React, { useState, useRef, useLayoutEffect, useCallback } from "react"
+import { useReactFlow } from "reactflow"
 import { Sparkles, Zap, RefreshCw, Square, Bot, Hand, ChevronUp, Infinity, Hash } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
@@ -11,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import * as SliderPrimitive from "@radix-ui/react-slider"
 import type { CustomNodeData, NodeMode } from "../modules/_types"
+import { UpstreamReference } from "./_upstream_reference"
 
 // Re-export for any existing consumers
 export type { NodeMode }
@@ -203,6 +205,7 @@ const TEXT_PARAMS: ParamDef[] = [
 
 export function GenerateTextPanel({
   data,
+  nodeId,
   onDataChange,
   mode,
   isGenerating,
@@ -211,6 +214,7 @@ export function GenerateTextPanel({
   placeholder,
 }: {
   data: CustomNodeData
+  nodeId?: string
   /** Direct callback — preferred over data.onDataChange to avoid async injection timing. */
   onDataChange?: (u: Partial<CustomNodeData>) => void
   mode: NodeMode
@@ -222,6 +226,7 @@ export function GenerateTextPanel({
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? TEXT_MODELS[0].id)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
@@ -239,9 +244,37 @@ export function GenerateTextPanel({
   const canSubmit   = prompt.trim().length > 0
   const buttonLabel = isAuto ? "Save" : "Generate"
 
+  // Insert reference at cursor position
+  const handleInsertReference = useCallback((ref: string) => {
+    if (!textareaRef.current) {
+      setPrompt(prompt + ref)
+      return
+    }
+    
+    const textarea = textareaRef.current
+    const start = textarea.selectionStart
+    const end = textarea.selectionEnd
+    const newPrompt = prompt.slice(0, start) + ref + prompt.slice(end)
+    setPrompt(newPrompt)
+    
+    // Move cursor after inserted reference
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(start + ref.length, start + ref.length)
+    })
+  }, [prompt, setPrompt])
+
   return (
     <div className="flex flex-col">
+      {/* Upstream reference area */}
+      {nodeId && (
+        <UpstreamReference
+          nodeId={nodeId}
+          onInsertReference={handleInsertReference}
+        />
+      )}
       <textarea
+        ref={textareaRef}
         value={prompt}
         onChange={(e) => !isGenerating && setPrompt(e.target.value)}
         placeholder={
@@ -304,6 +337,7 @@ const IMAGE_MODELS = [
 
 export function GenerateImagePanel({
   data,
+  nodeId,
   onDataChange,
   hasSrc,
   mode,
@@ -312,6 +346,7 @@ export function GenerateImagePanel({
   onStop,
 }: {
   data: CustomNodeData
+  nodeId?: string
   /** Direct callback — preferred over data.onDataChange to avoid async injection timing. */
   onDataChange?: (u: Partial<CustomNodeData>) => void
   hasSrc: boolean
@@ -323,6 +358,7 @@ export function GenerateImagePanel({
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? IMAGE_MODELS[0].id)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
@@ -341,9 +377,37 @@ export function GenerateImagePanel({
   const ActionIcon  = hasSrc ? RefreshCw : isAuto ? Sparkles : Zap
   const buttonLabel = isAuto ? "Save" : hasSrc ? "Regenerate" : "Generate"
 
+  // Insert reference at cursor position
+  const handleInsertReference = useCallback((ref: string) => {
+    if (!textareaRef.current) {
+      setPrompt(prompt + ref)
+      return
+    }
+    
+    const textarea = textareaRef.current
+    const start = textarea.selectionStart
+    const end = textarea.selectionEnd
+    const newPrompt = prompt.slice(0, start) + ref + prompt.slice(end)
+    setPrompt(newPrompt)
+    
+    // Move cursor after inserted reference
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(start + ref.length, start + ref.length)
+    })
+  }, [prompt, setPrompt])
+
   return (
     <div className="flex flex-col">
+      {/* Upstream reference area */}
+      {nodeId && (
+        <UpstreamReference
+          nodeId={nodeId}
+          onInsertReference={handleInsertReference}
+        />
+      )}
       <textarea
+        ref={textareaRef}
         value={prompt}
         onChange={(e) => !isGenerating && setPrompt(e.target.value)}
         placeholder={
@@ -527,47 +591,49 @@ export function GenerateVideoPanel({
 
 // ─────────────────────────────────────────────
 // InstancesBox — sits to the right of the loop prompt textarea
+// Simplified: only max limit, no auto/fixed mode toggle (AI nodes always use max cap)
 // ─────────────────────────────────────────────
-export type InstanceMode = "auto" | "fixed"
-
 export function InstancesBox({
-  mode,
   count,
   onChange,
   locked,
+  theme = "indigo",
+  label = "Instances",
 }: {
-  mode: InstanceMode
   count: number
-  onChange: (mode: InstanceMode, count: number) => void
+  onChange: (count: number) => void
   locked?: boolean
+  theme?: "indigo" | "violet"
+  label?: string
 }) {
+  const themeClasses = {
+    indigo: {
+      header: "text-indigo-400",
+      number: "text-indigo-500",
+      unit: "text-indigo-300",
+      track: "bg-indigo-100",
+      range: "bg-indigo-400",
+      thumb: "border-indigo-400 focus-visible:ring-indigo-400",
+      scale: "text-indigo-200",
+    },
+    violet: {
+      header: "text-violet-400",
+      number: "text-violet-500",
+      unit: "text-violet-300",
+      track: "bg-violet-100",
+      range: "bg-violet-400",
+      thumb: "border-violet-400 focus-visible:ring-violet-400",
+      scale: "text-violet-200",
+    },
+  }
+  const t = themeClasses[theme]
+
   return (
     <div className="flex flex-col gap-3 w-[148px] flex-shrink-0 px-3 py-3 border-l border-slate-100">
       {/* Header */}
-      <span className="text-[10px] font-semibold tracking-widest uppercase text-indigo-400 select-none">
-        Instances
+      <span className={cn("text-[10px] font-semibold tracking-widest uppercase select-none", t.header)}>
+        {label}
       </span>
-
-      {/* Mode toggle — Auto | Fixed */}
-      <div className="flex items-center bg-slate-100/80 rounded-full p-0.5 gap-0.5 select-none">
-        {(["auto", "fixed"] as InstanceMode[]).map((m) => (
-          <button
-            key={m}
-            disabled={locked}
-            onClick={() => onChange(m, count)}
-            className={cn(
-              "flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded-full text-[11px] font-medium transition-all duration-200",
-              mode === m
-                ? "bg-white shadow-sm text-indigo-600 border border-indigo-100/80"
-                : "text-slate-400 hover:text-slate-600",
-              locked && "pointer-events-none opacity-40",
-            )}
-          >
-            {m === "auto" ? <Infinity size={10} strokeWidth={2.5} /> : <Hash size={10} strokeWidth={2.5} />}
-            <span className="capitalize">{m}</span>
-          </button>
-        ))}
-      </div>
 
       {/* Big number display — Apple clock style */}
       <div className="flex items-baseline justify-center gap-1">
@@ -575,53 +641,52 @@ export function InstancesBox({
           className={cn(
             "font-semibold tabular-nums leading-none transition-all duration-150",
             count >= 10 ? "text-3xl" : "text-4xl",
-            "text-indigo-500",
+            t.number,
           )}
         >
           {count}
         </span>
-        <span className="text-[11px] text-indigo-300 font-medium">
-          {mode === "auto" ? "max" : count === 1 ? "run" : "runs"}
+        <span className={cn("text-[11px] font-medium", t.unit)}>
+          {count === 1 ? "max" : "max"}
         </span>
       </div>
 
-      {/* Radix slider — always shown */}
+      {/* Radix slider */}
       <SliderPrimitive.Root
         min={1}
         max={20}
         step={1}
         value={[count]}
         disabled={locked}
-        onValueChange={([v]) => onChange(mode, v)}
+        onValueChange={([v]) => onChange(v)}
         className={cn(
           "relative flex items-center select-none touch-none w-full h-5",
           locked && "opacity-40 pointer-events-none",
         )}
       >
-        <SliderPrimitive.Track className="relative bg-indigo-100 rounded-full flex-1 h-1.5 overflow-hidden">
-          <SliderPrimitive.Range className="absolute h-full bg-indigo-400 rounded-full" />
+        <SliderPrimitive.Track className={cn("relative rounded-full flex-1 h-1.5 overflow-hidden", t.track)}>
+          <SliderPrimitive.Range className={cn("absolute h-full rounded-full", t.range)} />
         </SliderPrimitive.Track>
         <SliderPrimitive.Thumb
           className={cn(
-            "block w-4 h-4 rounded-full bg-white shadow-md border-2 border-indigo-400",
-            "outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-1",
+            "block w-4 h-4 rounded-full bg-white shadow-md border-2",
+            "outline-none focus-visible:ring-2 focus-visible:ring-offset-1",
             "transition-transform duration-100 hover:scale-110 active:scale-125",
             "cursor-grab active:cursor-grabbing",
+            t.thumb,
           )}
         />
       </SliderPrimitive.Root>
 
       {/* Min / Max labels */}
-      <div className="flex justify-between text-[10px] text-indigo-200 font-medium tabular-nums px-0.5 -mt-1">
+      <div className={cn("flex justify-between text-[10px] font-medium tabular-nums px-0.5 -mt-1", t.scale)}>
         <span>1</span>
         <span>20</span>
       </div>
 
       {/* Contextual hint */}
       <p className="text-[10px] text-slate-300 leading-relaxed">
-        {mode === "auto"
-          ? "LLM decides the count — this is the hard cap."
-          : "Each run re-executes all child nodes."}
+        Maximum iterations — LLM decides actual count up to this cap.
       </p>
     </div>
   )
@@ -644,6 +709,7 @@ const LOOP_PARAMS: ParamDef[] = [
 
 export function LoopPanel({
   data,
+  nodeId,
   onDataChange,
   mode,
   isGenerating,
@@ -651,6 +717,7 @@ export function LoopPanel({
   onStop,
 }: {
   data: CustomNodeData
+  nodeId?: string
   /** Direct callback — preferred over data.onDataChange to avoid async injection timing. */
   onDataChange?: (u: Partial<CustomNodeData>) => void
   mode: NodeMode
@@ -665,10 +732,8 @@ export function LoopPanel({
   const [prompt, setPromptLocal]               = useState(data.loopPrompt ?? data.prompt ?? "")
   const [model, setModelLocal]                 = useState(data.model ?? LOOP_MODELS[0].id)
   const [params, setParamsLocal]               = useState<Record<string, string>>(data.params ?? defaultParams)
-  const [instanceMode, setInstanceModeLocal]   = useState<InstanceMode>(
-    (data.params?.instanceMode as InstanceMode) ?? "auto"
-  )
   const [instanceCount, setInstanceCountLocal] = useState(data.loopCount ?? 3)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
@@ -677,6 +742,23 @@ export function LoopPanel({
     setPromptLocal(v)
     persistChange?.({ loopPrompt: v, prompt: v })
   }
+
+  // Insert upstream reference at cursor position
+  const handleInsertReference = useCallback((ref: string) => {
+    if (!textareaRef.current) {
+      setPrompt(prompt + ref)
+      return
+    }
+    const textarea = textareaRef.current
+    const start = textarea.selectionStart
+    const end   = textarea.selectionEnd
+    const newPrompt = prompt.slice(0, start) + ref + prompt.slice(end)
+    setPrompt(newPrompt)
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(start + ref.length, start + ref.length)
+    })
+  }, [prompt]) // eslint-disable-line react-hooks/exhaustive-deps
   const setModel = (v: string) => {
     setModelLocal(v)
     persistChange?.({ model: v })
@@ -684,11 +766,6 @@ export function LoopPanel({
   const setParams = (p: Record<string, string>) => {
     setParamsLocal(p)
     persistChange?.({ params: p })
-  }
-  const setInstanceMode = (m: InstanceMode) => {
-    setInstanceModeLocal(m)
-    const newParams = { ...(data.params ?? defaultParams), instanceMode: m }
-    persistChange?.({ params: newParams })
   }
   const setInstanceCount = (n: number) => {
     setInstanceCountLocal(n)
@@ -703,25 +780,26 @@ export function LoopPanel({
   const isAuto    = mode === "auto"
   const canSubmit = prompt.trim().length > 0
 
-  const handleInstanceChange = (m: InstanceMode, n: number) => {
-    setInstanceMode(m)
-    setInstanceCount(n)
-  }
-
   const handleGenerate = () => {
     onGenerate(prompt, model, {
       ...params,
-      instanceMode,
-      instanceCount: instanceMode === "fixed" ? String(instanceCount) : "auto",
-      instanceMax:   String(instanceCount),
+      instanceMax: String(instanceCount),
     })
   }
 
   return (
     <div className="flex flex-col">
+      {/* Upstream reference area */}
+      {nodeId && (
+        <UpstreamReference
+          nodeId={nodeId}
+          onInsertReference={handleInsertReference}
+        />
+      )}
       {/* Top area: prompt left, instances right */}
       <div className="flex min-h-[110px]">
         <textarea
+          ref={textareaRef}
           value={prompt}
           onChange={(e) => !isGenerating && setPrompt(e.target.value)}
           placeholder={
@@ -738,10 +816,11 @@ export function LoopPanel({
         />
 
         <InstancesBox
-          mode={instanceMode}
           count={instanceCount}
-          onChange={handleInstanceChange}
+          onChange={setInstanceCount}
           locked={isGenerating}
+          theme="indigo"
+          label="Instances"
         />
       </div>
 
@@ -757,11 +836,9 @@ export function LoopPanel({
 
         {/* Instance summary chip */}
         <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-50 border border-indigo-100/80">
-          {instanceMode === "auto"
-            ? <Infinity size={10} className="text-indigo-400" strokeWidth={2.5} />
-            : <Hash     size={10} className="text-indigo-400" strokeWidth={2.5} />}
+          <Infinity size={10} className="text-indigo-400" strokeWidth={2.5} />
           <span className="text-[11px] text-indigo-500 font-medium">
-            {instanceMode === "auto" ? `≤ ${instanceCount}` : `${instanceCount} runs`}
+            ≤ {instanceCount} runs
           </span>
         </div>
 
@@ -819,19 +896,11 @@ export function CyclePanel({
   onStop: () => void
 }) {
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
-  const [instanceMode, setInstanceModeLocal]   = useState<InstanceMode>(
-    (data.params?.instanceMode as InstanceMode) ?? "auto"
-  )
   const [instanceCount, setInstanceCountLocal] = useState(data.loopCount ?? 3)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
 
-  const setInstanceMode = (m: InstanceMode) => {
-    setInstanceModeLocal(m)
-    const newParams = { ...(data.params ?? {}), instanceMode: m }
-    persistChange?.({ params: newParams })
-  }
   const setInstanceCount = (n: number) => {
     setInstanceCountLocal(n)
     persistChange?.({ loopCount: n })
@@ -856,10 +925,11 @@ export function CyclePanel({
 
         {/* Right: instances count */}
         <InstancesBox
-          mode={instanceMode}
           count={instanceCount}
-          onChange={(m, n) => { setInstanceMode(m); setInstanceCount(n) }}
+          onChange={setInstanceCount}
           locked={isGenerating}
+          theme="violet"
+          label="Cycles"
         />
       </div>
 
@@ -867,11 +937,9 @@ export function CyclePanel({
       <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-slate-100">
         {/* Instance summary chip */}
         <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-violet-50 border border-violet-100/80">
-          {instanceMode === "auto"
-            ? <Infinity size={10} className="text-violet-400" strokeWidth={2.5} />
-            : <Hash     size={10} className="text-violet-400" strokeWidth={2.5} />}
+          <Infinity size={10} className="text-violet-400" strokeWidth={2.5} />
           <span className="text-[11px] text-violet-500 font-medium">
-            {instanceMode === "auto" ? `≤ ${instanceCount} cycles` : `${instanceCount} cycles`}
+            ≤ {instanceCount} cycles
           </span>
         </div>
 

@@ -1,10 +1,13 @@
 "use client"
 
-import React, { memo, useRef, useCallback } from 'react'
+import React, { memo, useRef, useCallback, useState, useEffect } from 'react'
 import { NodeProps } from 'reactflow'
-import { Handle, Position } from 'reactflow'
+import { Handle, Position, useReactFlow } from 'reactflow'
+import { cn } from '@/lib/utils'
 import type { CustomNodeData, ModuleModalProps } from './_types'
-import { HandleDef, MagneticZone, SIDE_TO_POSITION, getHandleStyle, getHandleClassName, sideToHandleType } from './_handle'
+import { HandleDef, MagneticZone, ResizeHandle, SIDE_TO_POSITION, getHandleStyle, getHandleClassName, sideToHandleType } from './_handle'
+import { GeneratingOverlay } from './_overlay'
+import { useNodePolling }    from './_polling'
 
 import * as Standard from './standard'
 import * as Text     from './text'
@@ -14,6 +17,7 @@ import * as Gate     from './gate'
 import * as Batch    from './batch'   // ← was Loop
 import * as Cycle    from './cycle'   // ← new
 import * as Seed     from './seed'
+import * as Lasso    from './lasso'   // ← new
 
 // ─────────────────────────────────────────────
 // Module registry
@@ -34,7 +38,7 @@ export interface ModuleDefinition {
 }
 
 export const MODULES: ModuleDefinition[] = [
-  Standard, Text, Image, Video, Gate, Batch, Cycle, Seed,
+  Standard, Text, Image, Video, Gate, Batch, Cycle, Seed, Lasso,
 ] as any[]
 
 export const MODULE_BY_ID = Object.fromEntries(MODULES.map((m) => [m.meta.id, m]))
@@ -63,32 +67,126 @@ export const CustomNodeUI = ({
 }
 
 // ─────────────────────────────────────────────
+// NodeLabel — editable title with type icon
+// ─────────────────────────────────────────────
+function NodeLabel({
+  label,
+  nodeId,
+  nodeType,
+  selected,
+}: {
+  label:     string
+  nodeId?:   string
+  nodeType?: string
+  selected:  boolean
+}) {
+  const { setNodes } = useReactFlow()
+  const [editing, setEditing] = useState(false)
+  const [value,   setValue]   = useState(label)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Sync external label changes (e.g. undo/redo)
+  useEffect(() => { if (!editing) setValue(label) }, [label, editing])
+
+  const mod       = nodeType ? MODULE_BY_ID[nodeType] : null
+  const Icon      = mod?.meta.icon ?? null
+  const iconColor = mod?.meta.color ?? 'text-slate-400'
+
+  const startEdit = () => {
+    if (!selected || !nodeId) return
+    setEditing(true)
+    requestAnimationFrame(() => { inputRef.current?.select() })
+  }
+
+  const commit = () => {
+    setEditing(false)
+    const trimmed = value.trim()
+    if (!nodeId || trimmed === label) return
+    setNodes(ns => ns.map(n =>
+      n.id === nodeId ? { ...n, data: { ...n.data, label: trimmed } } : n
+    ))
+  }
+
+  return (
+    <div
+      className="absolute flex items-center gap-[3px]"
+      style={{ bottom: '100%', left: 3, paddingBottom: 2 }}
+      // Prevent triggering node drag when interacting with the title
+      onMouseDown={e => { if (editing || selected) e.stopPropagation() }}
+    >
+      {Icon && (
+        <Icon
+          size={10}
+          strokeWidth={2}
+          className={cn('flex-shrink-0 opacity-50', iconColor)}
+        />
+      )}
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => {
+            if (e.key === 'Enter')  { e.preventDefault(); commit() }
+            if (e.key === 'Escape') { setValue(label); setEditing(false) }
+          }}
+          className="text-[11.5px] font-medium text-slate-500 tracking-tight bg-transparent outline-none border-b border-slate-300/80 min-w-[32px] max-w-[180px]"
+          style={{ width: `${Math.max(value.length, 4) + 1}ch` }}
+        />
+      ) : (
+        <span
+          onClick={startEdit}
+          className={cn(
+            'text-[11.5px] font-medium text-slate-400/80 tracking-tight whitespace-nowrap select-none',
+            selected && nodeId && 'cursor-text hover:text-slate-500 transition-colors duration-100',
+          )}
+        >
+          {value}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
 // NodeWrapper
 // ─────────────────────────────────────────────
 function NodeWrapper({
   handles,
   label,
   children,
+  nodeId,
+  data,
+  selected,
 }: {
-  handles:  HandleDef[]
-  label?:   string
-  children: React.ReactNode
+  handles:   HandleDef[]
+  label?:    string
+  children:  React.ReactNode
+  nodeId?:   string
+  data?:     any
+  selected?: boolean
 }) {
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const hoveredRef = useRef(false)
   const isHovered  = useCallback(() => hoveredRef.current, [])
 
+  const { genProgress } = useNodePolling(nodeId, data)
+
   return (
     <div
+      ref={wrapperRef}
       className="relative"
       onMouseEnter={() => { hoveredRef.current = true  }}
       onMouseLeave={() => { hoveredRef.current = false }}
     >
       {label && (
-        <div className="absolute pointer-events-none" style={{ bottom: '100%', left: 3, paddingBottom: 1 }}>
-          <span className="text-[11.5px] font-medium text-slate-400/80 tracking-tight whitespace-nowrap select-none">
-            {label}
-          </span>
-        </div>
+        <NodeLabel
+          label={label}
+          nodeId={nodeId}
+          nodeType={data?.type}
+          selected={selected ?? false}
+        />
       )}
 
       {handles.map((def) => (
@@ -103,6 +201,27 @@ function NodeWrapper({
           <MagneticZone def={def} isHovered={isHovered} />
         </React.Fragment>
       ))}
+      {nodeId && (
+        <ResizeHandle
+          nodeId={nodeId}
+          isHovered={isHovered}
+          aspectRatio={
+            data?.type === 'image' && data?.naturalWidth && data?.naturalHeight
+              ? data.naturalWidth / data.naturalHeight
+              : undefined
+          }
+        />
+      )}
+
+      {/* Generating overlay — lives here so it persists when editor closes */}
+      {data?.isGenerating && wrapperRef.current && (
+        <GeneratingOverlay
+          cssW={wrapperRef.current.offsetWidth}
+          cssH={wrapperRef.current.offsetHeight}
+          progress={genProgress}
+        />
+      )}
+
       {children}
     </div>
   )
@@ -113,11 +232,11 @@ function NodeWrapper({
 // ─────────────────────────────────────────────
 
 // CustomNode — text / image / video / gate / seed
-const CustomNodeInner = ({ data, selected }: NodeProps<CustomNodeData>) => {
+const CustomNodeInner = ({ id, data, selected }: NodeProps<CustomNodeData>) => {
   const mod = MODULE_BY_ID[data.type]
   if (!mod?.NodeUI) return null
   return (
-    <NodeWrapper handles={(mod.handles ?? []) as HandleDef[]} label={data.label}>
+    <NodeWrapper handles={(mod.handles ?? []) as HandleDef[]} label={data.label} nodeId={id} data={data} selected={selected}>
       <mod.NodeUI data={data} selected={selected} />
     </NodeWrapper>
   )
@@ -125,26 +244,34 @@ const CustomNodeInner = ({ data, selected }: NodeProps<CustomNodeData>) => {
 export const CustomNode = memo(CustomNodeInner)
 
 // BatchNode — was LoopNode
-const BatchNodeInner = ({ data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={Batch.handles as HandleDef[]}>
+const BatchNodeInner = ({ id, data, selected }: NodeProps<any>) => (
+  <NodeWrapper handles={Batch.handles as HandleDef[]} label={data.label} nodeId={id} data={data} selected={selected}>
     <Batch.NodeUI data={data} selected={selected} />
   </NodeWrapper>
 )
 export const BatchNode = memo(BatchNodeInner)
 
 // CycleNode — no external handles (handles rendered inside NodeUI)
-const CycleNodeInner = ({ data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={[]}>
+const CycleNodeInner = ({ id, data, selected }: NodeProps<any>) => (
+  <NodeWrapper handles={[]} label={data.label} nodeId={id} data={data} selected={selected}>
     <Cycle.NodeUI data={data} selected={selected} />
   </NodeWrapper>
 )
 export const CycleNode = memo(CycleNodeInner)
 
+// LassoNode — no external handles (pure container)
+const LassoNodeInner = ({ id, data, selected }: NodeProps<any>) => (
+  <NodeWrapper handles={[]} label={data.label} nodeId={id} data={data} selected={selected}>
+    <Lasso.NodeUI data={data} selected={selected} />
+  </NodeWrapper>
+)
+export const LassoNode = memo(LassoNodeInner)
+
 // StandardNode — KG entity nodes
-const StandardNodeInner = ({ data, selected }: NodeProps<any>) => {
+const StandardNodeInner = ({ id, data, selected }: NodeProps<any>) => {
   if (!data) return null
   return (
-    <NodeWrapper handles={Standard.handles as HandleDef[]} label={data.name || data.label}>
+    <NodeWrapper handles={Standard.handles as HandleDef[]} label={data.name || data.label} nodeId={id} data={data} selected={selected}>
       <Standard.NodeUI data={data} selected={selected} />
     </NodeWrapper>
   )
@@ -167,5 +294,6 @@ export const nodeTypes = {
   CustomNode,
   BatchNode,
   CycleNode,
+  LassoNode,
   GhostNode,
 }

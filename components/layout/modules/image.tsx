@@ -13,16 +13,16 @@ export const meta = {
   name: 'Image',
   description: 'Visual assets & diagrams',
   icon: ImageIcon,
-  color: 'text-emerald-500',
-  bg: 'bg-emerald-50',
-  border: 'hover:border-emerald-200',
+  color: 'text-blue-400',
+  bg: 'bg-blue-50',
+  border: 'hover:border-blue-300',
   opensEditor: true,
   panelTitle: 'Generate Image',
 }
 
 export const defaultData: Partial<CustomNodeData> = {
   type: 'image',
-  label: 'New Image',
+  label: 'Image',
 }
 
 export const handles: HandleDef[] = [
@@ -160,10 +160,11 @@ export const ReactFlowNode = memo(({ data, selected }: NodeProps<CustomNodeData>
 ))
 ReactFlowNode.displayName = 'ImageNode'
 
-export function ModalContent({ data, onUpdate, mode = 'auto', isGenerating = false, onGenerate, onStop }: ModuleModalProps) {
+export function ModalContent({ data, nodeId, onUpdate, mode = 'auto', isGenerating = false, onGenerate, onStop }: ModuleModalProps) {
   return (
     <GenerateImagePanel
       data={data as CustomNodeData}
+      nodeId={nodeId}
       onDataChange={onUpdate as (u: Partial<CustomNodeData>) => void}
       hasSrc={!!(data as CustomNodeData).src}
       mode={mode}

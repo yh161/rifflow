@@ -18,13 +18,13 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from "react"
-import { useStore, useNodes, useReactFlow } from "reactflow"
+import { useStore, useNodes, useReactFlow, type Node, type Edge } from "reactflow"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CustomNodeData } from "../modules/_types"
+import { useUpstreamData } from "@/hooks/useUpstreamData"
 
 import { NodeActionBar }                          from "./_action_bar"
-import { GeneratingOverlay }                      from "./_overlay"
 import { ModeToggle }    from "./_panels"
 import type { NodeMode } from "../modules/_types"
 import { MODULE_BY_ID }  from "../modules/_registry"
@@ -56,6 +56,7 @@ export interface NodeEditorProps {
   onLoopDeleteInstance?: (loopId: string, instanceIdx: number) => void
   onLoopSwitchView?: (loopId: string, viewIdx: number) => void
   onLoopRelease?: (loopId: string) => void
+  onLassoRelease?: (lassoId: string) => void
 }
 
 export function NodeEditor({
@@ -66,14 +67,19 @@ export function NodeEditor({
   onLoopDeleteInstance,
   onLoopSwitchView,
   onLoopRelease,
+  onLassoRelease,
 }: NodeEditorProps) {
   const nodes        = useNodes()
-  const { setNodes } = useReactFlow()
+  const { setNodes, getNodes, getEdges } = useReactFlow()
+  const edges = getEdges()
   const transform    = useStore((s) => s.transform)
   const [tx, ty, zoom] = transform
 
   const node = nodes.find((n) => n.id === nodeId)
   const data = node?.data as CustomNodeData | undefined
+
+  // ── Upstream data for resolving {{nodeId}} references ──
+  const upstreamData = useUpstreamData(nodeId)
 
   // ── Mode toggle ──────────────────────────────
   const [mode, setMode] = useState<NodeMode>(() => (data?.mode ?? "manual") as NodeMode)
@@ -90,170 +96,35 @@ export function NodeEditor({
   // ── Text-edit mode ───────────────────────────
   const [isTextEditing, setIsTextEditing] = useState(false)
 
-  // ── Generating state ─────────────────────────
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [genProgress,  setGenProgress]  = useState(0)
-  const genTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null)
-  const pollTimerRef  = useRef<ReturnType<typeof setInterval> | null>(null)
-  const activeJobRef  = useRef<string | null>(null) // jobId currently being polled
+  // ── Generating state — read from node data (polling lives in NodeWrapper) ──
+  const isGenerating = !!data?.isGenerating
 
-  // ── Cleanup on unmount ───────────────────────
-  useEffect(() => () => {
-    if (genTimerRef.current)  clearInterval(genTimerRef.current)
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-  }, [])
+  // ── Workflow execution state (for lasso) ─────
+  const [isExecutingWorkflow, setIsExecutingWorkflow] = useState(false)
+  const workflowPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const workflowJobRef  = useRef<string | null>(null)
 
-  // ── Apply image result to node ───────────────
-  const applyImageResult = useCallback(
-    async (b64: string, mime: string) => {
-      const byteString = atob(b64)
-      const ab         = new ArrayBuffer(byteString.length)
-      const ia         = new Uint8Array(ab)
-      for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i)
-      const blob = new Blob([ab], { type: mime })
+  // ── Batch seed-ready polling ref ─────────────
+  // While seeds are being generated we do a short local poll.
+  // Once /continue is POSTed, _polling.ts (NodeWrapper) handles the rest.
+  const batchSeedPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-      // Upload to MinIO → persistent URL that survives page refreshes
-      let src: string
-      try {
-        const form = new FormData()
-        form.append(
-          'file',
-          new File([blob], `generated.${mime.split('/')[1] || 'png'}`, { type: mime }),
-        )
-        const res  = await fetch('/api/upload', { method: 'POST', body: form })
-        const json = await res.json()
-        if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
-        src = json.url as string
-      } catch (err) {
-        console.error('[applyImageResult] MinIO upload failed, falling back to blob URL:', err)
-        src = URL.createObjectURL(blob)
-      }
-
-      const img = new window.Image()
-      img.src = src
-      await new Promise<void>((resolve) => { img.onload = () => resolve() })
-
-      const nw      = img.naturalWidth
-      const nh      = img.naturalHeight
-      const minSide = Math.min(nw, nh)
-      const scale   = 180 / minSide
-      const w       = Math.round(nw * scale)
-      const h       = Math.round(nh * scale)
-
-      setNodes((ns) => ns.map((n) => {
-        if (n.id !== nodeId) return n
-        return {
-          ...n,
-          style: { ...n.style, width: w, height: h },
-          data: {
-            ...n.data,
-            src,
-            naturalWidth:  nw,
-            naturalHeight: nh,
-            width:  w,
-            height: h,
-            isGenerating:  false,
-            activeJobId:   undefined,
-          },
-        }
-      }))
-    },
-    [nodeId, setNodes],
-  )
-
-  // ── Stop generating UI ───────────────────────
-  const stopGenerating = useCallback(() => {
-    if (genTimerRef.current)  clearInterval(genTimerRef.current)
-    if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-    activeJobRef.current = null
-    setIsGenerating(false)
-    setGenProgress(0)
-    setNodes((ns) => ns.map((n) =>
-      n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
-    ))
-  }, [nodeId, setNodes])
-
-  // ── Poll a job until terminal state ─────────
-  const startPolling = useCallback(
-    (jobId: string) => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current)
-
-      pollTimerRef.current = setInterval(async () => {
-        // Abandon if a newer job has taken over
-        if (activeJobRef.current !== jobId) {
-          clearInterval(pollTimerRef.current!)
-          return
-        }
-
-        try {
-          const res     = await fetch(`/api/jobs/${jobId}`)
-          const rawText = await res.text()
-          let json: any
-          try { json = JSON.parse(rawText) } catch {
-            console.error("[poll] non-JSON response:", rawText.slice(0, 300))
-            return // 网络/服务端临时错误，继续轮询
-          }
-
-          if (json.status === "done") {
-            clearInterval(pollTimerRef.current!)
-            if (genTimerRef.current) clearInterval(genTimerRef.current)
-            setGenProgress(1)
-
-            // Conflict check: if user already started a new job, discard
-            if (activeJobRef.current !== jobId) return
-
-            const result = json.result as Record<string, any>
-
-            if (data?.type === "image") {
-              await applyImageResult(result.b64, result.mime)
-            } else {
-              setNodes((ns) => ns.map((n) =>
-                n.id !== nodeId ? n : {
-                  ...n,
-                  data: { ...n.data, content: result.content, isGenerating: false, activeJobId: undefined },
-                }
-              ))
-            }
-
-            setIsGenerating(false)
-            setGenProgress(0)
-            activeJobRef.current = null
-
-          } else if (json.status === "failed") {
-            clearInterval(pollTimerRef.current!)
-            console.error("[generate] job failed:", json.error)
-            stopGenerating()
-          }
-          // "pending" | "running" → continue polling
-        } catch (err) {
-          console.error("[generate] poll error:", err)
-          // Network error — keep polling (transient)
-        }
-      }, POLL_INTERVAL_MS)
-    },
-    [data?.type, nodeId, setNodes, applyImageResult, stopGenerating],
-  )
+  // ── Refs for accessing latest nodes/edges in async operations ──
+  const getNodesRef = useRef(() => getNodes())
+  const getEdgesRef = useRef(() => getEdges())
+  getNodesRef.current = () => getNodes()
+  getEdgesRef.current = () => getEdges()
 
   // ─────────────────────────────────────────────
-  // handleStartGenerate — creates async job, starts polling
-  // Interface identical to original so ModalContent props unchanged.
+  // handleStartGenerate — creates job, writes to node.data.
+  // Polling and progress live in NodeWrapper (_polling.ts).
   // ─────────────────────────────────────────────
   const handleStartGenerate = useCallback(
     async (prompt: string, model: string, _params: Record<string, string>) => {
-      setIsGenerating(true)
-      setGenProgress(0)
+      // Signal generating immediately so the overlay appears
       setNodes((ns) => ns.map((n) =>
         n.id !== nodeId ? n : { ...n, data: { ...n.data, isEditing: false, isGenerating: true } }
       ))
-
-      // Fake progress crawl while waiting
-      let p = 0
-      if (genTimerRef.current) clearInterval(genTimerRef.current)
-      genTimerRef.current = setInterval(() => {
-        p += 0.006 + Math.random() * 0.006
-        if (p >= 0.9) { clearInterval(genTimerRef.current!); p = 0.9 }
-        setGenProgress(p)
-      }, 50)
 
       try {
         const res  = await fetch("/api/jobs", {
@@ -264,6 +135,7 @@ export function NodeEditor({
             nodeType: data?.type ?? "text",
             prompt,
             model,
+            upstreamData,
           }),
         })
         const json = await res.json()
@@ -273,26 +145,27 @@ export function NodeEditor({
         }
 
         const { jobId } = json as { jobId: string }
-        activeJobRef.current = jobId
 
-        // Tag the node so conflict detection works after refresh
+        // Writing activeJobId triggers polling in NodeWrapper
         setNodes((ns) => ns.map((n) =>
           n.id !== nodeId ? n : { ...n, data: { ...n.data, activeJobId: jobId } }
         ))
 
-        startPolling(jobId)
-
       } catch (err) {
         console.error("[generate]", err)
-        stopGenerating()
+        setNodes((ns) => ns.map((n) =>
+          n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+        ))
       }
     },
-    [nodeId, data?.type, setNodes, startPolling, stopGenerating],
+    [nodeId, data?.type, setNodes, upstreamData],
   )
 
   const handleStopGenerate = useCallback(() => {
-    stopGenerating()
-  }, [stopGenerating])
+    setNodes((ns) => ns.map((n) =>
+      n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+    ))
+  }, [nodeId, setNodes])
 
   // ── File input ref ───────────────────────────
   const uploadInputRef      = useRef<HTMLInputElement>(null)
@@ -495,6 +368,399 @@ export function NodeEditor({
     a.click()
   }, [data?.type, data?.videoSrc, data?.src, data?.fileName])
 
+  // ── Lasso workflow execution ─────────────────
+  const stopWorkflowPolling = useCallback(() => {
+    if (workflowPollRef.current) {
+      clearInterval(workflowPollRef.current)
+      workflowPollRef.current = null
+    }
+    workflowJobRef.current = null
+    setIsExecutingWorkflow(false)
+  }, [])
+
+  const startWorkflowPolling = useCallback((workflowJobId: string) => {
+    workflowJobRef.current = workflowJobId
+    setIsExecutingWorkflow(true)
+
+    workflowPollRef.current = setInterval(async () => {
+      if (workflowJobRef.current !== workflowJobId) {
+        stopWorkflowPolling()
+        return
+      }
+
+      try {
+        const res = await fetch(`/api/execute/workflow?workflowJobId=${workflowJobId}`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const json = await res.json()
+
+        if (json.status === "completed") {
+          console.log("[workflow] completed:", json.results)
+          
+          // Apply workflow results to child nodes
+          const results = json.results as Record<string, Record<string, unknown>>
+          if (results) {
+            setNodes((ns) => ns.map((n) => {
+              const nodeResult = results[n.id]
+              if (!nodeResult) return n
+
+              const nodeType = n.data?.type
+              
+              // Handle image node results
+              if (nodeType === "image" && nodeResult.b64 && nodeResult.mime) {
+                // For image nodes, we need to upload and apply the result
+                // Use a helper to handle async image processing
+                handleWorkflowImageResult(n.id, String(nodeResult.b64), String(nodeResult.mime))
+                return { ...n, data: { ...n.data, isGenerating: false } }
+              }
+              
+              // Handle text/gate/seed node results
+              if ((nodeType === "text" || nodeType === "gate" || nodeType === "seed") && nodeResult.content !== undefined) {
+                return {
+                  ...n,
+                  data: { ...n.data, content: String(nodeResult.content), isGenerating: false }
+                }
+              }
+              
+              // Handle video node results
+              if (nodeType === "video" && nodeResult.videoSrc) {
+                return {
+                  ...n,
+                  data: { 
+                    ...n.data, 
+                    videoSrc: String(nodeResult.videoSrc),
+                    videoDuration: nodeResult.videoDuration ? String(nodeResult.videoDuration) : n.data?.videoDuration,
+                    isGenerating: false 
+                  }
+                }
+              }
+              
+              // Default: merge result data into node data
+              return { ...n, data: { ...n.data, ...nodeResult, isGenerating: false } }
+            }))
+          }
+          
+          stopWorkflowPolling()
+        } else if (json.status === "failed") {
+          console.error("[workflow] failed:", json.error, "jobs:", json.jobs)
+          stopWorkflowPolling()
+        }
+        // pending | running → continue polling
+      } catch (err) {
+        console.error("[workflow] poll error:", err)
+      }
+    }, POLL_INTERVAL_MS)
+  }, [stopWorkflowPolling, setNodes])
+
+  // Helper to handle async image result from workflow
+  const handleWorkflowImageResult = useCallback(async (targetNodeId: string, b64: string, mime: string) => {
+    const byteString = atob(b64)
+    const ab = new ArrayBuffer(byteString.length)
+    const ia = new Uint8Array(ab)
+    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i)
+    const blob = new Blob([ab], { type: mime })
+
+    // Upload to MinIO → persistent URL
+    let src: string
+    try {
+      const form = new FormData()
+      form.append(
+        'file',
+        new File([blob], `generated.${mime.split('/')[1] || 'png'}`, { type: mime }),
+      )
+      const res = await fetch('/api/upload', { method: 'POST', body: form })
+      const json = await res.json()
+      if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
+      src = json.url as string
+    } catch (err) {
+      console.error('[workflow image] MinIO upload failed, falling back to blob URL:', err)
+      src = URL.createObjectURL(blob)
+    }
+
+    const img = new window.Image()
+    img.src = src
+    await new Promise<void>((resolve) => { img.onload = () => resolve() })
+
+    const nw = img.naturalWidth
+    const nh = img.naturalHeight
+    const minSide = Math.min(nw, nh)
+    const scale = 180 / minSide
+    const w = Math.round(nw * scale)
+    const h = Math.round(nh * scale)
+
+    setNodes((ns) => ns.map((n) => {
+      if (n.id !== targetNodeId) return n
+      return {
+        ...n,
+        style: { ...n.style, width: w, height: h },
+        data: {
+          ...n.data,
+          src,
+          naturalWidth: nw,
+          naturalHeight: nh,
+          width: w,
+          height: h,
+          isGenerating: false,
+          activeJobId: undefined,
+        },
+      }
+    }))
+  }, [setNodes])
+
+  const handleExecuteWorkflow = useCallback(async () => {
+    if (!node || data?.type !== "lasso") return
+
+    // Find all child nodes (nodes that have this lasso as parentNode)
+    const childNodes = nodes.filter((n) => n.parentNode === nodeId)
+    if (childNodes.length === 0) {
+      console.warn("[workflow] No nodes inside lasso")
+      return
+    }
+
+    // Get edges between child nodes
+    const childNodeIds = new Set(childNodes.map((n) => n.id))
+    const childEdges = edges.filter(
+      (e) => childNodeIds.has(e.source) && childNodeIds.has(e.target)
+    )
+
+    setIsExecutingWorkflow(true)
+
+    try {
+      const res = await fetch("/api/execute/workflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lassoNodeId: nodeId,
+          nodes: childNodes,
+          edges: childEdges,
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || `Server error ${res.status}`)
+      }
+
+      const { workflowJobId } = await res.json()
+      startWorkflowPolling(workflowJobId)
+    } catch (err) {
+      console.error("[workflow] execute failed:", err)
+      setIsExecutingWorkflow(false)
+    }
+  }, [node, data?.type, nodeId, nodes, edges, startWorkflowPolling])
+
+  // ── Batch generation — job-based, consistent with text nodes ────────────
+  /**
+   * Flow:
+   *  1. POST /api/jobs { nodeType:'batch', batchParams } → jobId
+   *  2. Set node.data.isGenerating=true, activeJobId=jobId
+   *     (_polling.ts in NodeWrapper starts showing the overlay)
+   *  3. Local poll until job.result.stage === 'seeds_ready'
+   *  4. Create instances (onLoopAddInstance) and fill seed content  — fast, < 1s
+   *  5. POST /api/jobs/[jobId]/continue with instance nodes/edges
+   *  6. _polling.ts takes over: tracks workflow progress and applies
+   *     instanceResults when job.status === 'done'
+   */
+  const handleBatchGenerate = useCallback(async (
+    prompt: string,
+    model:  string,
+    params: Record<string, string>,
+  ) => {
+    if (!node || data?.type !== "batch") return
+
+    const maxInstances    = parseInt(params.instanceMax || "3", 10)
+    const upstreamContent = upstreamData.map(u => u.content).filter(Boolean).join("\n")
+
+    // ── 1. Signal generating immediately ────────────────────────────────────
+    setNodes(ns => ns.map(n =>
+      n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: true } }
+    ))
+
+    try {
+      // ── 2. Create batch job ──────────────────────────────────────────────
+      const jobRes = await fetch("/api/jobs", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nodeId,
+          nodeType:    "batch",
+          prompt,
+          model,
+          batchParams: { maxInstances, upstreamContent },
+        }),
+      })
+      const jobJson = await jobRes.json()
+      if (!jobRes.ok || jobJson.error) throw new Error(jobJson.error ?? `Server error ${jobRes.status}`)
+
+      const { jobId } = jobJson as { jobId: string }
+
+      // Writing activeJobId activates _polling.ts in NodeWrapper.
+      // batchResumeHandled tells _polling that the editor owns seeds_ready handling
+      // (stripped from draft by sanitizeNodes, so absent after a page refresh).
+      setNodes(ns => ns.map(n =>
+        n.id !== nodeId ? n : { ...n, data: { ...n.data, activeJobId: jobId, batchResumeHandled: jobId } }
+      ))
+
+      // ── 3. Wait for seeds_ready (short local poll, ~2-3s) ───────────────
+      const seeds = await waitForBatchSeeds(jobId)
+      if (!seeds || seeds.length === 0) throw new Error("No seeds returned")
+
+      // ── 4. Create instances + fill seed content ──────────────────────────
+      // All instance creation happens before we notify the backend so that
+      // /continue receives the fully-formed nodes/edges in one shot.
+      for (let i = 0; i < seeds.length; i++) {
+        onLoopAddInstance?.(nodeId)
+        await new Promise(r => setTimeout(r, 100)) // let React flush
+      }
+
+      // Snapshot nodes/edges after all instances are rendered
+      await new Promise(r => setTimeout(r, 100))
+      const snapNodes = getNodesRef.current()
+      const snapEdges = getEdgesRef.current()
+
+      // Determine instance indices that were just created.
+      // onLoopAddInstance increments instanceCount each time; the new
+      // indices are (finalCount - seeds.length) … (finalCount - 1).
+      const batchNode     = snapNodes.find((n: Node) => n.id === nodeId)
+      const finalCount    = batchNode?.data?.instanceCount ?? seeds.length
+      const startIdx      = finalCount - seeds.length
+
+      const instances: Array<{
+        instanceIdx: number
+        nodes: Node[]
+        edges: Edge[]
+      }> = []
+
+      for (let i = 0; i < seeds.length; i++) {
+        const instanceIdx = startIdx + i
+        const seed        = seeds[i]
+
+        // Collect this instance's nodes/edges.
+        // iEdges: include any edge whose TARGET is an internal node — this
+        // captures external→internal connections, not just pure-internal ones.
+        let iNodes     = snapNodes.filter((n: Node) =>
+          n.data?.loopId === nodeId && n.data?.instanceIdx === instanceIdx
+        )
+        const iNodeIds = new Set(iNodes.map((n: Node) => n.id))
+        const iEdges   = snapEdges.filter((e: Edge) => iNodeIds.has(e.target))
+
+        // Collect external source nodes (source not in iNodeIds) and mark them
+        // _preResolved so WorkflowEngine treats them as pre-completed DAG roots
+        // (their existing content is used directly, no LLM call).
+        const externalSrcIds = new Set(
+          iEdges.filter((e: Edge) => !iNodeIds.has(e.source)).map((e: Edge) => e.source)
+        )
+        const externalNodes = snapNodes
+          .filter((n: Node) => externalSrcIds.has(n.id))
+          .map((n: Node) => ({ ...n, data: { ...n.data, _preResolved: true } }))
+
+        // ── Fix: inject seed content directly into iNodes (no re-snapshot) ──
+        // Earlier instances are hidden on canvas, so getNodes() may omit them.
+        // Mutating iNodes in-memory guarantees every instance gets its seed.
+        iNodes = iNodes.map((n: Node) =>
+          n.data?.type === "seed"
+            ? { ...n, data: { ...n.data, content: seed.content } }
+            : n
+        )
+
+        // Also update canvas UI so the seed chip is visible when viewing that instance
+        const seedNode = iNodes.find((n: Node) => n.data?.type === "seed")
+        if (seedNode) {
+          setNodes(ns => ns.map((n: Node) =>
+            n.id !== seedNode.id ? n : { ...n, data: { ...n.data, content: seed.content } }
+          ))
+        } else {
+          console.warn(`[batch] No seed node for instance ${instanceIdx}`)
+        }
+
+        // Translation of {{templateNodeId}} → {{instanceNodeId}} in prompts is
+        // handled upstream in handleLoopAddInstance (useLoopManager), so iNodes
+        // already carry the correct instance-scoped references here.
+        // External nodes are appended so the backend DAG can resolve {{ref}}.
+        instances.push({ instanceIdx, nodes: [...iNodes, ...externalNodes], edges: iEdges })
+      }
+
+      // ── 5. Hand off to backend — /continue takes care of workflows ───────
+      const contRes = await fetch(`/api/jobs/${jobId}/continue`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ instances }),
+      })
+      if (!contRes.ok) {
+        const err = await contRes.json()
+        throw new Error(err.error ?? `Continue error ${contRes.status}`)
+      }
+
+      // _polling.ts handles the rest (executing_workflows → done)
+
+    } catch (err) {
+      console.error("[batch] generate failed:", err)
+      setNodes(ns => ns.map(n =>
+        n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+      ))
+    }
+  }, [node, data?.type, nodeId, upstreamData, onLoopAddInstance, setNodes])
+
+  /** Poll job until stage='seeds_ready', then return seeds array */
+  const waitForBatchSeeds = useCallback(async (
+    jobId: string,
+  ): Promise<Array<{ content: string; description?: string }> | null> => {
+    const TIMEOUT = 30_000
+    const deadline = Date.now() + TIMEOUT
+
+    // Clear any previous seed poll
+    if (batchSeedPollRef.current) clearInterval(batchSeedPollRef.current)
+
+    return new Promise(resolve => {
+      batchSeedPollRef.current = setInterval(async () => {
+        if (Date.now() > deadline) {
+          clearInterval(batchSeedPollRef.current!)
+          batchSeedPollRef.current = null
+          resolve(null)
+          return
+        }
+        try {
+          const res  = await fetch(`/api/jobs/${jobId}`)
+          const json = await res.json()
+
+          if (json.status === "failed") {
+            clearInterval(batchSeedPollRef.current!)
+            batchSeedPollRef.current = null
+            resolve(null)
+            return
+          }
+
+          const seeds = json.result?.seeds
+          if (json.result?.stage === "seeds_ready" && Array.isArray(seeds) && seeds.length > 0) {
+            clearInterval(batchSeedPollRef.current!)
+            batchSeedPollRef.current = null
+            resolve(seeds)
+          }
+          // else: still generating_seeds → keep polling
+        } catch {
+          // transient network error — keep polling
+        }
+      }, POLL_INTERVAL_MS)
+    })
+  }, [])
+
+  const handleStopBatch = useCallback(() => {
+    if (batchSeedPollRef.current) {
+      clearInterval(batchSeedPollRef.current)
+      batchSeedPollRef.current = null
+    }
+    setNodes(ns => ns.map(n =>
+      n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+    ))
+  }, [nodeId, setNodes])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (workflowPollRef.current)    clearInterval(workflowPollRef.current)
+      if (batchSeedPollRef.current)   clearInterval(batchSeedPollRef.current)
+    }
+  }, [])
+
   if (!node || !data) return null
 
   // ── Screen coordinates ────────────────────────
@@ -561,18 +827,14 @@ export function NodeEditor({
           onLoopDeleteInstance={handleLoopDeleteInstance}
           onLoopGoTo={handleLoopGoTo}
           loopInstanceCount={loopInstanceCount}
+          onExecute={handleExecuteWorkflow}
+          isExecuting={data?.type === 'batch' ? isGenerating : isExecutingWorkflow}
+          onLassoRelease={onLassoRelease ? () => onLassoRelease(nodeId) : undefined}
         />
       </div>
 
-      {/* Generating overlay */}
-      {isGenerating && (
-        <div className="absolute z-[500] pointer-events-none" style={{ left: screenX, top: screenY }}>
-          <GeneratingOverlay screenW={nodeW} screenH={nodeH} progress={genProgress} zoom={zoom} />
-        </div>
-      )}
-
       {/* ModeToggle + Panel */}
-      {!isLoopInstanceView && (<>
+      {!isLoopInstanceView && data.type !== 'lasso' && (<>
       <div
         className="absolute z-[500] pointer-events-auto"
         style={{
@@ -607,17 +869,29 @@ export function NodeEditor({
         {(() => {
           const mod = MODULE_BY_ID[data.type]
           if (!mod?.ModalContent) return null
+          
+          // Batch uses job-based generation (same isGenerating flag as text nodes)
+          const isBatch = data.type === 'batch'
+          const generationProps = isBatch ? {
+            isGenerating,
+            onGenerate: handleBatchGenerate,
+            onStop:     handleStopBatch,
+          } : {
+            isGenerating,
+            onGenerate: handleStartGenerate,
+            onStop:     handleStopGenerate,
+          }
+          
           return (
             <mod.ModalContent
               key={nodeId}
-              data={data}
+              nodeId={nodeId}
+              data={data as any}
               onUpdate={handleUpdate}
               onClose={onClose}
               onDelete={() => handleDeleteNode()}
               mode={mode}
-              isGenerating={isGenerating}
-              onGenerate={handleStartGenerate}
-              onStop={handleStopGenerate}
+              {...generationProps}
             />
           )
         })()}
@@ -627,14 +901,14 @@ export function NodeEditor({
       {/* Release confirmation dialog */}
       {showReleaseConfirm && (
         <div
-          className="absolute z-[600] pointer-events-auto"
+          className="absolute z-[800] pointer-events-auto max-w-[400px]"
           style={{
-            left: centerX, top: actionBarBottom - 8,
+            left: centerX, top: actionBarBottom + 8,
             transform: "translate(-50%, -100%)",
           }}
         >
           <div
-            className="bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/80 p-4 min-w-[300px]"
+            className="bg-white/95 backdrop-blur-md rounded-xl border border-slate-200/80 p-4 min-w-[300px]"
             style={{ animation: "pickerIn 150ms ease-out both" }}
           >
             <style>{`
