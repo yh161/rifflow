@@ -1,225 +1,162 @@
 "use client"
 
-import Image from "next/image"
-import { PlusCircle, ListMusic } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { useEffect, useState } from "react"
+import { Search } from "lucide-react"
+
+import { Input } from "@/components/ui/input"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu"
+import { Badge } from "@/components/ui/badge"
 
-// --- 数据源移入 P1 ---
-interface Album {
-  name: string
-  artist: string
-  cover: string
+import { TemplateCard } from "./TemplateCard"
+import { CATEGORY_LABELS, type TemplateSummary } from "./community.types"
+
+const CATEGORIES = Object.entries(CATEGORY_LABELS)  // [["general","全部"], ...]
+
+function SkeletonCard({ wide = false }: { wide?: boolean }) {
+  return (
+    <div className={`${wide ? "w-[250px]" : "w-[150px]"} space-y-3 flex-shrink-0`}>
+      <div className={`rounded-md bg-slate-200/70 animate-pulse ${wide ? "aspect-[3/4]" : "aspect-square"}`} />
+      <div className="space-y-1.5">
+        <div className="h-3 w-4/5 bg-slate-200/70 rounded animate-pulse" />
+        <div className="h-2.5 w-3/5 bg-slate-200/70 rounded animate-pulse" />
+      </div>
+    </div>
+  )
 }
 
-const listenNowAlbums: Album[] = [
-  {
-    name: "Async Awakenings",
-    artist: "Nina Netcode",
-    cover: "https://images.unsplash.com/photo-1547355253-ff0740f6e8c1?w=300&dpr=2&q=80",
-  },
-  {
-    name: "The Art of Reusability",
-    artist: "Lena Logic",
-    cover: "https://images.unsplash.com/photo-1576075796033-848c2a5f3696?w=300&dpr=2&q=80",
-  },
-  {
-    name: "Stateful Symphony",
-    artist: "Beth Binary",
-    cover: "https://images.unsplash.com/photo-1606542758304-820b04394ac2?w=300&dpr=2&q=80",
-  },
-  {
-    name: "React Rendezvous",
-    artist: "Ethan Byte",
-    cover: "https://images.unsplash.com/photo-1598295893369-1918ffaf89a2?w=300&dpr=2&q=80",
-  },
-]
-
-const madeForYouAlbums: Album[] = [
-  {
-    name: "Thinking Components",
-    artist: "Lena Logic",
-    cover: "https://images.unsplash.com/photo-1576075796033-848c2a5f3696?w=300&dpr=2&q=80",
-  },
-  {
-    name: "Functional Fury",
-    artist: "Beth Binary",
-    cover: "https://images.unsplash.com/photo-1606542758304-820b04394ac2?w=300&dpr=2&q=80",
-  },
-  {
-    name: "React Rendezvous",
-    artist: "Ethan Byte",
-    cover: "https://images.unsplash.com/photo-1598295893369-1918ffaf89a2?w=300&dpr=2&q=80",
-  },
-  {
-    name: "Stateful Symphony",
-    artist: "Beth Binary",
-    cover: "https://images.unsplash.com/photo-1606542758304-820b04394ac2?w=300&dpr=2&q=80",
-  },
-  {
-    name: "Async Awakenings",
-    artist: "Nina Netcode",
-    cover: "https://images.unsplash.com/photo-1580428180098-24b353d7e9d9?w=300&dpr=2&q=80",
-  },
-  {
-    name: "The Art of Reusability",
-    artist: "Lena Logic",
-    cover: "https://images.unsplash.com/photo-1626759486966-c067e3f79982?w=300&dpr=2&q=80",
-  },
-]
-
-const playlists = [
-  "Recently Added",
-  "Recently Played",
-  "Top Songs",
-  "Top Albums",
-  "Top Artists",
-  "Logic Discography",
-  "Bedtime Beats",
-  "Feeling Happy",
-  "I miss Y2K Pop",
-  "Runtober",
-  "Mellow Days",
-  "Eminem Essentials",
-  "canvas list"
-]
-
 export function P2() {
+  const [templates, setTemplates] = useState<TemplateSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [activeCategory, setActiveCategory] = useState("general")
+  const [search, setSearch] = useState("")
+  const [debounced, setDebounced] = useState("")
+
+  // 搜索防抖
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search), 400)
+    return () => clearTimeout(t)
+  }, [search])
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true)
+      try {
+        const params = new URLSearchParams({
+          orderBy: "popular",
+          limit:   "20",
+          ...(activeCategory !== "general" && { category: activeCategory }),
+          ...(debounced && { search: debounced }),
+        })
+        const res = await fetch(`/api/community/templates?${params}`)
+        if (res.ok) {
+          const { templates: data } = await res.json()
+          setTemplates(data)
+        }
+      } catch (e) {
+        console.error("Failed to load templates", e)
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [activeCategory, debounced])
+
+  // 把模板按行业分组，用于分区显示
+  const featured = templates.filter((_, i) => i < 4)
+  const rest     = templates.filter((_, i) => i >= 4)
+
   return (
     <div className="border-none p-0 outline-none h-full">
+
+      {/* ── 搜索框 ── */}
+      <div className="relative mb-4">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="搜索工作流..."
+          className="pl-9 bg-slate-50 border-slate-200"
+        />
+      </div>
+
+      {/* ── 分类筛选徽章 ── */}
+      <div className="flex gap-2 flex-wrap mb-4">
+        {CATEGORIES.map(([key, label]) => (
+          <Badge
+            key={key}
+            variant={activeCategory === key ? "default" : "outline"}
+            className="cursor-pointer select-none"
+            onClick={() => setActiveCategory(key)}
+          >
+            {label}
+          </Badge>
+        ))}
+      </div>
+
+      {/* ── 热门精选（大卡片）── */}
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <h2 className="text-2xl font-semibold tracking-tight">
-            Industries
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Top picks for you. Updated daily.
-          </p>
+          <h2 className="text-2xl font-semibold tracking-tight">Industries</h2>
+          <p className="text-sm text-muted-foreground">Top picks for you. Updated daily.</p>
         </div>
       </div>
       <Separator className="my-4" />
       <div className="relative">
         <ScrollArea>
           <div className="flex space-x-4 pb-4">
-            {listenNowAlbums.map((album) => (
-              <AlbumArtwork
-                key={album.name}
-                album={album}
-                className="w-[250px]"
-                aspectRatio={3 / 4}
-                width={250}
-                height={330}
-              />
-            ))}
+            {loading
+              ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} wide />)
+              : featured.length > 0
+                ? featured.map((t) => (
+                    <TemplateCard
+                      key={t.id}
+                      template={t}
+                      aspectRatio="portrait"
+                      width={250}
+                      height={330}
+                      className="w-[250px] flex-shrink-0"
+                    />
+                  ))
+                : <p className="text-sm text-muted-foreground py-4">
+                    {debounced ? `没有找到 "${debounced}" 的相关工作流` : "暂无模板"}
+                  </p>
+            }
           </div>
           <ScrollBar orientation="horizontal" />
         </ScrollArea>
       </div>
-      <div className="mt-6 space-y-1">
-        <h2 className="text-2xl font-semibold tracking-tight">
-          Made for You
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Your personal playlists. Updated daily.
-        </p>
-      </div>
-      <Separator className="my-4" />
-      <div className="relative">
-        <ScrollArea>
-          <div className="flex space-x-4 pb-4">
-            {madeForYouAlbums.map((album) => (
-              <AlbumArtwork
-                key={album.name}
-                album={album}
-                className="w-[150px]"
-                aspectRatio={1 / 1}
-                width={150}
-                height={150}
-              />
-            ))}
-          </div>
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
-      </div>
-    </div>
-  )
-}
 
-// --- 辅助组件 AlbumArtwork 移入 P1 ---
-interface AlbumArtworkProps extends React.HTMLAttributes<HTMLDivElement> {
-  album: Album
-  aspectRatio?: number
-  width?: number
-  height?: number
-}
-
-function AlbumArtwork({
-  album,
-  aspectRatio = 3 / 4,
-  width,
-  height,
-  className,
-  ...props
-}: AlbumArtworkProps) {
-  return (
-    <div className={cn("space-y-3", className)} {...props}>
-      <ContextMenu>
-        <ContextMenuTrigger>
-          <div className="overflow-hidden rounded-md">
-            <Image
-              src={album.cover}
-              alt={album.name}
-              width={width}
-              height={height}
-              className={cn(
-                "h-auto w-auto object-cover transition-all hover:scale-105",
-                aspectRatio === 3 / 4 ? "aspect-[3/4]" : "aspect-square"
-              )}
-            />
+      {/* ── 更多模板（小卡片）── */}
+      {(loading || rest.length > 0) && (
+        <>
+          <div className="mt-6 space-y-1">
+            <h2 className="text-2xl font-semibold tracking-tight">Made for You</h2>
+            <p className="text-sm text-muted-foreground">Your personal playlists. Updated daily.</p>
           </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent className="w-40">
-          <ContextMenuItem>Add to Library</ContextMenuItem>
-          <ContextMenuSub>
-            <ContextMenuSubTrigger>Add to Playlist</ContextMenuSubTrigger>
-            <ContextMenuSubContent className="w-48">
-              <ContextMenuItem>
-                <PlusCircle className="mr-2 h-4 w-4" />
-                New Playlist
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-              {playlists.map((playlist) => (
-                <ContextMenuItem key={playlist}>
-                  <ListMusic className="mr-2 h-4 w-4" />
-                  {playlist}
-                </ContextMenuItem>
-              ))}
-            </ContextMenuSubContent>
-          </ContextMenuSub>
-          <ContextMenuSeparator />
-          <ContextMenuItem>Play Next</ContextMenuItem>
-          <ContextMenuItem>Play Later</ContextMenuItem>
-          <ContextMenuItem>Create Station</ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem>Like</ContextMenuItem>
-          <ContextMenuItem>Share</ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-      <div className="space-y-1 text-sm">
-        <h3 className="font-medium leading-none">{album.name}</h3>
-        <p className="text-xs text-muted-foreground">{album.artist}</p>
-      </div>
+          <Separator className="my-4" />
+          <div className="relative">
+            <ScrollArea>
+              <div className="flex space-x-4 pb-4">
+                {loading
+                  ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
+                  : rest.map((t) => (
+                      <TemplateCard
+                        key={t.id}
+                        template={t}
+                        aspectRatio="square"
+                        width={150}
+                        height={150}
+                        className="w-[150px] flex-shrink-0"
+                      />
+                    ))
+                }
+              </div>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </div>
+        </>
+      )}
     </div>
   )
 }

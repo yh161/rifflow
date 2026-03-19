@@ -1,224 +1,158 @@
 "use client"
 
-import Image from "next/image"
-import { PlusCircle, ListMusic } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { useEffect, useState } from "react"
+import { useSession } from "next-auth/react"
+import { PlusCircle, UploadCloud } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu"
+import { Badge } from "@/components/ui/badge"
 
-interface Album {
-  name: string
-  artist: string
-  cover: string
-}
+import { TemplateCard } from "./TemplateCard"
+import type { TemplateSummary } from "./community.types"
 
-const listenNowAlbums: Album[] = [
-  {
-    name: "Async Awakenings",
-    artist: "Nina Netcode",
-    cover: "https://images.unsplash.com/photo-1547355253-ff0740f6e8c1?w=300&dpr=2&q=80",
-  },
-  {
-    name: "The Art of Reusability",
-    artist: "Lena Logic",
-    cover: "https://images.unsplash.com/photo-1576075796033-848c2a5f3696?w=300&dpr=2&q=80",
-  },
-  {
-    name: "Stateful Symphony",
-    artist: "Beth Binary",
-    cover: "https://images.unsplash.com/photo-1606542758304-820b04394ac2?w=300&dpr=2&q=80",
-  },
-  {
-    name: "React Rendezvous",
-    artist: "Ethan Byte",
-    cover: "https://images.unsplash.com/photo-1598295893369-1918ffaf89a2?w=300&dpr=2&q=80",
-  },
-]
+type Tab = "published" | "drafts" | "favorites"
 
-const madeForYouAlbums: Album[] = [
-  {
-    name: "Thinking Components",
-    artist: "Lena Logic",
-    cover: "https://images.unsplash.com/photo-1576075796033-848c2a5f3696?w=300&dpr=2&q=80",
-  },
-  {
-    name: "Functional Fury",
-    artist: "Beth Binary",
-    cover: "https://images.unsplash.com/photo-1606542758304-820b04394ac2?w=300&dpr=2&q=80",
-  },
-  {
-    name: "React Rendezvous",
-    artist: "Ethan Byte",
-    cover: "https://images.unsplash.com/photo-1598295893369-1918ffaf89a2?w=300&dpr=2&q=80",
-  },
-  {
-    name: "Stateful Symphony",
-    artist: "Beth Binary",
-    cover: "https://images.unsplash.com/photo-1606542758304-820b04394ac2?w=300&dpr=2&q=80",
-  },
-  {
-    name: "Async Awakenings",
-    artist: "Nina Netcode",
-    cover: "https://images.unsplash.com/photo-1580428180098-24b353d7e9d9?w=300&dpr=2&q=80",
-  },
-  {
-    name: "The Art of Reusability",
-    artist: "Lena Logic",
-    cover: "https://images.unsplash.com/photo-1626759486966-c067e3f79982?w=300&dpr=2&q=80",
-  },
-]
-
-const playlists = [
-  "Recently Added",
-  "Recently Played",
-  "Top Songs",
-  "Top Albums",
-  "Top Artists",
-  "Logic Discography",
-  "Bedtime Beats",
-  "Feeling Happy",
-  "I miss Y2K Pop",
-  "Runtober",
-  "Mellow Days",
-  "Eminem Essentials",
-  "canvas list"
-]
-
-export function P3() {
+function SkeletonCard() {
   return (
-    <div className="border-none p-0 outline-none h-full">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h2 className="text-2xl font-semibold tracking-tight">
-            Industries
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Top picks for you. Updated daily.
-          </p>
-        </div>
-      </div>
-      <Separator className="my-4" />
-      <div className="relative">
-        <ScrollArea>
-          <div className="flex space-x-4 pb-4">
-            {listenNowAlbums.map((album) => (
-              <AlbumArtwork
-                key={album.name}
-                album={album}
-                className="w-[250px]"
-                aspectRatio={3 / 4}
-                width={250}
-                height={330}
-              />
-            ))}
-          </div>
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
-      </div>
-      <div className="mt-6 space-y-1">
-        <h2 className="text-2xl font-semibold tracking-tight">
-          Made for You
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Your personal playlists. Updated daily.
-        </p>
-      </div>
-      <Separator className="my-4" />
-      <div className="relative">
-        <ScrollArea>
-          <div className="flex space-x-4 pb-4">
-            {madeForYouAlbums.map((album) => (
-              <AlbumArtwork
-                key={album.name}
-                album={album}
-                className="w-[150px]"
-                aspectRatio={1 / 1}
-                width={150}
-                height={150}
-              />
-            ))}
-          </div>
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
+    <div className="w-[150px] space-y-3 flex-shrink-0">
+      <div className="aspect-square rounded-md bg-slate-200/70 animate-pulse" />
+      <div className="space-y-1.5">
+        <div className="h-3 w-4/5 bg-slate-200/70 rounded animate-pulse" />
+        <div className="h-2.5 w-3/5 bg-slate-200/70 rounded animate-pulse" />
       </div>
     </div>
   )
 }
 
-// --- 辅助组件 AlbumArtwork 移入 P1 ---
-interface AlbumArtworkProps extends React.HTMLAttributes<HTMLDivElement> {
-  album: Album
-  aspectRatio?: number
-  width?: number
-  height?: number
+function EmptyState({ label, action }: { label: string; action?: React.ReactNode }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
+      <UploadCloud className="h-8 w-8 text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">{label}</p>
+      {action}
+    </div>
+  )
 }
 
-function AlbumArtwork({
-  album,
-  aspectRatio = 3 / 4,
-  width,
-  height,
-  className,
-  ...props
-}: AlbumArtworkProps) {
+export function P3() {
+  const { data: session } = useSession()
+  const [activeTab, setActiveTab] = useState<Tab>("published")
+  const [published, setPublished] = useState<TemplateSummary[]>([])
+  const [drafts, setDrafts]       = useState<TemplateSummary[]>([])
+  const [favorites, setFavorites] = useState<TemplateSummary[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!session?.user?.id) return
+
+    const loadAll = async () => {
+      setLoading(true)
+      try {
+        const [pubRes, draftRes, favRes] = await Promise.all([
+          fetch(`/api/community/templates?creatorId=${session.user.id}&status=published`),
+          fetch(`/api/community/templates?creatorId=${session.user.id}&status=draft`),
+          fetch("/api/user/favorites"),
+        ])
+        if (pubRes.ok)   { const d = await pubRes.json();   setPublished(d.templates ?? []) }
+        if (draftRes.ok) { const d = await draftRes.json(); setDrafts(d.templates ?? []) }
+        if (favRes.ok)   {
+          const d = await favRes.json()
+          // favorites API 返回带 template 字段的对象
+          setFavorites((d.favorites ?? []).map((f: { template: TemplateSummary }) => f.template))
+        }
+      } catch (e) {
+        console.error("P3 load error", e)
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadAll()
+  }, [session?.user?.id])
+
+  const tabs: { key: Tab; label: string; count: number }[] = [
+    { key: "published", label: "已发布",  count: published.length },
+    { key: "drafts",    label: "草稿",    count: drafts.length },
+    { key: "favorites", label: "我的收藏", count: favorites.length },
+  ]
+
+  const current =
+    activeTab === "published" ? published
+    : activeTab === "drafts"  ? drafts
+    : favorites
+
   return (
-    <div className={cn("space-y-3", className)} {...props}>
-      <ContextMenu>
-        <ContextMenuTrigger>
-          <div className="overflow-hidden rounded-md">
-            <Image
-              src={album.cover}
-              alt={album.name}
-              width={width}
-              height={height}
-              className={cn(
-                "h-auto w-auto object-cover transition-all hover:scale-105",
-                aspectRatio === 3 / 4 ? "aspect-[3/4]" : "aspect-square"
-              )}
-            />
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent className="w-40">
-          <ContextMenuItem>Add to Library</ContextMenuItem>
-          <ContextMenuSub>
-            <ContextMenuSubTrigger>Add to Playlist</ContextMenuSubTrigger>
-            <ContextMenuSubContent className="w-48">
-              <ContextMenuItem>
-                <PlusCircle className="mr-2 h-4 w-4" />
-                New Playlist
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-              {playlists.map((playlist) => (
-                <ContextMenuItem key={playlist}>
-                  <ListMusic className="mr-2 h-4 w-4" />
-                  {playlist}
-                </ContextMenuItem>
-              ))}
-            </ContextMenuSubContent>
-          </ContextMenuSub>
-          <ContextMenuSeparator />
-          <ContextMenuItem>Play Next</ContextMenuItem>
-          <ContextMenuItem>Play Later</ContextMenuItem>
-          <ContextMenuItem>Create Station</ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem>Like</ContextMenuItem>
-          <ContextMenuItem>Share</ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-      <div className="space-y-1 text-sm">
-        <h3 className="font-medium leading-none">{album.name}</h3>
-        <p className="text-xs text-muted-foreground">{album.artist}</p>
+    <div className="border-none p-0 outline-none h-full">
+
+      {/* ── 标题 + 发布按钮 ── */}
+      <div className="flex items-center justify-between mb-1">
+        <div className="space-y-1">
+          <h2 className="text-2xl font-semibold tracking-tight">Create</h2>
+          <p className="text-sm text-muted-foreground">
+            你的工作流库和收藏。
+          </p>
+        </div>
+        <Button size="sm" disabled>
+          <PlusCircle className="mr-2 h-4 w-4" />
+          发布工作流
+        </Button>
       </div>
+
+      {/* ── Tab 切换 ── */}
+      <div className="flex gap-2 my-4">
+        {tabs.map(({ key, label, count }) => (
+          <Badge
+            key={key}
+            variant={activeTab === key ? "default" : "outline"}
+            className="cursor-pointer select-none gap-1.5"
+            onClick={() => setActiveTab(key)}
+          >
+            {label}
+            {count > 0 && (
+              <span className="bg-white/20 text-[10px] px-1 rounded-full">
+                {count}
+              </span>
+            )}
+          </Badge>
+        ))}
+      </div>
+
+      <Separator className="my-4" />
+
+      {/* ── 内容区 ── */}
+      {!session?.user?.id ? (
+        <EmptyState label="请先登录查看你的工作流库" />
+      ) : (
+        <div className="relative">
+          <ScrollArea>
+            <div className="flex space-x-4 pb-4">
+              {loading
+                ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+                : current.length > 0
+                  ? current.map((t) => (
+                      <TemplateCard
+                        key={t.id}
+                        template={t}
+                        aspectRatio="square"
+                        width={150}
+                        height={150}
+                        className="w-[150px] flex-shrink-0"
+                      />
+                    ))
+                  : <EmptyState
+                      label={
+                        activeTab === "published" ? "还没有发布任何工作流"
+                        : activeTab === "drafts"   ? "没有草稿"
+                        : "还没有收藏任何工作流"
+                      }
+                    />
+              }
+            </div>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+        </div>
+      )}
     </div>
   )
 }
