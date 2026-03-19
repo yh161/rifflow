@@ -655,6 +655,7 @@ function CanvasLogic({
           isRunning={isRunning}
           snapToGrid={propSnapToGrid ?? internalSnapToGrid}
           onSnapToggle={propOnSnapToggle ?? (() => setInternalSnapToGrid(v => !v))}
+          canvasSnapshot={{ nodes: canvasState.nodesRef.current, edges: canvasState.edgesRef.current }}
         />
       </ReactFlow>
 

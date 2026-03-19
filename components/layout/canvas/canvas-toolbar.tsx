@@ -3,15 +3,19 @@
 import React, { useState, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 import { useReactFlow, MiniMap } from "reactflow"
-import { ZoomIn, ZoomOut, Maximize2, Grid3X3, Map, ScanSearch } from "lucide-react"
+import { ZoomIn, ZoomOut, Maximize2, Grid3X3, Map, UploadCloud, ImageIcon } from "lucide-react"
+import { PublishModal } from "./PublishModal"
 
 interface CanvasToolbarProps {
   isSidebarOpen: boolean
-  isRunning: boolean
-  snapToGrid: boolean
-  onSnapToggle: () => void
+  isRunning:     boolean
+  snapToGrid:    boolean
+  onSnapToggle:  () => void
+  /** canvas 快照，由外层传入（nodes + edges） */
+  canvasSnapshot?: { nodes: unknown[]; edges: unknown[] }
 }
 
+// ── ZoomBadge ─────────────────────────────────────────────────────────
 function ZoomBadge() {
   const { getZoom } = useReactFlow()
   const [zoom, setZoom] = useState(() => Math.round(getZoom() * 100))
@@ -50,30 +54,53 @@ function TBtn({ onClick, active, title, children }: {
   )
 }
 
-export default function CanvasToolbar({ isSidebarOpen, isRunning, snapToGrid, onSnapToggle }: CanvasToolbarProps) {
+// ── 封面按钮（首个 trigger）──────────────────────────────────────────
+function CoverTrigger({
+  coverPreview, expanded, onClick,
+}: {
+  coverPreview: string | null
+  expanded: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={expanded ? "收起" : "画布控制"}
+      className={cn(
+        "w-10 h-10 shrink-0 rounded-[10px] overflow-hidden",
+        "flex items-center justify-center transition-all duration-150",
+        coverPreview
+          ? "ring-1 ring-slate-200"
+          : "bg-slate-100 hover:bg-slate-200 text-slate-400 hover:text-slate-600",
+      )}
+    >
+      {coverPreview
+        // eslint-disable-next-line @next/next/no-img-element
+        ? <img src={coverPreview} alt="canvas cover" className="w-full h-full object-cover" />
+        : <ImageIcon size={14} strokeWidth={2} />
+      }
+    </button>
+  )
+}
+
+export default function CanvasToolbar({
+  isSidebarOpen, isRunning, snapToGrid, onSnapToggle,
+  canvasSnapshot = { nodes: [], edges: [] },
+}: CanvasToolbarProps) {
   const { zoomIn, zoomOut, getNodes, setViewport } = useReactFlow()
-  const [isExpanded,  setIsExpanded]  = useState(false)
-  const [showMinimap, setShowMinimap] = useState(false)
+  const [isExpanded,    setIsExpanded]    = useState(false)
+  const [showMinimap,   setShowMinimap]   = useState(false)
+  const [showPublish,   setShowPublish]   = useState(false)
+  const [coverPreview,  setCoverPreview]  = useState<string | null>(null)
 
   const leftOffset = isSidebarOpen ? 336 : 16
 
   useEffect(() => { if (!isExpanded) setShowMinimap(false) }, [isExpanded])
   const minimapVisible = showMinimap && isExpanded && !isRunning
 
-  /**
-   * Fit all visible nodes into the actual visible canvas area.
-   * When the sidebar is open it covers the left 320px — we exclude that
-   * from the target rectangle so no node ends up behind the sidebar.
-   *
-   * Math (ReactFlow screen↔flow transform):
-   *   screen = flow * zoom + translate
-   *   → translate = screenCenter - flowCenter * zoom
-   */
   const handleFitView = () => {
     const nodes = getNodes().filter(n => !n.hidden)
     if (nodes.length === 0) return
-
-    // Bounding box of all nodes in flow coordinates
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
     for (const n of nodes) {
       const w = (n.width  ?? (n.data?.width  as number | undefined) ?? 180)
@@ -85,31 +112,23 @@ export default function CanvasToolbar({ isSidebarOpen, isRunning, snapToGrid, on
     }
     const boundsW = maxX - minX
     const boundsH = maxY - minY
-
-    // Visible screen rectangle (sidebar excluded on the left)
-    const sidebarW  = isSidebarOpen ? 320 : 0
-    const screenW   = window.innerWidth
-    const screenH   = window.innerHeight
-    const visibleX  = sidebarW          // left edge of usable area
-    const visibleW  = screenW - sidebarW
-    const visibleH  = screenH
-
-    const PAD = 0.15
-    const zoom = Math.min(
+    const sidebarW = isSidebarOpen ? 320 : 0
+    const screenW  = window.innerWidth
+    const screenH  = window.innerHeight
+    const visibleX = sidebarW
+    const visibleW = screenW - sidebarW
+    const visibleH = screenH
+    const PAD      = 0.15
+    const zoom     = Math.min(
       (visibleW * (1 - 2 * PAD)) / boundsW,
       (visibleH * (1 - 2 * PAD)) / boundsH,
-      10,   // maxZoom
+      10,
     )
     const clampedZoom = Math.max(0.1, zoom)
-
-    // Center of bounds in flow coords
-    const flowCX = minX + boundsW / 2
-    const flowCY = minY + boundsH / 2
-
-    // Center of visible area in screen coords
+    const flowCX  = minX + boundsW / 2
+    const flowCY  = minY + boundsH / 2
     const screenCX = visibleX + visibleW / 2
     const screenCY = visibleH / 2
-
     setViewport(
       { x: screenCX - flowCX * clampedZoom, y: screenCY - flowCY * clampedZoom, zoom: clampedZoom },
       { duration: 450 },
@@ -118,7 +137,7 @@ export default function CanvasToolbar({ isSidebarOpen, isRunning, snapToGrid, on
 
   return (
     <>
-      {/* ── Pill ── */}
+      {/* ── Pill（圆角矩形）── */}
       <div
         className={cn(
           "absolute z-[600] bottom-5",
@@ -127,33 +146,26 @@ export default function CanvasToolbar({ isSidebarOpen, isRunning, snapToGrid, on
         )}
         style={{ left: leftOffset }}
       >
-        {/*
-          The entire pill is overflow:hidden with a fixed height and border-radius.
-          max-width transitions from 52px (just the trigger button) to 600px (all controls).
-          No absolute positioning, no layout tricks — overflow:hidden clips everything cleanly.
-        */}
         <div
           className="flex flex-row items-center bg-white/80 border border-slate-200/60 backdrop-blur-xl shadow-lg shadow-black/[0.06]"
           style={{
-            height:     52,
-            padding:    5,
-            gap:        2,
-            maxWidth:   isExpanded ? 600 : 52,
-            borderRadius: 26,
-            overflow:   "hidden",
-            transition: "max-width 0.7s cubic-bezier(0.32,1,0.1,1)",
+            height:       52,
+            padding:      5,
+            gap:          2,
+            maxWidth:     isExpanded ? 600 : 52,
+            borderRadius: 14,             // ← 圆角矩形（原为 26）
+            overflow:     "hidden",
+            transition:   "max-width 0.7s cubic-bezier(0.32,1,0.1,1)",
           }}
         >
-          {/* Trigger — always 40×40, always first, never changes size */}
-          <button
+          {/* ── 封面按钮 / Trigger ── */}
+          <CoverTrigger
+            coverPreview={coverPreview}
+            expanded={isExpanded}
             onClick={() => setIsExpanded(v => !v)}
-            title={isExpanded ? "Collapse" : "Canvas controls"}
-            className="w-10 h-10 shrink-0 rounded-[20px] flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors duration-150"
-          >
-            <ScanSearch size={15} strokeWidth={2} />
-          </button>
+          />
 
-          {/* Rest — simply sit in the row, clipped until pill is wide enough */}
+          {/* ── 展开内容 ── */}
           <TBtn onClick={() => zoomOut({ duration: 200 })} title="Zoom out (−)">
             <ZoomOut size={15} strokeWidth={2} />
           </TBtn>
@@ -179,6 +191,14 @@ export default function CanvasToolbar({ isSidebarOpen, isRunning, snapToGrid, on
           <TBtn onClick={() => setShowMinimap(v => !v)} active={showMinimap} title={showMinimap ? "Hide minimap" : "Show minimap"}>
             <Map size={15} strokeWidth={2} />
           </TBtn>
+
+          <Divider />
+
+          {/* ── 发布按钮 ── */}
+          <TBtn onClick={() => setShowPublish(true)} title="发布到社区">
+            <UploadCloud size={15} strokeWidth={2} />
+          </TBtn>
+
         </div>
       </div>
 
@@ -189,19 +209,30 @@ export default function CanvasToolbar({ isSidebarOpen, isRunning, snapToGrid, on
         nodeColor="#cbd5e1"
         maskColor="rgba(241,245,249,0.65)"
         style={{
-          position: "absolute",
-          bottom: 80, left: leftOffset, right: "unset" as any,
-          width: 192, height: 128,
+          position:   "absolute",
+          bottom:     80, left: leftOffset, right: "unset" as any,
+          width:      192, height: 128,
           background: "rgba(255,255,255,0.85)",
           borderRadius: 16,
-          border: "1px solid rgba(226,232,240,0.6)",
-          boxShadow: "0 4px 24px rgba(0,0,0,0.06)",
-          opacity: minimapVisible ? 1 : 0,
+          border:     "1px solid rgba(226,232,240,0.6)",
+          boxShadow:  "0 4px 24px rgba(0,0,0,0.06)",
+          opacity:     minimapVisible ? 1 : 0,
           pointerEvents: minimapVisible ? "auto" : "none",
-          transform: minimapVisible ? "translateY(0)" : "translateY(6px)",
-          transition: "opacity 0.3s ease, transform 0.3s ease",
-          zIndex: 600,
+          transform:   minimapVisible ? "translateY(0)" : "translateY(6px)",
+          transition:  "opacity 0.3s ease, transform 0.3s ease",
+          zIndex:      600,
         }}
+      />
+
+      {/* ── 发布 Modal ── */}
+      <PublishModal
+        open={showPublish}
+        onOpenChange={(v) => {
+          setShowPublish(v)
+          // Modal 关闭后如果有封面，同步回 toolbar 显示
+        }}
+        canvasSnapshot={canvasSnapshot}
+        onCoverChange={setCoverPreview}
       />
     </>
   )
