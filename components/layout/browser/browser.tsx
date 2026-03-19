@@ -48,6 +48,8 @@ import {
 import { P1 } from "./browser_p1"
 import { P2 } from "./browser_p2"
 import { P3 } from "./browser_p3"
+import { LibraryPage } from "./browser_library"
+import { FavoritesPage } from "./browser_favorites"
 
 // User-defined workflow collections (analogous to user-created playlists in Apple Music)
 const workflowCollections = [
@@ -70,7 +72,7 @@ interface PanelProps {
 
 export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChange, isRunning = false, importRef, exportRef }: PanelProps) {
   const setIsOpen = (val: boolean) => onOpenChange?.(val)
-  const [activePage, setActivePage] = useState<"watch" | "browse" | "create">("watch");
+  const [activePage, setActivePage] = useState<"watch" | "browse" | "create" | "library" | "favorites">("watch");
 
   // Completely hidden during run mode — no edge, no interaction
   if (isRunning) {
@@ -266,19 +268,19 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
                     Library
                   </h2>
                   <div className="space-y-1">
-                    <Button variant="ghost" className="w-full justify-start">
+                    <Button variant={activePage === "library" ? "secondary" : "ghost"} className="w-full justify-start" onClick={() => setActivePage("library")}>
                       <Clock className="mr-2 h-4 w-4" />
                       Recently Added
                     </Button>
-                    <Button variant="ghost" className="w-full justify-start">
+                    <Button variant={activePage === "library" ? "ghost" : "ghost"} className="w-full justify-start" onClick={() => setActivePage("library")}>
                       <Users className="mr-2 h-4 w-4" />
                       Creators
                     </Button>
-                    <Button variant="ghost" className="w-full justify-start">
+                    <Button variant="ghost" className="w-full justify-start" onClick={() => setActivePage("library")}>
                       <Layers className="mr-2 h-4 w-4" />
                       Collections
                     </Button>
-                    <Button variant="ghost" className="w-full justify-start">
+                    <Button variant="ghost" className="w-full justify-start" onClick={() => setActivePage("library")}>
                       <HardDrive className="mr-2 h-4 w-4" />
                       Assets
                     </Button>
@@ -296,7 +298,7 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
                       <Workflow className="mr-2 h-4 w-4" />
                       All Workflows
                     </Button>
-                    <Button variant="ghost" className="w-full justify-start font-normal">
+                    <Button variant={activePage === "favorites" ? "secondary" : "ghost"} className="w-full justify-start font-normal" onClick={() => setActivePage("favorites")}>
                       <Star className="mr-2 h-4 w-4" />
                       Favorites
                     </Button>
@@ -320,9 +322,11 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
             {/* --- Right Content Area --- */}
             <div className="col-span-3 lg:col-span-4 lg:border-l flex h-[calc(100vh-120px)]"> 
               <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8">
-                {activePage === "watch" && <P1 />}
-                {activePage === "browse" && <P2 />}
-                {activePage === "create" && <P3 />}
+                {activePage === "watch"     && <P1 />}
+                {activePage === "browse"    && <P2 />}
+                {activePage === "create"    && <P3 />}
+                {activePage === "library"   && <LibraryPage />}
+                {activePage === "favorites" && <FavoritesPage />}
               </div>
             </div>
 
