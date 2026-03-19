@@ -9,18 +9,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   Menubar,
-  MenubarCheckboxItem,
   MenubarContent,
   MenubarItem,
-  MenubarLabel,
   MenubarMenu,
-  MenubarRadioGroup,
-  MenubarRadioItem,
   MenubarSeparator,
   MenubarShortcut,
-  MenubarSub,
-  MenubarSubContent,
-  MenubarSubTrigger,
   MenubarTrigger,
 } from "@/components/ui/menubar"
 
@@ -138,17 +131,12 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
         {/* --- Top Menubar --- */}
         <Menubar className="rounded-none border-b border-none px-2 lg:px-4">
           <MenubarMenu>
-            <MenubarTrigger className="font-bold">Navigator</MenubarTrigger>
-            <MenubarContent>
-              <MenubarItem>View all plans</MenubarItem>
-              <MenubarSeparator />
-              <MenubarItem>
-                Preferences... <MenubarShortcut>⌘,</MenubarShortcut>
-              </MenubarItem>
-              <MenubarItem>About</MenubarItem>
-              <MenubarSeparator />
-              <MenubarItem>Log out</MenubarItem>
-            </MenubarContent>
+            <MenubarTrigger
+              className="font-bold"
+              onClick={() => navigate("watch")}
+            >
+              Navigator
+            </MenubarTrigger>
           </MenubarMenu>
           <MenubarMenu>
             <MenubarTrigger>File</MenubarTrigger>
