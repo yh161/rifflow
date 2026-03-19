@@ -1,11 +1,12 @@
 "use client"
 
 import { useState } from "react"
-import { Check, Zap, Key, Sparkles, Crown } from "lucide-react"
+import { Check, Zap, Sparkles, Crown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
+import { PtIcon } from "@/components/layout/user-avatar"
 
 // ── Credit packs ───────────────────────────────────────────────────────────
 
@@ -36,7 +37,7 @@ const PLANS = [
     ],
     cta: "当前计划",
     ctaDisabled: true,
-    icon: Key,
+    icon: ({ className }: { className?: string }) => <PtIcon className={className} />,
   },
   {
     key: "pro",
@@ -107,7 +108,7 @@ function PackCard({
           推荐
         </span>
       )}
-      <Key className={cn("h-5 w-5", selected ? "text-blue-500" : "text-slate-400")} />
+      <PtIcon className={cn("text-xl", selected ? "text-blue-500" : "text-slate-400")} />
       <span className={cn("text-xl font-bold tabular-nums", selected ? "text-blue-600" : "text-foreground")}>
         {pack.points.toLocaleString()}
         <span className="text-sm font-normal ml-0.5">pt</span>
@@ -236,7 +237,7 @@ export function PricingPage() {
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold">积分充值</h2>
           <Badge variant="outline" className="text-xs gap-1">
-            <Key className="h-3 w-3" />
+            <PtIcon className="text-xs" />
             单次购买，永久有效
           </Badge>
         </div>

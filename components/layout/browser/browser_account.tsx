@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react"
 import { useSession, signOut } from "next-auth/react"
 import {
-  Key, LogOut, ChevronRight, ChevronDown,
-  Zap, Star, GitBranch, Users, Code2,
+  LogOut, ChevronRight, ChevronDown,
+  Zap, Star, GitBranch, Code2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { PtIcon } from "@/components/layout/user-avatar"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -199,7 +200,7 @@ export function AccountPage({ onPricing }: { onPricing: () => void }) {
 
         {/* Balance display */}
         <div className="flex items-baseline gap-2">
-          <Key className="h-4 w-4 text-slate-400 mb-0.5" />
+          <PtIcon className="text-xl text-slate-400" />
           {loading ? (
             <div className="h-9 w-24 bg-slate-100 rounded animate-pulse" />
           ) : (
