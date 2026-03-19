@@ -264,7 +264,22 @@ export function useLoopManager(canvasState: CanvasState) {
     const templateNodes = collectTemplateTree(loopId, prevNodes)
     if (templateNodes.length === 0) return
 
-    const { clonedNodes, idMapping } = cloneNodesForInstance(templateNodes, loopId, newIdx)
+    const { clonedNodes: rawCloned, idMapping } = cloneNodesForInstance(templateNodes, loopId, newIdx)
+
+    // Translate {{templateNodeId}} → {{instanceNodeId}} in prompts.
+    // cloneNodesForInstance copies data.prompt verbatim from the template, so any
+    // {{refId}} inside still points to the original template node ID.
+    // idMapping (oldId → newId) is the authoritative source for the remapping.
+    const clonedNodes = rawCloned.map((n) => {
+      const prompt = n.data?.prompt
+      if (!prompt || typeof prompt !== 'string' || !prompt.includes('{{')) return n
+      const translated = prompt.replace(/\{\{([^}]+)\}\}/g, (_: string, ref: string) => {
+        const newId = idMapping.get(ref.trim())
+        return newId ? `{{${newId}}}` : `{{${ref.trim()}}}`
+      })
+      return translated === prompt ? n : { ...n, data: { ...n.data, prompt: translated } }
+    })
+
     const templateNodeIds = new Set(templateNodes.map((n) => n.id))
     const clonedEdges = cloneEdgesForInstance(prevEdges, idMapping, templateNodeIds, loopId, newIdx)
 

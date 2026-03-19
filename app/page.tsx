@@ -106,8 +106,6 @@ export default function Screen() {
           onPause={handlePause}
           onResume={handleResume}
           onStop={handleStop}
-          logs={logs}
-          onSendInput={addLog}
           favorites={favorites}
           onToggleFavorite={handleToggleFavorite}
         />

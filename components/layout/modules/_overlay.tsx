@@ -75,7 +75,7 @@ export function GeneratingOverlay({
       */}
       <defs>
         <filter id={filterId} x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur" />
+          <feGaussianBlur in="SourceGraphic" stdDeviation="1" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />
             <feMergeNode in="SourceGraphic" />
@@ -87,7 +87,7 @@ export function GeneratingOverlay({
       <path d={topPath}    fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth={3} />
       <path d={bottomPath} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth={3} />
 
-      {/* Glowing progress — glow via SVG filter, not CSS filter */}
+      {/* Glowing progress — glow via SVG filter*/}
       <path
         d={topPath} fill="none" stroke="#4ade80" strokeWidth={3} strokeLinecap="round"
         strokeDasharray={pathLen} strokeDashoffset={offset}

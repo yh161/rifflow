@@ -238,13 +238,14 @@ type ResizeZoneEntry = {
 }
 
 type DragState = {
-  nodeId:   string
-  startX:   number
-  startY:   number
-  startW:   number
-  startH:   number
-  setNodes: (fn: (nodes: any[]) => any[]) => void
-  getZoom:  () => number
+  nodeId:       string
+  startX:       number
+  startY:       number
+  startW:       number
+  startH:       number
+  setNodes:     (fn: (nodes: any[]) => any[]) => void
+  getZoom:      () => number
+  aspectRatio?: number   // w/h — when set, height is derived from width
 }
 
 const resizeZones          = new Set<ResizeZoneEntry>()
@@ -272,8 +273,15 @@ function ensureResizeListeners() {
     const zoom = activeDrag.getZoom()
     const dx   = (e.clientX - activeDrag.startX) / zoom
     const dy   = (e.clientY - activeDrag.startY) / zoom
-    const newW = Math.max(RH_MIN_W, activeDrag.startW + dx)
-    const newH = Math.max(RH_MIN_H, activeDrag.startH + dy)
+    let newW = Math.max(RH_MIN_W, activeDrag.startW + dx)
+    let newH = Math.max(RH_MIN_H, activeDrag.startH + dy)
+    if (activeDrag.aspectRatio) {
+      // Lock aspect ratio: width drives, height is derived.
+      // If the derived height would be too small, flip and let height drive.
+      const ar = activeDrag.aspectRatio
+      newH = newW / ar
+      if (newH < RH_MIN_H) { newH = RH_MIN_H; newW = newH * ar }
+    }
     activeDrag.setNodes((nodes: any[]) =>
       nodes.map((n) => {
         if (n.id !== activeDrag!.nodeId) return n
@@ -298,9 +306,11 @@ function ensureResizeListeners() {
 export function ResizeHandle({
   nodeId,
   isHovered,
+  aspectRatio,
 }: {
-  nodeId:    string
-  isHovered: () => boolean
+  nodeId:       string
+  isHovered:    () => boolean
+  aspectRatio?: number
 }) {
   const zoneRef  = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
@@ -327,12 +337,13 @@ export function ResizeHandle({
     const z    = getZoom()
     activeDrag = {
       nodeId,
-      startX:   e.clientX,
-      startY:   e.clientY,
-      startW:   rect.width  / z,
-      startH:   rect.height / z,
+      startX:      e.clientX,
+      startY:      e.clientY,
+      startW:      rect.width  / z,
+      startH:      rect.height / z,
       setNodes,
       getZoom,
+      aspectRatio,
     }
     document.body.style.userSelect = 'none'
     document.body.style.cursor     = 'nwse-resize'

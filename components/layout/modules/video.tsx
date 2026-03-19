@@ -22,7 +22,7 @@ export const meta = {
 
 export const defaultData: Partial<CustomNodeData> = {
   type: 'video',
-  label: 'New Video',
+  label: 'Video',
 }
 
 export const handles: HandleDef[] = [

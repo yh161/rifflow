@@ -226,6 +226,18 @@ export class WorkflowEngine {
     const { workflowJobId, userId, results } = ctx
     const nodeType = node.data.type || node.type
 
+    // ── Pre-resolved external nodes ──────────────────────────────────────────
+    // Nodes tagged _preResolved come from outside the batch container.
+    // Their existing content is already the correct value — skip LLM execution
+    // and register the result immediately so downstream nodes can reference them.
+    if (node.data._preResolved) {
+      const d = node.data
+      const content = String(d.content ?? d.src ?? d.videoSrc ?? "")
+      const result = { content }
+      ctx.results.set(node.id, result)
+      return { success: true, data: result }
+    }
+
     // Collect inputs from upstream nodes
     const upstreamEdges = allEdges.filter((e) => e.target === node.id)
     const inputs: Record<string, unknown> = {}

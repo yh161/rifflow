@@ -15,9 +15,10 @@ function sanitizeNodes(nodes: Node[]): Node[] {
     ...n,
     data: {
       ...n.data,
-      rawFile:      undefined,
-      onDataChange: undefined,
-      onDelete:     undefined,
+      rawFile:            undefined,
+      onDataChange:       undefined,
+      onDelete:           undefined,
+      batchResumeHandled: undefined,  // ephemeral: editor sets this; must not survive refresh
       src:
         typeof n.data?.src === "string" && n.data.src.startsWith("blob:")
           ? undefined

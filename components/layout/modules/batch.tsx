@@ -111,10 +111,11 @@ ReactFlowNode.displayName = 'BatchNode'
 // ─────────────────────────────────────────────
 // ModalContent — wired to LoopPanel
 // ─────────────────────────────────────────────
-export function ModalContent({ data, onUpdate, mode = 'auto', isGenerating = false, onGenerate, onStop }: ModuleModalProps) {
+export function ModalContent({ data, nodeId, onUpdate, mode = 'auto', isGenerating = false, onGenerate, onStop }: ModuleModalProps) {
   return (
     <LoopPanel
       data={data as CustomNodeData}
+      nodeId={nodeId}
       onDataChange={onUpdate as (u: Partial<CustomNodeData>) => void}
       mode={mode}
       isGenerating={isGenerating}

@@ -6,7 +6,7 @@ import { MessageSquare, Play, Pause, Square, Lasso } from "lucide-react"
 
 import { MODULES } from "@/components/layout/modules/_registry"
 import { NodePickerMenu } from "@/components/layout/node_picker"
-import RunConsole, { type LogEntry } from "@/components/layout/run-console"
+import RunDetail from "@/components/layout/run-detail/run-detail"
 
 // ─────────────────────────────────────────────
 // Clean plus icon — single path, no intersection seam
@@ -190,8 +190,7 @@ interface ToolbarProps {
   onResume: () => void
   onStop: () => void
   // Console
-  logs: LogEntry[]
-  onSendInput?: (text: string) => void
+  onOpenLog?: () => void
   // Favorites — quick-launch shortcuts
   favorites: string[]
   onToggleFavorite: (typeId: string) => void
@@ -207,8 +206,7 @@ export default function Toolbar({
   onPause,
   onResume,
   onStop,
-  logs,
-  onSendInput,
+  onOpenLog,
   favorites,
   onToggleFavorite,
 }: ToolbarProps) {
@@ -380,11 +378,15 @@ export default function Toolbar({
               : "opacity-0 scale-90 pointer-events-none",
           )}
         >
-          <RunConsole
+          <RunDetail
             isVisible={isRunning}
+            isRunning={isRunning}
             isPaused={isPaused}
-            logs={logs}
-            onSendInput={onSendInput}
+            onRun={onRun}
+            onPause={onPause}
+            onResume={onResume}
+            onStop={onStop}
+            onOpenLog={onOpenLog}
           />
         </div>
       </div>

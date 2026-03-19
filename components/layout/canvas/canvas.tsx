@@ -30,6 +30,7 @@ import CanvasToolbar from "@/components/layout/canvas/canvas-toolbar"
 import { useAutosave } from "@/hooks/useAutosave"
 
 import { nodeTypes, StandardNodeUI, CustomNodeUI, MODULE_BY_ID } from "@/components/layout/modules/_registry"
+import { BatchOrchestratorContext } from "@/components/layout/modules/_polling"
 import type { AnyNodeData, CustomNodeData } from "@/components/layout/modules/_types"
 
 // ─────────────────────────────────────────────
@@ -592,6 +593,7 @@ function CanvasLogic({
   // Render
   // ─────────────────────────────────────────────
   return (
+    <BatchOrchestratorContext.Provider value={{ addInstance: handleLoopAddInstance }}>
     <div
       className="w-full h-full relative"
       style={{
@@ -724,6 +726,7 @@ function CanvasLogic({
         ghostZoom={ghostZoom}
       />
     </div>
+    </BatchOrchestratorContext.Provider>
   )
 }
 

@@ -409,7 +409,6 @@ export function NodeActionBar({
             label={isExecuting ? "Running..." : "Execute"}
             onClick={onExecute}
             disabled={isExecuting}
-            className={isExecuting ? "text-amber-500" : "text-amber-500 hover:text-amber-600 hover:bg-amber-50"}
           />
           <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
           <ActionButton icon={Ungroup} label="Release" onClick={onLassoRelease} />

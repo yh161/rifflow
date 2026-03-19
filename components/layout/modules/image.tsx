@@ -13,16 +13,16 @@ export const meta = {
   name: 'Image',
   description: 'Visual assets & diagrams',
   icon: ImageIcon,
-  color: 'text-emerald-500',
-  bg: 'bg-emerald-50',
-  border: 'hover:border-emerald-200',
+  color: 'text-blue-400',
+  bg: 'bg-blue-50',
+  border: 'hover:border-blue-300',
   opensEditor: true,
   panelTitle: 'Generate Image',
 }
 
 export const defaultData: Partial<CustomNodeData> = {
   type: 'image',
-  label: 'New Image',
+  label: 'Image',
 }
 
 export const handles: HandleDef[] = [

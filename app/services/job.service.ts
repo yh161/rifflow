@@ -6,6 +6,12 @@ import { ExecutionLogRepository } from "@/app/repositories/executionLog.reposito
 import { IJobRepository } from "@/app/repositories/types"
 import { CREDIT_COST, TEXT_MODEL_MAP, IMAGE_MODEL_MAP } from "./constants"
 import type { MultimodalContent } from "@/lib/prompt-resolver"
+import { Prisma } from "@prisma/client"
+
+export interface BatchParams {
+  maxInstances: number
+  upstreamContent?: string
+}
 
 export interface JobCreationParams {
   userId: string
@@ -13,6 +19,16 @@ export interface JobCreationParams {
   nodeType: string
   content: MultimodalContent[]
   model: string
+  batchParams?: BatchParams
+}
+
+// ── Shared result shape for batch jobs (stored in job.result) ──────────────
+export interface BatchJobResult {
+  stage: 'generating_seeds' | 'seeds_ready' | 'executing_workflows' | 'done'
+  batchParams?: BatchParams
+  seeds?: Array<{ content: string; description?: string }>
+  workflowProgress?: { current: number; total: number }
+  instanceResults?: Record<string, unknown>
 }
 
 export interface JobExecutionResult {
@@ -51,12 +67,18 @@ export class JobService {
         }
       }
 
-      // Create job record
+      // Create job record (for batch, seed initial result so params survive restarts)
+      const initialResult =
+        nodeType === 'batch' && params.batchParams
+          ? { stage: 'generating_seeds', batchParams: params.batchParams } as unknown as Prisma.InputJsonValue
+          : undefined
+
       const job = await this.jobRepository.create({
         user: { connect: { id: userId } },
         nodeId,
         nodeType,
-        status: "pending"
+        status: "pending",
+        ...(initialResult !== undefined && { result: initialResult }),
       })
 
       // Return job ID immediately (fire-and-forget)
@@ -77,6 +99,13 @@ export class JobService {
   async executeJob(jobId: string, params: Omit<JobCreationParams, 'nodeId'>): Promise<void> {
     try {
       const { userId, nodeType, content, model } = params
+
+      // Batch jobs: generate seeds only — workflow execution triggered separately via /continue
+      if (nodeType === 'batch') {
+        await this.executeBatchSeedGeneration(jobId, userId, content, model, params.batchParams)
+        return
+      }
+
       const cost = CREDIT_COST[nodeType] ?? 1
 
       // Update job status to running
@@ -116,6 +145,114 @@ export class JobService {
         "failed", 
         undefined, 
         error instanceof Error ? error.message : "Unknown error"
+      )
+    }
+  }
+
+  // ── Batch: Step 1 — generate seeds via LLM, store in job.result ────────────
+  private async executeBatchSeedGeneration(
+    jobId:          string,
+    userId:         string,
+    content:        MultimodalContent[],
+    model:          string,
+    batchParams?:   BatchParams,
+  ): Promise<void> {
+    await this.jobRepository.updateStatus(jobId, 'running', {
+      stage: 'generating_seeds',
+      batchParams,
+    } as unknown as Prisma.InputJsonValue)
+
+    try {
+      const maxInstances    = batchParams?.maxInstances ?? 3
+      const upstreamContent = batchParams?.upstreamContent ?? ''
+      const promptText      = content.find(c => c.type === 'text')?.text ?? ''
+
+      const systemPrompt = `You are a batch content generator. Respond with ONLY valid JSON — no markdown, no explanation.
+
+Required format:
+{
+  "count": <number>,
+  "seeds": [
+    { "content": "<generated content>", "description": "<brief description>" }
+  ]
+}
+
+Rules:
+1. count must be an integer between 1 and ${maxInstances}
+2. seeds array must contain exactly 'count' items
+3. All seeds must be meaningfully different from each other
+4. Do not include any text outside the JSON object`
+
+      const userPrompt = upstreamContent
+        ? `Input context: ${upstreamContent}\n\nRequest: ${promptText}\n\nGenerate up to ${maxInstances} variations.`
+        : `${promptText}\n\nGenerate up to ${maxInstances} variations.`
+
+      const orModel = TEXT_MODEL_MAP[model] ?? 'google/gemini-2.0-flash-001'
+      const headers = this.getBaseHeaders()
+
+      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method:  'POST',
+        headers,
+        body: JSON.stringify({
+          model:           orModel,
+          messages:        [
+            { role: 'system', content: systemPrompt },
+            { role: 'user',   content: userPrompt   },
+          ],
+          response_format: { type: 'json_object' },
+        }),
+      })
+
+      if (!aiRes.ok) {
+        throw new Error(`Seed LLM error (${aiRes.status}): ${await aiRes.text()}`)
+      }
+
+      const aiJson   = await aiRes.json()
+      const rawText  = aiJson.choices?.[0]?.message?.content ?? ''
+      let parsed: { count: number; seeds: Array<{ content: string; description?: string }> }
+
+      try {
+        parsed = JSON.parse(rawText)
+      } catch {
+        const match = rawText.match(/\{[\s\S]*\}/)
+        if (!match) throw new Error('Non-JSON response from seed LLM')
+        parsed = JSON.parse(match[0])
+      }
+
+      if (!Array.isArray(parsed.seeds) || parsed.seeds.length === 0) {
+        throw new Error('LLM returned no seeds')
+      }
+
+      const seeds = parsed.seeds.slice(0, maxInstances).map((s, i) => ({
+        content:     s.content     || `Variation ${i + 1}`,
+        description: s.description || `Instance ${i + 1}`,
+      }))
+
+      // Deduct 1 credit for seed generation
+      await this.walletRepository.updateBalance(userId, -1)
+      await this.executionLogRepository.create({
+        userId,
+        nodeType:     'batch',
+        inputTokens:  aiJson.usage?.prompt_tokens     ?? 0,
+        outputTokens: aiJson.usage?.completion_tokens ?? 0,
+        creditCost:   1,
+        status:       'SUCCESS',
+      })
+
+      // Store seeds — status stays 'running', frontend will POST /continue
+      await this.jobRepository.updateStatus(jobId, 'running', {
+        stage:       'seeds_ready',
+        batchParams,
+        seeds,
+      } as unknown as Prisma.InputJsonValue)
+
+    } catch (err: unknown) {
+      console.error('[JobService] executeBatchSeedGeneration failed:', err)
+      await this.jobRepository.updateStatus(
+        jobId,
+        'failed',
+        undefined,
+        err instanceof Error ? err.message : 'Seed generation failed',
       )
     }
   }

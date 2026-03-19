@@ -709,6 +709,7 @@ const LOOP_PARAMS: ParamDef[] = [
 
 export function LoopPanel({
   data,
+  nodeId,
   onDataChange,
   mode,
   isGenerating,
@@ -716,6 +717,7 @@ export function LoopPanel({
   onStop,
 }: {
   data: CustomNodeData
+  nodeId?: string
   /** Direct callback — preferred over data.onDataChange to avoid async injection timing. */
   onDataChange?: (u: Partial<CustomNodeData>) => void
   mode: NodeMode
@@ -731,6 +733,7 @@ export function LoopPanel({
   const [model, setModelLocal]                 = useState(data.model ?? LOOP_MODELS[0].id)
   const [params, setParamsLocal]               = useState<Record<string, string>>(data.params ?? defaultParams)
   const [instanceCount, setInstanceCountLocal] = useState(data.loopCount ?? 3)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
@@ -739,6 +742,23 @@ export function LoopPanel({
     setPromptLocal(v)
     persistChange?.({ loopPrompt: v, prompt: v })
   }
+
+  // Insert upstream reference at cursor position
+  const handleInsertReference = useCallback((ref: string) => {
+    if (!textareaRef.current) {
+      setPrompt(prompt + ref)
+      return
+    }
+    const textarea = textareaRef.current
+    const start = textarea.selectionStart
+    const end   = textarea.selectionEnd
+    const newPrompt = prompt.slice(0, start) + ref + prompt.slice(end)
+    setPrompt(newPrompt)
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(start + ref.length, start + ref.length)
+    })
+  }, [prompt]) // eslint-disable-line react-hooks/exhaustive-deps
   const setModel = (v: string) => {
     setModelLocal(v)
     persistChange?.({ model: v })
@@ -769,9 +789,17 @@ export function LoopPanel({
 
   return (
     <div className="flex flex-col">
+      {/* Upstream reference area */}
+      {nodeId && (
+        <UpstreamReference
+          nodeId={nodeId}
+          onInsertReference={handleInsertReference}
+        />
+      )}
       {/* Top area: prompt left, instances right */}
       <div className="flex min-h-[110px]">
         <textarea
+          ref={textareaRef}
           value={prompt}
           onChange={(e) => !isGenerating && setPrompt(e.target.value)}
           placeholder={

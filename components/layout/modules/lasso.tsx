@@ -12,9 +12,9 @@ export const meta = {
   name:        'Lasso',
   description: 'Select and execute multiple nodes as a workflow',
   icon:        Lasso,
-  color:       'text-amber-500',
-  bg:          'bg-amber-50',
-  border:      'hover:border-amber-200',
+  color:       'text-slate-400',
+  bg:          'bg-slate-50',
+  border:      'hover:border-slate-300',
   panelTitle:  'Lasso',
   opensEditor: true,
 }
@@ -49,15 +49,15 @@ export const NodeUI = ({
       className={cn(
         'relative border-2 border-dashed transition-colors duration-200',
         selected
-          ? 'border-amber-400/80 bg-amber-50/25'
-          : 'border-amber-200/50 bg-amber-50/10',
-        data.isEditing && '!border-amber-400/90',
+          ? 'border-slate-500/80 bg-slate-50/30'
+          : 'border-slate-300/50 bg-slate-50/10',
+        data.isEditing && '!border-slate-500/90',
       )}
       style={{ width: w, height: h, borderRadius: 16 }}
     >
       {/* Drop hint */}
       <div className="absolute inset-0 flex items-end justify-center pb-6 pointer-events-none">
-        <span className="text-[10px] text-amber-200/70 select-none">
+        <span className="text-[10px] text-slate-300/70 select-none">
           drop nodes here · click execute to run
         </span>
       </div>
