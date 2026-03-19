@@ -7,7 +7,7 @@ export interface TemplateSummary {
   category: string
   tags: string[]
   pricingType: "free" | "pay_per_use" | "subscription"
-  pricePerUse: number | null
+  priceInPoints: number | null   // 每次执行消耗的积分，null = free
   executionsCount: number
   favoritesCount: number
   rating: number

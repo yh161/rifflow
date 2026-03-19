@@ -14,9 +14,9 @@ import {
 import type { TemplateCardProps } from "./community.types"
 
 // 定价徽章
-function PriceBadge({ pricingType, pricePerUse }: {
+function PriceBadge({ pricingType, priceInPoints }: {
   pricingType: string
-  pricePerUse: number | null
+  priceInPoints: number | null
 }) {
   if (pricingType === "free") return null
   return (
@@ -27,9 +27,8 @@ function PriceBadge({ pricingType, pricePerUse }: {
         : "bg-purple-600/80 text-white"
     )}>
       {pricingType === "pay_per_use"
-        ? pricePerUse ? `$${pricePerUse}` : "Paid"
-        : <Lock className="inline h-2.5 w-2.5 mr-0.5" />}
-      {pricingType === "subscription" ? "Pro" : ""}
+        ? priceInPoints ? `${priceInPoints} pt` : "Paid"
+        : <><Lock className="inline h-2.5 w-2.5 mr-0.5" />Pro</>}
     </span>
   )
 }
@@ -91,7 +90,7 @@ export function TemplateCard({
             {/* 定价徽章 */}
             <PriceBadge
               pricingType={template.pricingType}
-              pricePerUse={template.pricePerUse}
+              priceInPoints={template.priceInPoints}
             />
 
             {/* Hover 操作层 */}

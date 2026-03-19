@@ -26,7 +26,6 @@ export async function GET(
     return NextResponse.json({
       template: {
         ...template,
-        pricePerUse: template.pricePerUse ? Number(template.pricePerUse) : null,
         rating:      Number(template.rating),
         isFavorited,
       },

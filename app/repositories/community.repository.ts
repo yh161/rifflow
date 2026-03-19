@@ -43,7 +43,7 @@ export const favoriteRepository = {
         template: {
           select: {
             id: true, name: true, description: true, thumbnail: true,
-            category: true, pricingType: true, pricePerUse: true,
+            category: true, pricingType: true, priceInPoints: true,
             executionsCount: true, rating: true,
             creator: { select: { id: true, name: true, image: true } },
           },
@@ -150,13 +150,13 @@ export const executionRepository = {
     templateId: string
     creatorId: string
     inputParams: Record<string, unknown>
-    cost?: number
+    costInPoints?: number
   }) {
     return prisma.templateExecution.create({
       data: {
         ...data,
         inputParams: data.inputParams as Prisma.InputJsonValue,
-        cost: data.cost ?? 0,
+        costInPoints: data.costInPoints ?? 0,
       },
     })
   },

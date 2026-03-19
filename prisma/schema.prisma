@@ -168,9 +168,9 @@ model Template {
   // 用户可调参数定义（label / type / required / options 等）
   parameters      Json      @default("[]")
 
-  // 定价
+  // 定价（积分制）
   pricingType     String    @default("free")   // free | pay_per_use | subscription
-  pricePerUse     Decimal?
+  priceInPoints   Int?                         // 每次执行消耗积分数
 
   // 统计
   executionsCount Int       @default(0)
@@ -252,7 +252,7 @@ model TemplateExecution {
   inputParams Json      @default("{}")
   resultUrl   String?
   resultType  String?   // video | image | document | text
-  cost        Decimal   @default(0)
+  costInPoints Int      @default(0)   // 本次执行消耗的积分
   status      String    @default("queued")  // queued | running | completed | failed
   startedAt   DateTime  @default(now())
   completedAt DateTime?

@@ -8,7 +8,7 @@ export type TemplateWithCreator = Prisma.TemplateGetPayload<{
 export type TemplateSummary = Prisma.TemplateGetPayload<{
   select: {
     id: true; name: true; description: true; thumbnail: true
-    category: true; tags: true; pricingType: true; pricePerUse: true
+    category: true; tags: true; pricingType: true; priceInPoints: true
     executionsCount: true; favoritesCount: true; rating: true
     isFeatured: true; publishedAt: true; creatorId: true
     creator: { select: { id: true; name: true; image: true } }
@@ -63,7 +63,7 @@ export const templateRepository = {
       skip: offset,
       select: {
         id: true, name: true, description: true, thumbnail: true,
-        category: true, tags: true, pricingType: true, pricePerUse: true,
+        category: true, tags: true, pricingType: true, priceInPoints: true,
         executionsCount: true, favoritesCount: true, rating: true,
         isFeatured: true, publishedAt: true, creatorId: true,
         creator: { select: { id: true, name: true, image: true } },
@@ -87,7 +87,7 @@ export const templateRepository = {
       where: { id },
       select: {
         id: true, name: true, description: true, thumbnail: true,
-        category: true, tags: true, pricingType: true, pricePerUse: true,
+        category: true, tags: true, pricingType: true, priceInPoints: true,
         executionsCount: true, favoritesCount: true, rating: true,
         isFeatured: true, publishedAt: true, creatorId: true,
         creator: { select: { id: true, name: true, image: true } },

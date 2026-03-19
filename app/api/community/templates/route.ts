@@ -5,7 +5,6 @@ import { templateRepository } from "@/app/repositories/template.repository"
 import { favoriteRepository } from "@/app/repositories/community.repository"
 
 // GET /api/community/templates
-// 支持参数: category, pricingType, search, orderBy, limit, offset
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl
@@ -22,7 +21,6 @@ export async function GET(req: NextRequest) {
 
     const templates = await templateRepository.list(filter)
 
-    // 如果已登录，标记用户收藏状态
     let favoritedIds = new Set<string>()
     if (session?.user?.id) {
       const ids = templates.map((t) => t.id)
@@ -31,7 +29,6 @@ export async function GET(req: NextRequest) {
 
     const result = templates.map((t) => ({
       ...t,
-      pricePerUse: t.pricePerUse ? Number(t.pricePerUse) : null,
       rating:      Number(t.rating),
       isFavorited: favoritedIds.has(t.id),
     }))
@@ -55,7 +52,7 @@ export async function POST(req: NextRequest) {
     const {
       name, description, thumbnail, category = "general",
       tags = [], parameters = [], pricingType = "free",
-      pricePerUse, canvasSnapshot, publish = false,
+      priceInPoints, canvasSnapshot, publish = false,
     } = body
 
     if (!name?.trim()) {
@@ -73,7 +70,7 @@ export async function POST(req: NextRequest) {
       tags,
       parameters,
       pricingType,
-      pricePerUse: pricePerUse ?? undefined,
+      priceInPoints: pricingType === "pay_per_use" ? (Number(priceInPoints) || 10) : undefined,
       canvasSnapshot,
       status: publish ? "published" : "draft",
       publishedAt: publish ? new Date() : undefined,

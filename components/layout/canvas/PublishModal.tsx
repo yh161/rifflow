@@ -41,7 +41,7 @@ const PRICING_OPTIONS: {
     value: "pay_per_use",
     icon:  <DollarSign className="h-4 w-4" />,
     label: "按次付费",
-    sub:   "每次执行收费（你设定价格）",
+    sub:   "每次执行消耗用户积分（你设定数量）",
   },
   {
     value: "subscription",
@@ -160,19 +160,19 @@ export interface PublishModalProps {
 }
 
 interface FormState {
-  name:        string
-  description: string
-  category:    string
-  tags:        string[]
-  pricing:     PricingType
-  pricePerUse: string
-  coverFile:   File | null
-  coverPreview: string | null
+  name:          string
+  description:   string
+  category:      string
+  tags:          string[]
+  pricing:       PricingType
+  priceInPoints: string          // 积分数量（整数）
+  coverFile:     File | null
+  coverPreview:  string | null
 }
 
 const INITIAL: FormState = {
   name: "", description: "", category: "general", tags: [],
-  pricing: "free", pricePerUse: "0.99",
+  pricing: "free", priceInPoints: "10",
   coverFile: null, coverPreview: null,
 }
 
@@ -214,8 +214,8 @@ export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange
         category:       form.category,
         tags:           form.tags,
         pricingType:    form.pricing,
-        pricePerUse:    form.pricing === "pay_per_use"
-                          ? parseFloat(form.pricePerUse) || 0.99
+        priceInPoints:  form.pricing === "pay_per_use"
+                          ? parseInt(form.priceInPoints, 10) || 10
                           : null,
         canvasSnapshot: canvasSnapshot,
         publish,
@@ -350,20 +350,19 @@ export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange
                       <p className="text-xs text-muted-foreground mt-0.5">{opt.sub}</p>
                     </div>
 
-                    {/* Pay per use 价格输入 */}
+                    {/* Pay per use 积分输入 */}
                     {opt.value === "pay_per_use" && form.pricing === "pay_per_use" && (
                       <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-xs text-slate-500">$</span>
                         <Input
-                          value={form.pricePerUse}
-                          onChange={(e) => set("pricePerUse", e.target.value)}
+                          value={form.priceInPoints}
+                          onChange={(e) => set("priceInPoints", e.target.value)}
                           onClick={(e) => e.stopPropagation()}
-                          className="h-7 w-16 text-sm text-center px-1"
+                          className="h-7 w-14 text-sm text-center px-1"
                           type="number"
-                          min="0.1"
-                          step="0.1"
+                          min="1"
+                          step="1"
                         />
-                        <span className="text-xs text-slate-400">/次</span>
+                        <span className="text-xs text-slate-400">积分/次</span>
                       </div>
                     )}
                   </label>
