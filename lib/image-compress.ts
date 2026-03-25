@@ -93,8 +93,7 @@ export function getTypeColor(type: string): string {
     image: "#10b981",  // emerald
     video: "#8b5cf6",  // violet
     gate: "#f59e0b",   // amber
-    batch: "#6366f1",  // indigo
-    cycle: "#8b5cf6",  // violet
+    template: "#6366f1",  // indigo
     seed: "#64748b",   // slate
   }
   return colors[type] || "#94a3b8"

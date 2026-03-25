@@ -13,8 +13,8 @@ export async function GET(req: NextRequest) {
     const creatorId = searchParams.get("creatorId") ?? undefined
     const status    = searchParams.get("status")    ?? undefined
 
-    // 草稿只能由创作者本人查询
-    if (status === "draft") {
+    // 草稿和已下架内容只能由创作者本人查询
+    if (status === "draft" || status === "unpublished") {
       if (!session?.user?.id || session.user.id !== creatorId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
       }

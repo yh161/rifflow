@@ -22,7 +22,7 @@ import { MODULES } from "@/components/layout/modules/_registry"
 // ─────────────────────────────────────────────
 export const PICKER_SECTIONS = [
   { id: "Assets", label: "Assets", moduleIds: ["text", "image", "video"] },
-  { id: "Logic",  label: "Logic",  moduleIds: ["gate", "batch", "cycle"] },
+  { id: "Logic",  label: "Logic",  moduleIds: ["filter", "template"] },
 ]
 
 export const MODEL_BADGES: Record<string, string> = {

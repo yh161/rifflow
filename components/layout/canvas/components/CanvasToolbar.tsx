@@ -6,6 +6,8 @@ interface CanvasToolbarWrapperProps {
   isRunning: boolean
   snapToGrid: boolean
   onSnapToggle: () => void
+  minimapOpen?: boolean
+  onMinimapToggle?: (v: boolean) => void
 }
 
 export function CanvasToolbarWrapper({
@@ -13,6 +15,8 @@ export function CanvasToolbarWrapper({
   isRunning,
   snapToGrid,
   onSnapToggle,
+  minimapOpen = false,
+  onMinimapToggle = () => {},
 }: CanvasToolbarWrapperProps) {
   return (
     <CanvasToolbar
@@ -20,6 +24,8 @@ export function CanvasToolbarWrapper({
       isRunning={isRunning}
       snapToGrid={snapToGrid}
       onSnapToggle={onSnapToggle}
+      minimapOpen={minimapOpen}
+      onMinimapToggle={onMinimapToggle}
     />
   )
 }

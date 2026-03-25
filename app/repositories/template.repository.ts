@@ -134,6 +134,11 @@ export const templateRepository = {
     })
   },
 
+  // ── 删除 ──────────────────────────────────────────────────────────
+  async delete(id: string) {
+    return prisma.template.delete({ where: { id } })
+  },
+
   // ── 执行次数 +1 ───────────────────────────────────────────────────
   async incrementExecutions(id: string) {
     return prisma.template.update({

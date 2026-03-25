@@ -13,6 +13,12 @@ export interface BatchParams {
   upstreamContent?: string
 }
 
+export interface FilterItemParam {
+  id: string
+  label?: string
+  type?: string
+}
+
 export interface JobCreationParams {
   userId: string
   nodeId: string
@@ -20,6 +26,7 @@ export interface JobCreationParams {
   content: MultimodalContent[]
   model: string
   batchParams?: BatchParams
+  filterItems?: FilterItemParam[]
 }
 
 // ── Shared result shape for batch jobs (stored in job.result) ──────────────
@@ -69,7 +76,7 @@ export class JobService {
 
       // Create job record (for batch, seed initial result so params survive restarts)
       const initialResult =
-        nodeType === 'batch' && params.batchParams
+        nodeType === 'template' && params.batchParams
           ? { stage: 'generating_seeds', batchParams: params.batchParams } as unknown as Prisma.InputJsonValue
           : undefined
 
@@ -101,8 +108,14 @@ export class JobService {
       const { userId, nodeType, content, model } = params
 
       // Batch jobs: generate seeds only — workflow execution triggered separately via /continue
-      if (nodeType === 'batch') {
+      if (nodeType === 'template') {
         await this.executeBatchSeedGeneration(jobId, userId, content, model, params.batchParams)
+        return
+      }
+
+      // Filter jobs: classify IN items and build filterResult
+      if (nodeType === 'filter') {
+        await this.executeFilterGeneration(jobId, userId, content, model, params.filterItems)
         return
       }
 
@@ -232,7 +245,7 @@ Rules:
       await this.walletRepository.updateBalance(userId, -1)
       await this.executionLogRepository.create({
         userId,
-        nodeType:     'batch',
+        nodeType:     'template',
         inputTokens:  aiJson.usage?.prompt_tokens     ?? 0,
         outputTokens: aiJson.usage?.completion_tokens ?? 0,
         creditCost:   1,
@@ -254,6 +267,84 @@ Rules:
         undefined,
         err instanceof Error ? err.message : 'Seed generation failed',
       )
+    }
+  }
+
+  // ── Filter: classify IN items via LLM, store filterResult in job ──────────
+  private async executeFilterGeneration(
+    jobId:       string,
+    userId:      string,
+    content:     MultimodalContent[],
+    model:       string,
+    filterItems?: FilterItemParam[],
+  ): Promise<void> {
+    await this.jobRepository.updateStatus(jobId, 'running')
+
+    try {
+      const result = await this.executeTextGeneration('filter', content, model)
+      const rawContent = result.content
+
+      // Parse LLM response: expected { "passed": [1,3], "filtered": [2], "reply": "..." }
+      let filterResult: { passed: FilterItemParam[]; filtered: FilterItemParam[]; reply?: string }
+      let reply: string | undefined
+
+      if (filterItems && filterItems.length > 0) {
+        const parsed = this.parseFilterLLMResponse(rawContent, filterItems)
+        if (parsed) {
+          filterResult = parsed
+          reply = parsed.reply
+        } else {
+          // Fallback: all pass
+          filterResult = { passed: filterItems.map(i => ({ id: i.id, label: i.label, type: i.type })), filtered: [] }
+        }
+      } else {
+        filterResult = { passed: [], filtered: [] }
+      }
+
+      const cost = CREDIT_COST['filter'] ?? CREDIT_COST['text'] ?? 1
+      await this.walletRepository.updateBalance(userId, -cost)
+      await this.executionLogRepository.create({
+        userId,
+        nodeType:     'filter',
+        inputTokens:  result._inputTokens,
+        outputTokens: result._outputTokens,
+        creditCost:   cost,
+        status:       'SUCCESS',
+      })
+
+      await this.jobRepository.updateStatus(jobId, 'done', {
+        content: rawContent,
+        filterResult,
+        reply,
+      })
+    } catch (err: unknown) {
+      console.error('[JobService] executeFilterGeneration failed:', err)
+      await this.jobRepository.updateStatus(
+        jobId, 'failed', undefined,
+        err instanceof Error ? err.message : 'Filter execution failed',
+      )
+    }
+  }
+
+  private parseFilterLLMResponse(
+    rawContent: string,
+    items: FilterItemParam[],
+  ): { passed: FilterItemParam[]; filtered: FilterItemParam[]; reply?: string } | null {
+    try {
+      const jsonMatch = rawContent.match(/\{[\s\S]*"passed"[\s\S]*\}/)
+      const jsonStr   = jsonMatch ? jsonMatch[0] : rawContent.trim()
+      const parsed    = JSON.parse(jsonStr) as { passed?: number[]; filtered?: number[]; reply?: string }
+
+      if (!parsed.passed && !parsed.filtered) return null
+
+      const passedSet = new Set((parsed.passed ?? []).map((n: number) => n - 1))
+      return {
+        passed:   items.filter((_, i) => passedSet.has(i)).map(it => ({ id: it.id, label: it.label, type: it.type })),
+        filtered: items.filter((_, i) => !passedSet.has(i)).map(it => ({ id: it.id, label: it.label, type: it.type })),
+        reply:    parsed.reply,
+      }
+    } catch {
+      return null
     }
   }
 

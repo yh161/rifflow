@@ -22,6 +22,7 @@ export interface WorkflowEdge {
   id: string
   source: string
   target: string
+  targetHandle?: string
 }
 
 export interface WorkflowSubgraph {
@@ -94,6 +95,117 @@ export class WorkflowEngine {
     return { workflowJobId, success: true }
   }
 
+  // ── Filter helpers ────────────────────────────────────────────────────────
+
+  private isServerLocalUrl(url: string): boolean {
+    try {
+      const { hostname, protocol } = new URL(url)
+      return (
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === 'minio' ||
+        hostname.endsWith('.local') ||
+        hostname.endsWith('.internal') ||
+        protocol === 'file:' ||
+        hostname.startsWith('192.168.') ||
+        hostname.startsWith('10.') ||
+        hostname.startsWith('172.')
+      )
+    } catch {
+      return true
+    }
+  }
+
+  private async fetchImageAsBase64(url: string): Promise<string | null> {
+    try {
+      const response = await fetch(url)
+      if (!response.ok) return null
+      const buffer = await response.arrayBuffer()
+      const base64 = Buffer.from(buffer).toString('base64')
+      const contentType = response.headers.get('content-type') || 'image/jpeg'
+      return `data:${contentType};base64,${base64}`
+    } catch {
+      return null
+    }
+  }
+
+  private async buildFilterItems(
+    inEdges: WorkflowEdge[],
+    results: Map<string, unknown>,
+    nodeMap: Map<string, WorkflowNode>,
+    mode: 'label' | 'content',
+  ): Promise<{
+    contentBlocks: MultimodalContent[]
+    items: Array<{ id: string; label?: string; type?: string }>
+  }> {
+    const items: Array<{ id: string; label?: string; type?: string }> = []
+    const blocks: MultimodalContent[] = [{ type: 'text', text: 'Items to evaluate:' }]
+
+    for (let i = 0; i < inEdges.length; i++) {
+      const edge    = inEdges[i]
+      const srcNode = nodeMap.get(edge.source)
+      const result  = results.get(edge.source) as Record<string, unknown> | undefined
+
+      const label    = (srcNode?.data.label as string | undefined) ?? (srcNode?.data.name as string | undefined)
+      const nodeType = (srcNode?.data.type as string | undefined) ?? 'text'
+
+      items.push({ id: edge.source, label, type: nodeType })
+
+      const header = `[${i + 1}] ${label ? `"${label}"` : `item_${i + 1}`} (${nodeType})`
+
+      if (mode === 'content' && result) {
+        blocks.push({ type: 'text', text: header })
+
+        if (nodeType === 'image') {
+          const src  = (result.content as string) || (result.src as string)
+          const b64  = result.b64 as string | undefined
+          const mime = (result.mime as string) || 'image/jpeg'
+
+          if (b64) {
+            blocks.push({ type: 'image_url', image_url: { url: `data:${mime};base64,${b64}`, detail: 'low' } })
+          } else if (src) {
+            if (src.startsWith('blob:') || this.isServerLocalUrl(src)) {
+              const encoded = await this.fetchImageAsBase64(src)
+              blocks.push(encoded
+                ? { type: 'image_url', image_url: { url: encoded, detail: 'low' } }
+                : { type: 'text', text: '[Image unavailable]' })
+            } else {
+              blocks.push({ type: 'image_url', image_url: { url: src, detail: 'low' } })
+            }
+          }
+        } else {
+          const text = ((result.content as string) || '').slice(0, 400)
+          if (text) blocks.push({ type: 'text', text: `"${text}${(result.content as string)?.length > 400 ? '…' : ''}"` })
+        }
+      } else {
+        blocks.push({ type: 'text', text: header })
+      }
+    }
+
+    return { contentBlocks: blocks, items }
+  }
+
+  private parseFilterResponse(
+    rawContent: string,
+    items: Array<{ id: string; label?: string; type?: string }>,
+  ): { passed: typeof items; filtered: typeof items } | null {
+    try {
+      const jsonMatch = rawContent.match(/\{[\s\S]*"passed"[\s\S]*\}/)
+      const jsonStr   = jsonMatch ? jsonMatch[0] : rawContent.trim()
+      const parsed    = JSON.parse(jsonStr) as { passed?: number[]; filtered?: number[] }
+
+      if (!parsed.passed && !parsed.filtered) return null
+
+      const passedSet = new Set((parsed.passed ?? []).map((n: number) => n - 1))
+      return {
+        passed:   items.filter((_, i) => passedSet.has(i)),
+        filtered: items.filter((_, i) => !passedSet.has(i)),
+      }
+    } catch {
+      return null
+    }
+  }
+
   /**
    * Core DAG execution algorithm
    */
@@ -144,7 +256,7 @@ export class WorkflowEngine {
         executing.add(nodeId)
         
         // Execute node asynchronously
-        this.executeNode(ctx, node, subgraph.edges).then((result) => {
+        this.executeNode(ctx, node, subgraph.edges, nodeMap).then((result) => {
           executing.delete(nodeId)
           
           if (result.success) {
@@ -221,7 +333,8 @@ export class WorkflowEngine {
   private async executeNode(
     ctx: WorkflowExecutionContext,
     node: WorkflowNode,
-    allEdges: WorkflowEdge[]
+    allEdges: WorkflowEdge[],
+    nodeMap: Map<string, WorkflowNode>,
   ): Promise<{ success: boolean; data?: unknown }> {
     const { workflowJobId, userId, results } = ctx
     const nodeType = node.data.type || node.type
@@ -241,7 +354,7 @@ export class WorkflowEngine {
     // Collect inputs from upstream nodes
     const upstreamEdges = allEdges.filter((e) => e.target === node.id)
     const inputs: Record<string, unknown> = {}
-    
+
     for (const edge of upstreamEdges) {
       const upstreamResult = results.get(edge.source)
       if (upstreamResult) {
@@ -249,14 +362,23 @@ export class WorkflowEngine {
       }
     }
 
-    // Build upstream data for prompt resolution
-    const upstreamData = upstreamEdges.map((edge) => {
+    // Separate ref vs in edges for filter; for all others use all edges as ref.
+    // inEdges: match 'in', 'left', null, or undefined — keeps parity with useConnectedSources on the frontend
+    const refEdges = nodeType === "filter"
+      ? upstreamEdges.filter((e) => e.targetHandle === "ref")
+      : upstreamEdges
+    const inEdges = nodeType === "filter"
+      ? upstreamEdges.filter((e) => e.targetHandle === "in" || e.targetHandle === "left" || !e.targetHandle)
+      : []
+
+    // Build upstream data for prompt resolution (REF edges only)
+    const upstreamData = refEdges.map((edge) => {
       const result = results.get(edge.source)
       return {
         id: edge.source,
-        type: "text" as const, // Simplified - could be inferred from node type
-        content: result && typeof result === "object" && "content" in result 
-          ? String(result.content) 
+        type: "text" as const,
+        content: result && typeof result === "object" && "content" in result
+          ? String(result.content)
           : String(result || ""),
       }
     })
@@ -265,11 +387,64 @@ export class WorkflowEngine {
     let content: MultimodalContent[] = []
     let shouldExecuteLLM = true
     let passThroughResult: Record<string, unknown> | null = null
-    
-    if (nodeType === "text" || nodeType === "gate" || nodeType === "seed") {
+
+    // ── Filter node — special execution path ────────────────────────────────
+    if (nodeType === "filter") {
+      const prompt         = node.data.prompt || ""
+      const filterInputMode = (node.data.filterInputMode as string || "label") as "label" | "content"
+
+      // No IN items → pass through with empty result
+      if (inEdges.length === 0) {
+        shouldExecuteLLM = false
+        passThroughResult = { content: "", filterResult: { passed: [], filtered: [] } }
+      } else if (!prompt.trim()) {
+        // No condition → pass all through
+        const { items } = await this.buildFilterItems(inEdges, results, nodeMap, filterInputMode)
+        shouldExecuteLLM = false
+        // Compute joined content of all passed items (same logic as LLM path)
+        const passedContent = items
+          .map((item) => {
+            const r = results.get(item.id) as Record<string, unknown> | undefined
+            return (r?.content as string) || (r?.src as string) || ''
+          })
+          .filter(Boolean)
+          .join('\n\n')
+        passThroughResult = { content: passedContent, filterResult: { passed: items, filtered: [] } }
+      } else {
+        // Build IN items + resolve REF condition → combined prompt
+        const { contentBlocks, items } = await this.buildFilterItems(inEdges, results, nodeMap, filterInputMode)
+        const refContent               = await this.resolvePromptWithUpstream(prompt, upstreamData)
+
+        // System prompt to guide the LLM as a filter
+        const systemPrompt: MultimodalContent = {
+          type: 'text',
+          text: `You are a FILTER node in a workflow. Your job is to evaluate items and classify them as PASS or FAIL based on the given condition.
+
+CRITICAL RULES:
+1. Respond ONLY with a valid JSON object
+2. Format: {"passed":[1,3],"filtered":[2]} where numbers are 1-based indices of items that PASSED the condition
+3. Items NOT in "passed" are considered filtered (failed)
+4. Be strict - only include items that clearly match the condition
+5. Do NOT include any explanation, markdown, or text outside the JSON`
+        }
+
+        const conditionHeader: MultimodalContent = { type: 'text', text: '\nCondition:' }
+        const instruction: MultimodalContent     = {
+          type: 'text',
+          text: '\nEvaluate each item. Return ONLY JSON: {"passed":[indices],"filtered":[indices]}',
+        }
+
+        // Add system prompt at the beginning
+        content = [systemPrompt, ...contentBlocks, conditionHeader, ...refContent, instruction]
+
+        // After LLM executes we need `items` to parse the response.
+        // Store on the node data temporarily so the post-execution block can use it.
+        ;(node.data as Record<string, unknown>)._filterItems = items
+      }
+    } else if (nodeType === "text" || nodeType === "seed") {
       const prompt = node.data.prompt || ""
       const textContent = node.data.content || ""
-      
+
       if (!prompt.trim()) {
         // No prompt - don't execute LLM, pass through content as output
         shouldExecuteLLM = false
@@ -369,16 +544,45 @@ export class WorkflowEngine {
 
       if (completedJob?.status === "done") {
         const outputData = completedJob.result as Record<string, unknown>
-        
+
+        // ── Filter: parse JSON verdict and attach filterResult + output content
+        let augmented = outputData
+        if (nodeType === "filter") {
+          const filterItems = (node.data as Record<string, unknown>)._filterItems as
+            | Array<{ id: string; label?: string; type?: string }>
+            | undefined
+          if (filterItems) {
+            const rawContent   = (outputData.content as string) || ""
+            const filterResult = this.parseFilterResponse(rawContent, filterItems)
+            const resolved     = filterResult ?? { passed: filterItems, filtered: [] }
+
+            // Compute output content = joined content of passed nodes
+            // Downstream nodes referencing this filter get this value
+            const passedContent = resolved.passed
+              .map((item) => {
+                const itemResult = ctx.results.get(item.id) as Record<string, unknown> | undefined
+                return (itemResult?.content as string) || (itemResult?.src as string) || ''
+              })
+              .filter(Boolean)
+              .join('\n\n')
+
+            augmented = {
+              ...outputData,
+              content:      passedContent,
+              filterResult: resolved,
+            }
+          }
+        }
+
         // Update job with output
         await prisma.job.update({
           where: { id: jobResult.jobId },
-          data: { 
-            outputData: outputData as Prisma.InputJsonValue 
+          data: {
+            outputData: augmented as Prisma.InputJsonValue,
           } as Prisma.JobUpdateInput,
         })
 
-        return { success: true, data: outputData }
+        return { success: true, data: augmented }
       }
 
       return { success: false }

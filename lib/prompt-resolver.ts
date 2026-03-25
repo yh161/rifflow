@@ -101,7 +101,7 @@ async function resolveNodeToContent(
 ): Promise<MultimodalContent | null> {
   switch (node.type) {
     case "text":
-    case "gate":
+    case "filter":
     case "seed":
       return node.content
         ? { type: "text", text: node.content }

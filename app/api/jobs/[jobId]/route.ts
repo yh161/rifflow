@@ -20,16 +20,18 @@ export async function GET(
 
   const job = await prisma.job.findUnique({
     where:  { id: jobId },
-    select: { userId: true, status: true, result: true, error: true, createdAt: true },
   })
 
   if (!job || job.userId !== session.user.id) {
     return NextResponse.json({ error: "Not found" }, { status: 404 })
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const jobWithOutput = job as typeof job & { outputData?: unknown }
+
   return NextResponse.json({
     status:    job.status,
-    result:    job.result,
+    result:    jobWithOutput.outputData ?? job.result,
     error:     job.error,
     createdAt: job.createdAt,
   })

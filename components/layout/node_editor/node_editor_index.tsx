@@ -23,6 +23,9 @@ import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CustomNodeData } from "../modules/_types"
 import { useUpstreamData } from "@/hooks/useUpstreamData"
+import type { UpstreamNodeData } from "@/hooks/useUpstreamData"
+import { resolvePromptToMultimodal } from "@/lib/prompt-resolver"
+import type { MultimodalContent } from "@/lib/prompt-resolver"
 
 import { NodeActionBar }                          from "./_action_bar"
 import { ModeToggle }    from "./_panels"
@@ -167,6 +170,130 @@ export function NodeEditor({
     ))
   }, [nodeId, setNodes])
 
+  // ── Filter generation — builds full multimodal prompt on the frontend ─────
+  // Separates REF edges (condition context) from IN edges (items to classify).
+  // Sends pre-built content + filterItems metadata to /api/jobs.
+  const handleFilterGenerate = useCallback(
+    async (prompt: string, model: string, _params: Record<string, string>) => {
+      const currentNodes = getNodes()
+      const currentEdges = getEdges()
+
+      const allIncoming = currentEdges.filter((e) => e.target === nodeId)
+      const refEdges    = allIncoming.filter((e) => e.targetHandle === 'ref')
+      const inEdges     = allIncoming.filter(
+        (e) => e.targetHandle === 'in' || e.targetHandle === 'left' || !e.targetHandle
+      )
+
+      if (inEdges.length === 0) return // Nothing to filter
+
+      const filterInputMode = (data?.filterInputMode ?? 'label') as 'label' | 'content'
+
+      // Signal generating immediately
+      setNodes((ns) => ns.map((n) =>
+        n.id !== nodeId ? n : { ...n, data: { ...n.data, isEditing: false, isGenerating: true } }
+      ))
+
+      try {
+        // ── Build item blocks ──────────────────────────────────────────────
+        const systemBlock: MultimodalContent = {
+          type: 'text',
+          text: `You are a FILTER node in a workflow. Evaluate each numbered item against the condition and classify each as PASS or FAIL.\nRespond ONLY with valid JSON (no markdown, no explanation):\n{"passed":[1,3],"filtered":[2],"reply":"brief explanation"}\nNumbers are 1-based indices. Every item must appear in either "passed" or "filtered". "reply" is a short sentence explaining your decisions.`,
+        }
+
+        const itemsHeaderBlock: MultimodalContent = { type: 'text', text: '\nItems to evaluate:' }
+        const itemBlocks: MultimodalContent[] = [itemsHeaderBlock]
+        const filterItems: Array<{ id: string; label?: string; type?: string }> = []
+
+        for (let i = 0; i < inEdges.length; i++) {
+          const edge       = inEdges[i]
+          const sourceNode = currentNodes.find((n) => n.id === edge.source)
+          if (!sourceNode) continue
+
+          const d        = sourceNode.data as CustomNodeData
+          const nodeType = d.type || 'text'
+          const label    = d.label || nodeType
+
+          filterItems.push({ id: sourceNode.id, label, type: nodeType })
+
+          const header = `[${i + 1}] "${label}" (${nodeType})`
+          itemBlocks.push({ type: 'text', text: header })
+
+          if (filterInputMode === 'content') {
+            if (nodeType === 'image' && d.src) {
+              // Convert local/blob image URLs to base64 so the LLM can see them
+              if (d.src.startsWith('blob:') || /^https?:\/\/(localhost|127\.|minio|.*\.local|.*\.internal)/.test(d.src)) {
+                try {
+                  const fetchRes = await fetch(d.src)
+                  const blob     = await fetchRes.blob()
+                  const base64   = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader()
+                    reader.onloadend = () => resolve(reader.result as string)
+                    reader.onerror   = reject
+                    reader.readAsDataURL(blob)
+                  })
+                  itemBlocks.push({ type: 'image_url', image_url: { url: base64, detail: 'low' } })
+                } catch {
+                  itemBlocks.push({ type: 'text', text: '[Image unavailable]' })
+                }
+              } else {
+                itemBlocks.push({ type: 'image_url', image_url: { url: d.src, detail: 'low' } })
+              }
+            } else if (d.content) {
+              const truncated = d.content.slice(0, 400)
+              itemBlocks.push({ type: 'text', text: `"${truncated}${d.content.length > 400 ? '…' : ''}"` })
+            }
+          }
+        }
+
+        // ── Resolve condition prompt with REF references ───────────────────
+        // upstreamData (from useUpstreamData) already has blob→base64 conversion.
+        // Filter it to only REF-connected nodes.
+        const refIds        = new Set(refEdges.map((e) => e.source))
+        const refUpstream   = upstreamData.filter((u) => refIds.has(u.id))
+        const conditionContent = await resolvePromptToMultimodal(prompt, refUpstream)
+
+        const conditionHeader: MultimodalContent = { type: 'text', text: '\nCondition:' }
+        const instruction:     MultimodalContent = {
+          type: 'text',
+          text: '\nReturn ONLY JSON: {"passed":[indices],"filtered":[indices],"reply":"explanation"}',
+        }
+
+        const fullContent: MultimodalContent[] = [
+          systemBlock,
+          ...itemBlocks,
+          conditionHeader,
+          ...conditionContent,
+          instruction,
+        ]
+
+        // ── Send to backend ────────────────────────────────────────────────
+        const res  = await fetch('/api/jobs', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            nodeId,
+            nodeType: 'filter',
+            content:  fullContent,
+            model,
+            filterItems,
+          }),
+        })
+        const json = await res.json()
+        if (!res.ok || json.error) throw new Error(json.error ?? `Server error ${res.status}`)
+
+        setNodes((ns) => ns.map((n) =>
+          n.id !== nodeId ? n : { ...n, data: { ...n.data, activeJobId: json.jobId } }
+        ))
+      } catch (err) {
+        console.error('[filter generate]', err)
+        setNodes((ns) => ns.map((n) =>
+          n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+        ))
+      }
+    },
+    [nodeId, data, setNodes, getNodes, getEdges, upstreamData],
+  )
+
   // ── File input ref ───────────────────────────
   const uploadInputRef      = useRef<HTMLInputElement>(null)
   const videoUploadInputRef = useRef<HTMLInputElement>(null)
@@ -202,7 +329,7 @@ export function NodeEditor({
   useEffect(() => {
     setNodes((ns) => ns.map((n) => {
       if (n.id !== nodeId) return n
-      const extra = (n.data.type === 'batch' || n.data.type === 'cycle')
+      const extra = n.data.type === 'template'
         ? { onDelete: () => onDelete(nodeId) }
         : {}
       return { ...n, data: { ...n.data, onDataChange: (u: Partial<CustomNodeData>) => handleUpdateRef.current(u), ...extra } }
@@ -218,9 +345,8 @@ export function NodeEditor({
   const isEditingForNode =
     data?.type === "image" ? !isGenerating :
     data?.type === "video" ? !isGenerating :
-    data?.type === "gate"  ? !isGenerating :
-    data?.type === "batch" ? !isGenerating :
-    data?.type === "cycle" ? !isGenerating :
+    data?.type === "filter" ? !isGenerating :
+    data?.type === "template" ? !isGenerating :
     data?.type === "seed"  ? isTextEditing :
     isTextEditing
 
@@ -338,10 +464,12 @@ export function NodeEditor({
 
   const handleUploadVideo = useCallback((file: File) => {
     if (!file.type.startsWith("video/")) return
-    const videoSrc = URL.createObjectURL(file)
+
+    // Create a temporary blob URL for immediate playback feedback
+    const tempSrc = URL.createObjectURL(file)
     const vid = document.createElement("video")
     vid.preload = "metadata"
-    vid.onloadedmetadata = () => {
+    vid.onloadedmetadata = async () => {
       const secs      = Math.round(vid.duration)
       const mins      = Math.floor(secs / 60)
       const remainder = secs % 60
@@ -352,11 +480,26 @@ export function NodeEditor({
       const ratio = vid.videoWidth / vid.videoHeight || 1
       const h     = ratio >= 1 ? MIN : Math.round(MIN / ratio)
       const w     = ratio >= 1 ? Math.round(MIN * ratio) : MIN
-      URL.revokeObjectURL(vid.src)
-      handleUpdate({ videoSrc, fileName: file.name, videoDuration, width: w, height: h })
+
+      // Apply immediately so the user sees the video right away
+      handleUpdateRef.current({ videoSrc: tempSrc, fileName: file.name, videoDuration, width: w, height: h })
+
+      // Upload to MinIO in the background → swap to persistent URL
+      try {
+        const form = new FormData()
+        form.append('file', file)
+        const res  = await fetch('/api/upload', { method: 'POST', body: form })
+        const json = await res.json() as { url?: string; error?: string }
+        if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
+        handleUpdateRef.current({ videoSrc: json.url })
+        URL.revokeObjectURL(tempSrc)
+      } catch (err) {
+        console.error('[handleUploadVideo] MinIO upload failed, keeping blob URL:', err)
+        // Blob URL still works this session; warn that it won't survive refresh
+      }
     }
-    vid.src = videoSrc
-  }, [handleUpdate])
+    vid.src = tempSrc
+  }, []) // intentionally no deps — uses handleUpdateRef to avoid stale closure
 
   // ── Download ──────────────────────────────────
   const handleDownload = useCallback(() => {
@@ -413,8 +556,8 @@ export function NodeEditor({
                 return { ...n, data: { ...n.data, isGenerating: false } }
               }
               
-              // Handle text/gate/seed node results
-              if ((nodeType === "text" || nodeType === "gate" || nodeType === "seed") && nodeResult.content !== undefined) {
+              // Handle text/filter/seed node results
+              if ((nodeType === "text" || nodeType === "filter" || nodeType === "seed") && nodeResult.content !== undefined) {
                 return {
                   ...n,
                   data: { ...n.data, content: String(nodeResult.content), isGenerating: false }
@@ -565,7 +708,7 @@ export function NodeEditor({
     model:  string,
     params: Record<string, string>,
   ) => {
-    if (!node || data?.type !== "batch") return
+    if (!node || data?.type !== "template") return
 
     const maxInstances    = parseInt(params.instanceMax || "3", 10)
     const upstreamContent = upstreamData.map(u => u.content).filter(Boolean).join("\n")
@@ -582,7 +725,7 @@ export function NodeEditor({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           nodeId,
-          nodeType:    "batch",
+          nodeType:    "template",
           prompt,
           model,
           batchParams: { maxInstances, upstreamContent },
@@ -778,7 +921,7 @@ export function NodeEditor({
   const barTop          = screenY + nodeH + BAR_GAP
   const panelTop        = barTop + 62 + BAR_PANEL_GAP
 
-  const isContainerNode    = data.type === 'batch' || data.type === 'cycle'
+  const isContainerNode    = data.type === 'template'
   const loopInstanceCount  = isContainerNode ? (data.instanceCount ?? 0) : 0
   const isLoopInstanceView = isContainerNode && (data.currentInstance ?? -1) >= 0
 
@@ -822,13 +965,14 @@ export function NodeEditor({
           onUpload={() => data.type === "video" ? videoUploadInputRef.current?.click() : uploadInputRef.current?.click()}
           onDownload={handleDownload}
           onDelete={handleDeleteNode}
+          onFilterModeChange={(m) => handleUpdate({ filterInputMode: m })}
           onLoopRelease={handleLoopReleaseClick}
           onLoopAddInstance={handleLoopAddInstance}
           onLoopDeleteInstance={handleLoopDeleteInstance}
           onLoopGoTo={handleLoopGoTo}
           loopInstanceCount={loopInstanceCount}
           onExecute={handleExecuteWorkflow}
-          isExecuting={data?.type === 'batch' ? isGenerating : isExecutingWorkflow}
+          isExecuting={data?.type === 'template' ? isGenerating : isExecutingWorkflow}
           onLassoRelease={onLassoRelease ? () => onLassoRelease(nodeId) : undefined}
         />
       </div>
@@ -870,12 +1014,17 @@ export function NodeEditor({
           const mod = MODULE_BY_ID[data.type]
           if (!mod?.ModalContent) return null
           
-          // Batch uses job-based generation (same isGenerating flag as text nodes)
-          const isBatch = data.type === 'batch'
+          // Template uses job-based generation (same isGenerating flag as text nodes)
+          const isBatch    = data.type === 'template'
+          const isFilter   = data.type === 'filter'
           const generationProps = isBatch ? {
             isGenerating,
             onGenerate: handleBatchGenerate,
             onStop:     handleStopBatch,
+          } : isFilter ? {
+            isGenerating,
+            onGenerate: handleFilterGenerate,
+            onStop:     handleStopGenerate,
           } : {
             isGenerating,
             onGenerate: handleStartGenerate,
@@ -918,7 +1067,7 @@ export function NodeEditor({
               }
             `}</style>
             <p className="text-sm text-slate-700 font-medium mb-1">
-              Release {data.type === 'cycle' ? 'cycle' : 'batch'}?
+              Release template?
             </p>
             <p className="text-xs text-slate-400 leading-relaxed mb-4">
               This will delete all {data.instanceCount ?? 0} instance{(data.instanceCount ?? 0) !== 1 ? "s" : ""} and release

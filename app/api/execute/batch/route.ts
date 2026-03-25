@@ -175,7 +175,7 @@ Example response for "Generate 3 product descriptions":
       prisma.executionLog.create({
         data: {
           userId: user.id,
-          nodeType: "batch",
+          nodeType: "template",
           inputTokens,
           outputTokens,
           creditCost: 1,

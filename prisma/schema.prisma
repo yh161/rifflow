@@ -86,13 +86,14 @@ model Transaction {
 }
 
 model RiffDraft {
-  id        String   @id @default(cuid())
-  userId    String   @unique
-  nodesJson Json     @default("[]")
-  edgesJson Json     @default("[]")
-  updatedAt DateTime @updatedAt
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  nodesJson    Json     @default("[]")
+  edgesJson    Json     @default("[]")
+  viewportJson Json     @default("{\"x\":0,\"y\":0,\"zoom\":1}")
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Job {

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 import { useReactFlow, MiniMap } from "reactflow"
+import { useSession } from "next-auth/react"
 import { ZoomIn, ZoomOut, Maximize2, Grid3X3, Map, UploadCloud, ImageIcon } from "lucide-react"
 import { PublishModal } from "./PublishModal"
 
@@ -88,10 +89,23 @@ export default function CanvasToolbar({
   canvasSnapshot = { nodes: [], edges: [] },
 }: CanvasToolbarProps) {
   const { zoomIn, zoomOut, getNodes, setViewport } = useReactFlow()
+  const { data: session } = useSession()
   const [isExpanded,    setIsExpanded]    = useState(false)
   const [showMinimap,   setShowMinimap]   = useState(false)
   const [showPublish,   setShowPublish]   = useState(false)
   const [coverPreview,  setCoverPreview]  = useState<string | null>(null)
+
+  // Restore cover thumbnail from the latest saved draft after page refresh
+  useEffect(() => {
+    if (!session?.user?.id) return
+    fetch(`/api/community/templates?creatorId=${session.user.id}&status=draft&limit=1&orderBy=newest`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const latest = data?.templates?.[0]
+        if (latest?.thumbnail) setCoverPreview(latest.thumbnail)
+      })
+      .catch(() => {})
+  }, [session?.user?.id])
 
   const leftOffset = isSidebarOpen ? 336 : 16
 
@@ -224,12 +238,11 @@ export default function CanvasToolbar({
         }}
       />
 
-      {/* ── 发布 Modal ── */}
       <PublishModal
         open={showPublish}
         onOpenChange={(v) => {
           setShowPublish(v)
-          // Modal 关闭后如果有封面，同步回 toolbar 显示
+
         }}
         canvasSnapshot={canvasSnapshot}
         onCoverChange={setCoverPreview}

@@ -20,7 +20,7 @@ export interface StandardNodeData {
   _snapshotFolder?: string
 }
 
-// Edge data for container nodes (Batch / Cycle)
+// Edge data for container nodes (Template)
 export interface LoopEdgeData {
   loopId?: string
   instanceIdx?: number
@@ -39,9 +39,21 @@ export interface LoopInstance {
   seedContent?: string
 }
 
+export interface FilterResultItem {
+  id: string
+  label?: string
+  type?: string
+}
+
+export interface FilterResult {
+  passed: FilterResultItem[]
+  filtered: FilterResultItem[]
+  reply?: string  // LLM's explanation / reason for filtering
+}
+
 export interface CustomNodeData {
   label?: string
-  type: 'text' | 'image' | 'video' | 'gate' | 'batch' | 'cycle' | 'seed' | 'lasso'
+  type: 'text' | 'image' | 'video' | 'filter' | 'template' | 'seed' | 'lasso'
   width?: number
   height?: number
   // text
@@ -58,10 +70,9 @@ export interface CustomNodeData {
   videoSrc?: string
   videoPoster?: string
   videoDuration?: string
-  // container data (batch / cycle)
+  // container data (template)
   seedContent?: string
-  loopPrompt?: string        // cycle only
-  batchPrompt?: string       // batch only
+  templatePrompt?: string
   loopCount?: number
   currentInstance?: number   // -1 = template view, 0+ = instance index
   instanceCount?: number     // total instances (flat model)
@@ -77,6 +88,9 @@ export interface CustomNodeData {
   mode?:         "auto" | "manual"
   params?:       Record<string, string>  // generation params (duration, fps, style, etc.)
   isGenerating?: boolean
+  // filter
+  filterInputMode?: 'label' | 'content'
+  filterResult?: FilterResult
   // shared
   isExpanded?: boolean
   isEditing?: boolean
@@ -101,7 +115,7 @@ export interface ModuleModalProps {
   isGenerating?: boolean
   onGenerate?: (prompt: string, model: string, params: Record<string, string>) => void
   onStop?: () => void
-  // For batch/cycle — use existing loop instance management
+  // For template — use existing loop instance management
   onLoopAddInstance?: (loopId: string, seedContent?: string) => void
   onLoopSwitchView?: (loopId: string, viewIdx: number) => void
 }

@@ -38,6 +38,7 @@ export default function Screen() {
 
   const { logs, addLog } = useDemoLogs(isRunning, isPaused)
   const [snapToGrid, setSnapToGrid] = useState(false)
+  const [minimapOpen, setMinimapOpen] = useState(false)
   const [isLoginOpen, setIsLoginOpen] = useState(true)
 
   const handleRun = () => {
@@ -72,10 +73,11 @@ export default function Screen() {
         onFavoritesImport={setFavorites}
         importRef={importRef}
         exportRef={exportRef}
-        isSidebarOpen={isSidebarOpen} 
+        isSidebarOpen={isSidebarOpen}
         isRunning={isRunning}
         snapToGrid={snapToGrid}
         onSnapToggle={() => setSnapToGrid(v => !v)}
+        minimapOpen={minimapOpen}
       />
 
       {/* Canvas toolbar — outside Canvas so it's above all canvas stacking contexts */}
@@ -84,6 +86,8 @@ export default function Screen() {
         isRunning={isRunning}
         snapToGrid={snapToGrid}
         onSnapToggle={() => setSnapToGrid(v => !v)}
+        minimapOpen={minimapOpen}
+        onMinimapToggle={setMinimapOpen}
       />
 
       {/* Toolbar */}

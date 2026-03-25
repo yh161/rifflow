@@ -1,15 +1,15 @@
 "use client"
 
-import React, { useCallback, useEffect } from "react"
+import React, { useCallback, useEffect, useRef } from "react"
 import { useSession } from "next-auth/react"
 import ReactFlow, {
   Background,
   BackgroundVariant,
   Edge,
+  MiniMap,
   Node,
   useReactFlow,
   useStore,
-  ReactFlowProvider,
   OnMove,
   OnConnectStart,
   applyNodeChanges,
@@ -25,7 +25,6 @@ import "reactflow/dist/style.css"
 import { EditorModal } from "@/components/layout/std_node_modal"
 import { NodeEditor } from "@/components/layout/node_editor/node_editor_index"
 import { NodePickerMenu } from "@/components/layout/node_picker"
-import CanvasToolbar from "@/components/layout/canvas/canvas-toolbar"
 
 import { useAutosave } from "@/hooks/useAutosave"
 
@@ -62,6 +61,7 @@ interface CanvasProps {
   isRunning: boolean
   snapToGrid?: boolean
   onSnapToggle?: () => void
+  minimapOpen?: boolean
 }
 
 // ─────────────────────────────────────────────
@@ -85,9 +85,19 @@ function CanvasLogic({
   isRunning,
   snapToGrid: propSnapToGrid,
   onSnapToggle: propOnSnapToggle,
+  minimapOpen = false,
 }: CanvasProps) {
-  const { screenToFlowPosition, fitView } = useReactFlow()
+  const { screenToFlowPosition, fitView, setViewport } = useReactFlow()
   const { data: session, status } = useSession()
+
+  // ── Stable refs for unstable ReactFlow functions ──
+  // useReactFlow() returns NEW function objects on every render, so these
+  // must NOT appear in useEffect dependency arrays (they'd cause infinite loops).
+  // Instead we keep stable refs that are updated each render.
+  const setViewportRef = useRef(setViewport)
+  useEffect(() => { setViewportRef.current = setViewport }, [setViewport])
+  const fitViewRef = useRef(fitView)
+  useEffect(() => { fitViewRef.current = fitView }, [fitView])
 
   const transform = useStore((s) => s.transform)
   const [tx, ty, zoom] = transform
@@ -162,6 +172,67 @@ function CanvasLogic({
     updateActiveToolRef(activeTool)
   }, [activeTool, updateActiveToolRef])
 
+  // ── Load canvas from unpublished template ──
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { nodes: loadedNodes, edges: loadedEdges } = (e as CustomEvent<{ nodes: unknown[]; edges: unknown[] }>).detail
+      if (Array.isArray(loadedNodes)) setNodes(loadedNodes as Parameters<typeof setNodes>[0])
+      if (Array.isArray(loadedEdges)) setEdges(loadedEdges as Parameters<typeof setEdges>[0])
+      requestAnimationFrame(() => fitViewRef.current({ padding: 0.1, duration: 400 }))
+    }
+    window.addEventListener("canvas:load", handler)
+    return () => window.removeEventListener("canvas:load", handler)
+  // fitView intentionally excluded — use stable ref instead
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setNodes, setEdges])
+
+  // ── New blank canvas — save current state first, then clear ──
+  useEffect(() => {
+    const handler = async () => {
+      if (status === "authenticated") {
+        const currentNodes   = canvasState.nodesRef.current
+        const currentEdges   = canvasState.edgesRef.current
+        const currentViewport = canvasState.viewportRef.current
+
+        // 1. Always update the autosave RiffDraft (restores viewport on refresh)
+        try {
+          await fetch("/api/draft", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ nodes: currentNodes, edges: currentEdges, viewport: currentViewport }),
+          })
+        } catch { /* silent */ }
+
+        // 2. If canvas has content, save as a community template draft so it
+        //    appears in Create → 草稿. Auto-titled with date; user can rename at publish.
+        if (currentNodes.length > 0) {
+          const now   = new Date()
+          const label = now.toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+          try {
+            await fetch("/api/community/templates", {
+              method:  "POST",
+              headers: { "Content-Type": "application/json" },
+              body:    JSON.stringify({
+                name:           `未命名工作流 ${label}`,
+                canvasSnapshot: { nodes: currentNodes, edges: currentEdges },
+                publish:        false,
+              }),
+            })
+            // Notify browser_p3 to reload its draft list
+            window.dispatchEvent(new CustomEvent("template:saved"))
+          } catch { /* silent */ }
+        }
+      }
+      setNodes([])
+      setEdges([])
+      requestAnimationFrame(() => setViewportRef.current({ x: 0, y: 0, zoom: 1 }))
+    }
+    window.addEventListener("canvas:new", handler)
+    return () => window.removeEventListener("canvas:new", handler)
+  // setViewport intentionally excluded — use stable ref instead
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, setNodes, setEdges, canvasState.nodesRef, canvasState.edgesRef, canvasState.viewportRef])
+
   // ── Ghost cursor mouse tracking (same as original canvas.tsx) ──
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => setMousePos({ x: e.clientX, y: e.clientY })
@@ -171,7 +242,7 @@ function CanvasLogic({
 
   // ── Deselect all when container tool activated ──
   useEffect(() => {
-    if (activeTool === "batch" || activeTool === "cycle") {
+    if (activeTool === "template") {
       setNodes((nds) => nds.map((n) => n.selected ? { ...n, selected: false } : n))
     }
   }, [activeTool, setNodes])
@@ -218,18 +289,25 @@ function CanvasLogic({
         if (Array.isArray(savedEdges) && savedEdges.length > 0) {
           setEdges(savedEdges)
         }
+        // Restore viewport — use requestAnimationFrame so ReactFlow is mounted
+        const vp = data.viewportJson
+        if (vp && typeof vp.x === "number" && typeof vp.y === "number" && typeof vp.zoom === "number") {
+          requestAnimationFrame(() => setViewportRef.current({ x: vp.x, y: vp.y, zoom: vp.zoom }))
+        }
       })
       .catch((err) => console.error("[draft] load failed:", err))
       .finally(() => setIsDraftLoaded(true))
+  // setViewport intentionally excluded — use stable ref instead
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, setNodes, setEdges, setIsDraftLoaded])
 
   // ── Autosave (only when authenticated) ──
-  useAutosave(nodes, edges, isDraftLoaded && status === "authenticated")
+  useAutosave(nodes, edges, isDraftLoaded && status === "authenticated", canvasState.viewportRef)
 
   // ─────────────────────────────────────────────
-  // Batch — wraps selected nodes in a Batch container
+  // Template — wraps selected nodes in a Template container
   // ─────────────────────────────────────────────
-  const commitBatch = useCallback((selectedNodes: Node[]) => {
+  const commitTemplate = useCallback((selectedNodes: Node[]) => {
     const PAD = 24, SEED_W = 180, SEED_H = 180, SEED_GAP = 32
 
     const selectedIds = new Set(selectedNodes.map(n => n.id))
@@ -250,25 +328,25 @@ function CanvasLogic({
     const encW = maxX - minX
     const encH = maxY - minY
 
-    const batchId = `batch-${Date.now()}`
+    const templateId = `template-${Date.now()}`
     const batchX  = minX - PAD - SEED_W - SEED_GAP
     const batchY  = minY - PAD
     const batchW  = PAD + SEED_W + SEED_GAP + encW + PAD
     const batchH  = Math.max(encH, SEED_H) + PAD * 2
     const seedY   = (batchH - SEED_H) / 2
 
-    const batchNode: Node = {
-      id:       batchId,
-      type:     "BatchNode",
+    const templateNode: Node = {
+      id:       templateId,
+      type:     "TemplateNode",
       position: { x: batchX, y: batchY },
       style:    { width: batchW, height: batchH },
-      data:     { ...MODULE_BY_ID["batch"]?.defaultData, width: batchW, height: batchH, instanceCount: 0 },
+      data:     { ...MODULE_BY_ID["template"]?.defaultData, width: batchW, height: batchH, instanceCount: 0 },
       zIndex:   -1,
     }
     const seedNode: Node = {
-      id:         `seed-${batchId}`,
+      id:         `seed-${templateId}`,
       type:       "CustomNode",
-      parentNode: batchId,
+      parentNode: templateId,
       extent:     "parent",
       position:   { x: PAD, y: seedY },
       data:       { type: "seed", label: "Seed", isSeed: true, isLocked: true, content: "", width: SEED_W, height: SEED_H },
@@ -283,85 +361,15 @@ function CanvasLogic({
     setNodes((prev) => {
       const updated = prev.map(n => {
         if (!topLevelIds.has(n.id)) return { ...n, selected: false }
-        return { ...n, selected: false, parentNode: batchId, extent: "parent" as const,
+        return { ...n, selected: false, parentNode: templateId, extent: "parent" as const,
           position: { x: n.position.x + childOffsetX, y: n.position.y + childOffsetY } }
       })
-      return [batchNode, seedNode, ...updated]
+      return [templateNode, seedNode, ...updated]
     })
 
     onActiveTool(null)
     loopSelectionRef.current = []
-    setEditorNodeId(batchId)
-  }, [setNodes, setEditorNodeId, onActiveTool, loopSelectionRef])
-
-  // ─────────────────────────────────────────────
-  // Cycle — wraps selected nodes in a Cycle container + auto-spawns a Gate
-  // ─────────────────────────────────────────────
-  const commitCycle = useCallback((selectedNodes: Node[]) => {
-    // Use Gate module's default dimensions for consistency
-    const GATE_W = MODULE_BY_ID["gate"]?.defaultData?.width  ?? 200
-    const GATE_H = MODULE_BY_ID["gate"]?.defaultData?.height ?? 112
-    const PAD = 24, GATE_GAP = 32
-
-    const selectedIds = new Set(selectedNodes.map(n => n.id))
-    const topLevel = selectedNodes.filter(n =>
-      n.id !== GHOST_NODE_ID &&
-      (!n.parentNode || !selectedIds.has(n.parentNode))
-    )
-    if (topLevel.length === 0) return
-
-    const getW = (n: Node) => (n.style?.width  as number | undefined) ?? n.data?.width  ?? 180
-    const getH = (n: Node) => (n.style?.height as number | undefined) ?? n.data?.height ?? 180
-
-    const minX = Math.min(...topLevel.map(n => n.position.x))
-    const minY = Math.min(...topLevel.map(n => n.position.y))
-    const maxX = Math.max(...topLevel.map(n => n.position.x + getW(n)))
-    const maxY = Math.max(...topLevel.map(n => n.position.y + getH(n)))
-    const encW = maxX - minX
-    const encH = maxY - minY
-
-    const cycleId = `cycle-${Date.now()}`
-    const cycleX  = minX - PAD
-    const cycleY  = minY - PAD
-    const cycleW  = encW + PAD * 2 + GATE_GAP + GATE_W + PAD
-    const cycleH  = Math.max(encH, GATE_H) + PAD * 2
-
-    const cycleNode: Node = {
-      id:       cycleId,
-      type:     "CycleNode",
-      position: { x: cycleX, y: cycleY },
-      style:    { width: cycleW, height: cycleH },
-      data:     { ...MODULE_BY_ID["cycle"]?.defaultData, width: cycleW, height: cycleH, instanceCount: 0 },
-      zIndex:   -1,
-    }
-    // Auto-spawned Gate — free, not locked (unlike Batch's Seed)
-    const gateNode: Node = {
-      id:         `gate-${cycleId}`,
-      type:       "CustomNode",
-      parentNode: cycleId,
-      extent:     "parent",
-      position:   { x: cycleW - PAD - GATE_W, y: (cycleH - GATE_H) / 2 },
-      data:       { type: "gate", label: "Gate", width: GATE_W, height: GATE_H },
-      style:      { width: GATE_W, height: GATE_H },
-      zIndex:     0,
-    }
-
-    const topLevelIds  = new Set(topLevel.map(n => n.id))
-    const childOffsetX = PAD - minX
-    const childOffsetY = PAD - minY
-
-    setNodes((prev) => {
-      const updated = prev.map(n => {
-        if (!topLevelIds.has(n.id)) return { ...n, selected: false }
-        return { ...n, selected: false, parentNode: cycleId, extent: "parent" as const,
-          position: { x: n.position.x + childOffsetX, y: n.position.y + childOffsetY } }
-      })
-      return [cycleNode, gateNode, ...updated]
-    })
-
-    onActiveTool(null)
-    loopSelectionRef.current = []
-    setEditorNodeId(cycleId)
+    setEditorNodeId(templateId)
   }, [setNodes, setEditorNodeId, onActiveTool, loopSelectionRef])
 
   // ─────────────────────────────────────────────
@@ -370,7 +378,7 @@ function CanvasLogic({
   const handleQuickAddSelect = useCallback((type: string) => {
     handleQuickAddSelectOp(type, quickAddMenu)
     // Container tool activation — activated here since the hook can't access onActiveTool
-    if (quickAddMenu && (type === "batch" || type === "cycle")) {
+    if (quickAddMenu && type === "template") {
       onActiveTool(type)
     }
   }, [handleQuickAddSelectOp, quickAddMenu, onActiveTool])
@@ -428,7 +436,7 @@ function CanvasLogic({
   // Double-click on pane → quick-add
   // ─────────────────────────────────────────────
   const handleWrapperDoubleClick = useCallback((e: React.MouseEvent) => {
-    if (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso") return
+    if (activeTool === "template" || activeTool === "lasso") return
     if ((e.target as Element).closest(".react-flow__node, .react-flow__edge, .react-flow__controls, .react-flow__minimap")) return
     const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY })
     openQuickAdd(flowPos)
@@ -445,7 +453,7 @@ function CanvasLogic({
     const nativeEvent = event.nativeEvent as MouseEvent & { touches?: TouchList }
     if (nativeEvent.touches && nativeEvent.touches.length > 1) return
     if (quickAddMenu) return
-    if (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso") return
+    if (activeTool === "template" || activeTool === "lasso") return
 
     setEditorNodeId(null)
     onBgClick?.()
@@ -560,24 +568,23 @@ function CanvasLogic({
   }, [setNodes, setEditorNodeId, onActiveTool, loopSelectionRef])
 
   const handleContainerSelectionChange = useCallback(({ nodes: selected }: { nodes: Node[]; edges: Edge[] }) => {
-    if (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso") loopSelectionRef.current = selected
+    if (activeTool === "template" || activeTool === "lasso") loopSelectionRef.current = selected
   }, [activeTool, loopSelectionRef])
 
   const handleContainerMouseDown = useCallback((_e: React.MouseEvent) => {
-    if (activeTool !== "batch" && activeTool !== "cycle" && activeTool !== "lasso") return
+    if (activeTool !== "template" && activeTool !== "lasso") return
     loopSelectionRef.current = []
   }, [activeTool, loopSelectionRef])
 
   const handleContainerMouseUp = useCallback(() => {
-    if (activeTool === "batch")      commitBatch(loopSelectionRef.current)
-    else if (activeTool === "cycle") commitCycle(loopSelectionRef.current)
+    if (activeTool === "template")   commitTemplate(loopSelectionRef.current)
     else if (activeTool === "lasso") commitLasso(loopSelectionRef.current)
-  }, [activeTool, commitBatch, commitCycle, commitLasso, loopSelectionRef])
+  }, [activeTool, commitTemplate, commitLasso, loopSelectionRef])
 
   // ── Escape cancels container selection tool ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso")) onActiveTool(null)
+      if (e.key === "Escape" && (activeTool === "template" || activeTool === "lasso")) onActiveTool(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -598,7 +605,7 @@ function CanvasLogic({
       className="w-full h-full relative"
       style={{
         touchAction: "none",
-        cursor: (activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso") ? "crosshair" : undefined,
+        cursor: (activeTool === "template" || activeTool === "lasso") ? "crosshair" : undefined,
       }}
       onDoubleClick={handleWrapperDoubleClick}
       onMouseDown={handleContainerMouseDown}
@@ -639,8 +646,8 @@ function CanvasLogic({
         minZoom={0.1}
         maxZoom={10}
         defaultEdgeOptions={{ type: "default", style: { stroke: "#94a3b8", strokeWidth: 1.5 } }}
-        panOnDrag={activeTool !== "batch" && activeTool !== "cycle" && activeTool !== "lasso"}
-        selectionOnDrag={activeTool === "batch" || activeTool === "cycle" || activeTool === "lasso"}
+        panOnDrag={activeTool !== "template" && activeTool !== "lasso"}
+        selectionOnDrag={activeTool === "template" || activeTool === "lasso"}
         zoomOnPinch={true}
         zoomOnScroll={false}
         zoomOnDoubleClick={false}
@@ -650,14 +657,59 @@ function CanvasLogic({
         snapGrid={[16, 16]}
       >
         <Background color="#94a3b8" gap={40} variant={BackgroundVariant.Dots} />
-        <CanvasToolbar
-          isSidebarOpen={isSidebarOpen}
-          isRunning={isRunning}
-          snapToGrid={propSnapToGrid ?? internalSnapToGrid}
-          onSnapToggle={propOnSnapToggle ?? (() => setInternalSnapToGrid(v => !v))}
-          canvasSnapshot={{ nodes: canvasState.nodesRef.current, edges: canvasState.edgesRef.current }}
+        <MiniMap
+          zoomable pannable
+          nodeStrokeWidth={2}
+          nodeColor="#cbd5e1"
+          maskColor="rgba(241,245,249,0.65)"
+          style={{
+            position:      "absolute",
+            bottom:        80,
+            left:          isSidebarOpen ? 336 : 16,
+            right:         "unset" as never,
+            width:         192,
+            height:        128,
+            background:    "rgba(255,255,255,0.85)",
+            borderRadius:  16,
+            border:        "1px solid rgba(226,232,240,0.6)",
+            boxShadow:     "0 4px 24px rgba(0,0,0,0.06)",
+            opacity:       minimapOpen && !isRunning ? 1 : 0,
+            pointerEvents: minimapOpen && !isRunning ? "auto" : "none",
+            transform:     minimapOpen && !isRunning ? "translateY(0)" : "translateY(6px)",
+            transition:    "opacity 0.3s ease, transform 0.3s ease",
+            zIndex:        600,
+          }}
         />
       </ReactFlow>
+
+      {/* Portal layer for handle visuals (MagneticZone CirclePlus icons).
+          Rendering outside ReactFlow prevents transform animations on these
+          elements from triggering implicit compositing of sibling nodes → blur. */}
+      <div
+        id="handle-portal-root"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          overflow: 'hidden',
+          zIndex: 5,
+        }}
+      />
+
+      {/* Portal layer for <video> elements — rendered OUTSIDE the ReactFlow
+          renderer so their compositor layers cannot trigger implicit compositing
+          of sibling ReactFlow nodes. pointer-events:none lets clicks pass through
+          to the canvas; individual video wrappers opt-in with pointer-events:auto. */}
+      <div
+        id="video-portal-root"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          overflow: 'hidden',
+          zIndex: 4,
+        }}
+      />
 
       {/* Quick-add picker */}
       {quickAddMenu && (
@@ -734,9 +786,7 @@ function CanvasLogic({
 export default function Canvas(props: CanvasProps) {
   return (
     <div className="absolute inset-0 z-0">
-      <ReactFlowProvider>
-        <CanvasLogic {...props} />
-      </ReactFlowProvider>
+      <CanvasLogic {...props} />
     </div>
   )
 }

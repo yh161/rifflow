@@ -36,6 +36,34 @@ export async function GET(
   }
 }
 
+// DELETE /api/community/templates/[id]
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params
+    const session = await getServerSession(authOptions)
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    const existing = await templateRepository.findById(id)
+    if (!existing) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 })
+    }
+    if (existing.creatorId !== session.user.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+    }
+
+    await templateRepository.delete(id)
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error("[community/templates/[id] DELETE]", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+}
+
 // PATCH /api/community/templates/[id]
 export async function PATCH(
   req: NextRequest,

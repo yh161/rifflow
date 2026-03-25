@@ -13,7 +13,7 @@ import { MODULE_BY_ID } from "../modules/_registry"
 
 export interface UpstreamNode {
   id: string
-  type: 'text' | 'image' | 'video' | 'gate' | 'batch' | 'cycle' | 'seed'
+  type: 'text' | 'image' | 'video' | 'filter' | 'template' | 'seed'
   label?: string
   thumbnail: string | null // Base64 or null
   hasOutput: boolean       // Whether the node has meaningful output
@@ -27,25 +27,27 @@ interface UpstreamNodeInternal extends UpstreamNode {
 // Hook: Get upstream nodes for a given node
 // ─────────────────────────────────────────────
 
-export function useUpstreamNodes(nodeId: string): UpstreamNode[] {
+export function useUpstreamNodes(nodeId: string, handleId?: string): UpstreamNode[] {
   const { getNodes, getEdges } = useReactFlow()
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
   const [upstreamList, setUpstreamList] = useState<UpstreamNodeInternal[]>([])
-  
+
   // Use effect to avoid infinite re-renders - poll for changes
   useEffect(() => {
     if (!nodeId) {
       setUpstreamList([])
       return
     }
-    
+
     // Function to compute upstream nodes
     const computeUpstream = () => {
       const nodes = getNodes()
       const edges = getEdges()
-      
-      // Find edges where target is this node
-      const incomingEdges = edges.filter((e: Edge) => e.target === nodeId)
+
+      // Find edges where target is this node (optionally filtered by handle)
+      const incomingEdges = edges.filter((e: Edge) =>
+        e.target === nodeId && (handleId === undefined || e.targetHandle === handleId)
+      )
       
       // Get unique source node IDs
       const sourceIds = [...new Set(incomingEdges.map((e: Edge) => e.source))]
@@ -86,9 +88,9 @@ export function useUpstreamNodes(nodeId: string): UpstreamNode[] {
     
     // Set up polling to detect changes
     const interval = setInterval(computeUpstream, 500)
-    
+
     return () => clearInterval(interval)
-  }, [nodeId, getNodes, getEdges])
+  }, [nodeId, handleId, getNodes, getEdges])
 
   // Async: generate thumbnails for image nodes
   useEffect(() => {
@@ -140,19 +142,18 @@ export function useUpstreamNodes(nodeId: string): UpstreamNode[] {
 
 export interface UpstreamReferenceProps {
   nodeId: string
+  handleId?: string
   onInsertReference?: (ref: string) => void
   className?: string
 }
 
 export function UpstreamReference({
   nodeId,
+  handleId,
   onInsertReference,
   className,
 }: UpstreamReferenceProps) {
-  const upstreamNodes = useUpstreamNodes(nodeId)
-
-  // Debug logging
-  console.log('[UpstreamReference] nodeId:', nodeId, 'upstreamNodes:', upstreamNodes)
+  const upstreamNodes = useUpstreamNodes(nodeId, handleId)
 
   // No upstream nodes → don't render
   if (upstreamNodes.length === 0) return null
@@ -164,59 +165,48 @@ export function UpstreamReference({
   }
 
   return (
-    <div className={cn("flex items-center gap-1.5 px-3 pt-2.5", className)}>
-      <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">
+    <div className={cn("flex flex-wrap items-center gap-1 px-3 pt-2.5", className)}>
+      <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mr-0.5">
         Ref
       </span>
-      <div className="flex items-center gap-1">
-        {upstreamNodes.map((node) => (
+      {upstreamNodes.map((node) => {
+        const typeColor = getTypeColor(node.type)
+        const Icon = MODULE_BY_ID[node.type]?.meta.icon
+        const displayLabel = node.label || node.id.slice(-6)
+        return (
           <button
             key={node.id}
-            onClick={() => handleNodeClick(node)}
+            onMouseDown={(e) => { e.preventDefault(); handleNodeClick(node) }}
+            title={`Insert {{${node.id}}}`}
             className={cn(
-              "relative group",
-              "w-7 h-7 rounded-md overflow-hidden",
-              "border border-slate-200/80",
+              "flex items-center gap-1",
+              "px-1.5 py-0.5 rounded-md",
+              "border border-slate-200 bg-white text-slate-600",
+              "text-[9px] font-medium",
               "transition-all duration-150",
-              "hover:ring-2 hover:ring-blue-200 hover:border-blue-300",
-              "active:scale-95"
+              "hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700",
+              "active:scale-95",
             )}
-            title={`Insert reference to ${node.label || node.type}`}
           >
             {node.thumbnail ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={node.thumbnail}
-                alt={node.label || node.type}
-                className="w-full h-full object-cover"
+                alt={displayLabel}
+                className="w-4 h-4 rounded object-cover flex-shrink-0"
               />
             ) : (
               <div
-                className="w-full h-full flex items-center justify-center"
-                style={{ backgroundColor: getTypeColor(node.type) + "20" }}
+                className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
+                style={{ backgroundColor: typeColor + "20" }}
               >
-                {(() => {
-                  const Icon = MODULE_BY_ID[node.type]?.meta.icon
-                  if (!Icon) return null
-                  return (
-                    <Icon
-                      size={12}
-                      style={{ color: getTypeColor(node.type) }}
-                    />
-                  )
-                })()}
+                {Icon && <Icon size={10} style={{ color: typeColor }} />}
               </div>
             )}
-            {/* Hover tooltip */}
-            <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-800 text-white text-[9px] font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
-              {node.label || node.type}
-            </div>
+            <span className="truncate max-w-[60px]">{displayLabel}</span>
           </button>
-        ))}
-      </div>
-      <span className="text-[9px] text-slate-300 ml-1">
-        Click to insert
-      </span>
+        )
+      })}
     </div>
   )
 }

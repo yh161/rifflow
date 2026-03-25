@@ -232,8 +232,8 @@ export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange
         throw new Error(d.error ?? "发布失败")
       }
 
-      // 同步封面预览到 toolbar
-      if (form.coverPreview) onCoverChange?.(form.coverPreview)
+      // 同步封面预览到 toolbar — 用 MinIO 持久 URL，不用 blob URL
+      if (thumbnailUrl) onCoverChange?.(thumbnailUrl)
       // 通知 browser 刷新草稿/发布列表
       window.dispatchEvent(new CustomEvent("template:saved"))
       close()

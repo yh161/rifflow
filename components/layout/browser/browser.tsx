@@ -141,7 +141,7 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
           <MenubarMenu>
             <MenubarTrigger>File</MenubarTrigger>
             <MenubarContent>
-              <MenubarItem>
+              <MenubarItem onClick={() => window.dispatchEvent(new CustomEvent("canvas:new"))}>
                 New <MenubarShortcut>⌘N</MenubarShortcut>
               </MenubarItem>
               <MenubarItem onClick={() => importRef?.current?.()}>

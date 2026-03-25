@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useRef, useLayoutEffect, useCallback } from "react"
+import React, { useState, useRef, useLayoutEffect, useCallback, useEffect, useImperativeHandle } from "react"
 import { useReactFlow } from "reactflow"
 import { Sparkles, Zap, RefreshCw, Square, Bot, Hand, ChevronUp, Infinity, Hash } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -13,9 +13,315 @@ import {
 import * as SliderPrimitive from "@radix-ui/react-slider"
 import type { CustomNodeData, NodeMode } from "../modules/_types"
 import { UpstreamReference } from "./_upstream_reference"
+import { getTypeColor, getThumbnail } from "@/lib/image-compress"
+import { MODULE_BY_ID } from "../modules/_registry"
 
 // Re-export for any existing consumers
 export type { NodeMode }
+
+// ─────────────────────────────────────────────
+// RefPromptEditor — contentEditable prompt with {{nodeId}} as atomic chips.
+// contenteditable="false" spans are treated as a single unit by the browser:
+// Backspace/Delete removes the whole chip, arrow keys skip over it.
+// ─────────────────────────────────────────────
+
+/** Poll for node id → { label, type, src } while mounted */
+function useNodeDataMap() {
+  const { getNodes } = useReactFlow()
+  const [nodeMap, setNodeMap] = useState<Map<string, { label: string; type: string; src?: string }>>(new Map())
+  useEffect(() => {
+    const compute = () => {
+      const map = new Map<string, { label: string; type: string; src?: string }>()
+      getNodes().forEach((n) => {
+        const d = n.data as CustomNodeData & { src?: string; videoPoster?: string }
+        map.set(n.id, {
+          label: d.label || n.id.slice(-6),
+          type:  d.type  || 'text',
+          src:   d.src   || d.videoPoster,
+        })
+      })
+      setNodeMap(map)
+    }
+    compute()
+    const timer = setInterval(compute, 1000)
+    return () => clearInterval(timer)
+  }, [getNodes])
+  return nodeMap
+}
+
+const REF_SPLIT = /(\{\{[^}]+\}\})/g
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+/** Returns the inner SVG elements for a given node type (matches Lucide icons used in modules). */
+function getTypeIconSvgInner(type: string): string {
+  switch (type) {
+    case 'text':
+      return '<line x1="21" x2="3" y1="6" y2="6" stroke-linecap="round"/><line x1="15" x2="3" y1="12" y2="12" stroke-linecap="round"/><line x1="17" x2="3" y1="18" y2="18" stroke-linecap="round"/>'
+    case 'image':
+      return '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>'
+    case 'video':
+      return '<path d="m22 8-6 4 6 4V8z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>'
+    case 'filter':
+      return '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'
+    case 'seed':
+      return '<path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>'
+    case 'template':
+      return '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m6.08 9.5-3.5 1.6a1 1 0 0 0 0 1.81l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9a1 1 0 0 0 0-1.83l-3.5-1.59"/>'
+    default:
+      return '<line x1="21" x2="3" y1="6" y2="6" stroke-linecap="round"/><line x1="15" x2="3" y1="12" y2="12" stroke-linecap="round"/>'
+  }
+}
+
+function buildChipHtml(nodeId: string, info: { label: string; type: string } | undefined): string {
+  const label = info?.label || nodeId.slice(-6)
+  const type  = info?.type  || 'text'
+  const color = getTypeColor(type)
+  // Icon box: 16×16 with Lucide SVG icon — matches upstream-reference REF chip style
+  const iconBox =
+    `<span data-chip-icon style="display:inline-flex;align-items:center;justify-content:center;` +
+    `width:16px;height:16px;border-radius:4px;background-color:${color}20;flex-shrink:0;">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" ` +
+    `fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+    getTypeIconSvgInner(type) +
+    `</svg></span>`
+  return (
+    `<span contenteditable="false" data-ref="${escapeHtml(nodeId)}" ` +
+    `style="background-color:#ffffff;border:1px solid #e2e8f0;color:#475569;` +
+    `display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 4px;border-radius:6px;` +
+    `font-size:9px;font-weight:500;line-height:inherit;vertical-align:middle;user-select:none;">` +
+    iconBox +
+    `<span data-chip-label style="max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</span>` +
+    `</span>`
+  )
+}
+
+function valueToHtml(text: string, nodeMap: Map<string, { label: string; type: string }>): string {
+  if (!text) return ''
+  return text
+    .split(REF_SPLIT)
+    .map((part) => {
+      const m = part.match(/^\{\{([^}]+)\}\}$/)
+      if (m) return buildChipHtml(m[1].trim(), nodeMap.get(m[1].trim()))
+      return escapeHtml(part).replace(/\n/g, '<br>')
+    })
+    .join('')
+}
+
+function serializeContent(div: HTMLDivElement): string {
+  let text = ''
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.textContent ?? ''
+    } else if (node instanceof HTMLElement) {
+      if (node.dataset.ref) { text += `{{${node.dataset.ref}}}`; return }
+      if (node.tagName === 'BR') { text += '\n'; return }
+      node.childNodes.forEach(walk)
+      if ((node.tagName === 'DIV' || node.tagName === 'P') && node !== div) text += '\n'
+    }
+  }
+  div.childNodes.forEach(walk)
+  return text.replace(/\n$/, '') // strip trailing newline contentEditable appends
+}
+
+export interface RefPromptEditorHandle {
+  insertReference: (nodeId: string) => void
+  focus: () => void
+}
+
+export const RefPromptEditor = React.forwardRef<
+  RefPromptEditorHandle,
+  {
+    value: string
+    onChange: (v: string) => void
+    readOnly?: boolean
+    placeholder?: string
+    minHeight?: number
+    className?: string
+  }
+>(function RefPromptEditor({ value, onChange, readOnly, placeholder, minHeight = 100, className }, ref) {
+  const editorRef       = useRef<HTMLDivElement>(null)
+  const nodeMap         = useNodeDataMap()
+  const nodeMapRef      = useRef(nodeMap)
+  nodeMapRef.current    = nodeMap
+  const [thumbCache, setThumbCache] = useState<Map<string, string>>(new Map())
+  const loadingThumbsRef = useRef<Set<string>>(new Set())
+
+  // Track last serialized value to break the onChange → value prop → DOM update loop
+  const lastValueRef = useRef<string>('')
+
+  // ── Imperative API ──────────────────────────────────────────────────────
+  useImperativeHandle(ref, () => ({
+    insertReference(nodeId: string) {
+      const div = editorRef.current
+      if (!div || readOnly) return
+
+      // Build chip element
+      const tmp = document.createElement('span')
+      tmp.innerHTML = buildChipHtml(nodeId, nodeMapRef.current.get(nodeId))
+      const chip = tmp.firstChild as ChildNode
+
+      // Insert at current cursor if already inside the editor, else append to end
+      const sel = window.getSelection()
+      if (sel && sel.rangeCount > 0 && div.contains(sel.anchorNode)) {
+        const range = sel.getRangeAt(0)
+        range.deleteContents()
+        range.insertNode(chip)
+      } else {
+        div.appendChild(chip)
+      }
+
+      // Serialize and report change immediately (before focus/cursor settle)
+      const serialized = serializeContent(div)
+      lastValueRef.current = serialized
+      onChange(serialized)
+
+      // Focus + place cursor after chip.
+      // Use requestAnimationFrame so the browser has processed the DOM mutation
+      // and focus events before we set the Selection — fixes the empty-div case
+      // where addRange fails if called synchronously during a focus transition.
+      div.focus()
+      requestAnimationFrame(() => {
+        try {
+          const sel2 = window.getSelection()
+          const after = document.createRange()
+          after.setStartAfter(chip)
+          after.collapse(true)
+          sel2?.removeAllRanges()
+          sel2?.addRange(after)
+        } catch {
+          // Silently ignore if chip was removed in the meantime
+        }
+      })
+    },
+    focus() { editorRef.current?.focus() },
+  }), [onChange, readOnly])
+
+  // ── Sync external value → DOM ───────────────────────────────────────────
+  useEffect(() => {
+    const div = editorRef.current
+    if (!div) return
+    if (lastValueRef.current === value) return // originated from user typing — skip
+    lastValueRef.current = value
+    div.innerHTML = valueToHtml(value, nodeMapRef.current)
+    if (document.activeElement === div) {
+      // Keep cursor at end when focused (e.g. after programmatic insert)
+      const r = document.createRange()
+      r.selectNodeContents(div)
+      r.collapse(false)
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(r)
+    }
+  }, [value])
+
+  // ── Update chip labels/icons/thumbnails in-place when nodeMap or thumbCache refreshes ──
+  useEffect(() => {
+    const div = editorRef.current
+    if (!div) return
+    div.querySelectorAll<HTMLElement>('[data-ref]').forEach((chip) => {
+      const nodeId = chip.dataset.ref!
+      const info   = nodeMap.get(nodeId)
+
+      if (!info) {
+        // Node was deleted — grey out and strikethrough
+        chip.style.opacity         = '0.4'
+        chip.style.textDecoration  = 'line-through'
+        return
+      }
+
+      chip.style.opacity        = ''
+      chip.style.textDecoration = ''
+
+      const label = info.label || nodeId.slice(-6)
+      const color = getTypeColor(info.type)
+
+      const labelEl = chip.querySelector('[data-chip-label]')
+      if (labelEl && labelEl.textContent !== label) labelEl.textContent = label
+
+      const iconEl = chip.querySelector<HTMLElement>('[data-chip-icon]')
+      if (!iconEl) return
+
+      const thumb = info.src ? thumbCache.get(info.src) : undefined
+
+      if (thumb) {
+        // Show compressed thumbnail — identical to REF chip img style
+        iconEl.style.backgroundColor = 'transparent'
+        iconEl.style.borderRadius    = '4px'
+        iconEl.style.overflow        = 'hidden'
+        iconEl.innerHTML = `<img src="${thumb}" style="width:16px;height:16px;object-fit:cover;display:block;border-radius:4px;" />`
+      } else {
+        // Show SVG icon with type color
+        iconEl.style.backgroundColor = `${color}20`
+        iconEl.innerHTML =
+          `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" ` +
+          `fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
+          getTypeIconSvgInner(info.type) +
+          `</svg>`
+      }
+
+      // Kick off async thumbnail load if not yet cached
+      if (info.src && !thumbCache.has(info.src) && !loadingThumbsRef.current.has(info.src)) {
+        loadingThumbsRef.current.add(info.src)
+        getThumbnail(info.src, 28)
+          .then((t) => { if (t) setThumbCache((prev) => new Map(prev).set(info.src!, t)) })
+          .catch(() => {})
+          .finally(() => { loadingThumbsRef.current.delete(info.src!) })
+      }
+    })
+  }, [nodeMap, thumbCache])
+
+  // ── User input handler ──────────────────────────────────────────────────
+  const handleInput = useCallback(() => {
+    const div = editorRef.current
+    if (!div) return
+    const serialized = serializeContent(div)
+    lastValueRef.current = serialized
+    onChange(serialized)
+  }, [onChange])
+
+  // ── Paste: strip HTML, insert plain text ────────────────────────────────
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    e.preventDefault()
+    const text = e.clipboardData.getData('text/plain')
+    if (!text) return
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const range = sel.getRangeAt(0)
+    range.deleteContents()
+    const node = document.createTextNode(text)
+    range.insertNode(node)
+    range.setStartAfter(node)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    handleInput()
+  }, [handleInput])
+
+  return (
+    <div className={cn('relative', className)} style={{ minHeight }}>
+      <div
+        ref={editorRef}
+        contentEditable={readOnly ? false : true}
+        suppressContentEditableWarning
+        onInput={handleInput}
+        onPaste={handlePaste}
+        className={cn(
+          'w-full outline-none p-3 text-sm text-slate-700 leading-relaxed break-words',
+          readOnly && 'opacity-40 cursor-not-allowed pointer-events-none',
+        )}
+        style={{ minHeight }}
+      />
+      {/* Placeholder shown when content is empty */}
+      {!value && placeholder && (
+        <div className="absolute top-0 left-0 right-0 p-3 text-sm text-slate-300 leading-relaxed pointer-events-none select-none">
+          {placeholder}
+        </div>
+      )}
+    </div>
+  )
+})
 
 // ─────────────────────────────────────────────
 // ModeToggle  — replaces SlidingTabBar
@@ -206,6 +512,7 @@ const TEXT_PARAMS: ParamDef[] = [
 export function GenerateTextPanel({
   data,
   nodeId,
+  refHandleId,
   onDataChange,
   mode,
   isGenerating,
@@ -215,6 +522,8 @@ export function GenerateTextPanel({
 }: {
   data: CustomNodeData
   nodeId?: string
+  /** If set, only show upstream nodes connected via this specific handle */
+  refHandleId?: string
   /** Direct callback — preferred over data.onDataChange to avoid async injection timing. */
   onDataChange?: (u: Partial<CustomNodeData>) => void
   mode: NodeMode
@@ -226,7 +535,7 @@ export function GenerateTextPanel({
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? TEXT_MODELS[0].id)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
@@ -244,25 +553,11 @@ export function GenerateTextPanel({
   const canSubmit   = prompt.trim().length > 0
   const buttonLabel = isAuto ? "Save" : "Generate"
 
-  // Insert reference at cursor position
+  // Insert chip at current cursor position inside the editor
   const handleInsertReference = useCallback((ref: string) => {
-    if (!textareaRef.current) {
-      setPrompt(prompt + ref)
-      return
-    }
-    
-    const textarea = textareaRef.current
-    const start = textarea.selectionStart
-    const end = textarea.selectionEnd
-    const newPrompt = prompt.slice(0, start) + ref + prompt.slice(end)
-    setPrompt(newPrompt)
-    
-    // Move cursor after inserted reference
-    requestAnimationFrame(() => {
-      textarea.focus()
-      textarea.setSelectionRange(start + ref.length, start + ref.length)
-    })
-  }, [prompt, setPrompt])
+    const nodeId = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
+    editorRef.current?.insertReference(nodeId)
+  }, [])
 
   return (
     <div className="flex flex-col">
@@ -270,13 +565,14 @@ export function GenerateTextPanel({
       {nodeId && (
         <UpstreamReference
           nodeId={nodeId}
+          handleId={refHandleId}
           onInsertReference={handleInsertReference}
         />
       )}
-      <textarea
-        ref={textareaRef}
+      <RefPromptEditor
+        ref={editorRef}
         value={prompt}
-        onChange={(e) => !isGenerating && setPrompt(e.target.value)}
+        onChange={(v) => !isGenerating && setPrompt(v)}
         placeholder={
           placeholder
             ? (isAuto ? placeholder.auto : placeholder.manual)
@@ -284,13 +580,8 @@ export function GenerateTextPanel({
               ? "Set a fixed prompt — the node will run this automatically…"
               : "Describe the text content you want to generate…"
         }
-        rows={4}
         readOnly={isGenerating}
-        className={cn(
-          "w-full resize-none p-3 text-sm text-slate-700 outline-none placeholder:text-slate-300 leading-relaxed",
-          isGenerating && "opacity-40 cursor-not-allowed",
-        )}
-        style={{ minHeight: 100 }}
+        minHeight={100}
       />
       <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-slate-100 flex-wrap">
         <ModelDropdown models={TEXT_MODELS} value={model} onChange={setModel} locked={isGenerating} />
@@ -358,7 +649,7 @@ export function GenerateImagePanel({
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? IMAGE_MODELS[0].id)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
@@ -377,25 +668,11 @@ export function GenerateImagePanel({
   const ActionIcon  = hasSrc ? RefreshCw : isAuto ? Sparkles : Zap
   const buttonLabel = isAuto ? "Save" : hasSrc ? "Regenerate" : "Generate"
 
-  // Insert reference at cursor position
+  // Insert chip at current cursor position inside the editor
   const handleInsertReference = useCallback((ref: string) => {
-    if (!textareaRef.current) {
-      setPrompt(prompt + ref)
-      return
-    }
-    
-    const textarea = textareaRef.current
-    const start = textarea.selectionStart
-    const end = textarea.selectionEnd
-    const newPrompt = prompt.slice(0, start) + ref + prompt.slice(end)
-    setPrompt(newPrompt)
-    
-    // Move cursor after inserted reference
-    requestAnimationFrame(() => {
-      textarea.focus()
-      textarea.setSelectionRange(start + ref.length, start + ref.length)
-    })
-  }, [prompt, setPrompt])
+    const nodeId = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
+    editorRef.current?.insertReference(nodeId)
+  }, [])
 
   return (
     <div className="flex flex-col">
@@ -406,10 +683,10 @@ export function GenerateImagePanel({
           onInsertReference={handleInsertReference}
         />
       )}
-      <textarea
-        ref={textareaRef}
+      <RefPromptEditor
+        ref={editorRef}
         value={prompt}
-        onChange={(e) => !isGenerating && setPrompt(e.target.value)}
+        onChange={(v) => !isGenerating && setPrompt(v)}
         placeholder={
           isAuto
             ? "Set a fixed prompt — the node will run this automatically…"
@@ -417,13 +694,8 @@ export function GenerateImagePanel({
               ? "Describe how to edit this image…"
               : "Describe the image you want to generate…"
         }
-        rows={4}
         readOnly={isGenerating}
-        className={cn(
-          "w-full resize-none p-3 text-sm text-slate-700 outline-none placeholder:text-slate-300 leading-relaxed",
-          isGenerating && "opacity-40 cursor-not-allowed",
-        )}
-        style={{ minHeight: 100 }}
+        minHeight={100}
       />
       <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-slate-100 flex-wrap">
         <ModelDropdown models={IMAGE_MODELS} value={model} onChange={setModel} locked={isGenerating} />
@@ -478,6 +750,7 @@ const VIDEO_PARAMS: ParamDef[] = [
 
 export function GenerateVideoPanel({
   data,
+  nodeId,
   onDataChange,
   hasSrc,
   mode,
@@ -486,6 +759,7 @@ export function GenerateVideoPanel({
   onStop,
 }: {
   data: CustomNodeData
+  nodeId?: string
   /** Direct callback — preferred over data.onDataChange to avoid async injection timing. */
   onDataChange?: (u: Partial<CustomNodeData>) => void
   hasSrc: boolean
@@ -501,6 +775,7 @@ export function GenerateVideoPanel({
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? VIDEO_MODELS[0].id)
   const [params, setParamsLocal] = useState<Record<string, string>>(data.params ?? defaultParams)
+  const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
@@ -528,11 +803,25 @@ export function GenerateVideoPanel({
   const ActionIcon  = isAuto ? Sparkles : Zap
   const buttonLabel = isAuto ? "Save" : hasSrc ? "Regenerate" : "Generate"
 
+  // Insert chip at current cursor position inside the editor
+  const handleInsertReference = useCallback((ref: string) => {
+    const nodeId = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
+    editorRef.current?.insertReference(nodeId)
+  }, [])
+
   return (
     <div className="flex flex-col">
-      <textarea
+      {/* Upstream reference area */}
+      {nodeId && (
+        <UpstreamReference
+          nodeId={nodeId}
+          onInsertReference={handleInsertReference}
+        />
+      )}
+      <RefPromptEditor
+        ref={editorRef}
         value={prompt}
-        onChange={(e) => !isGenerating && setPrompt(e.target.value)}
+        onChange={(v) => !isGenerating && setPrompt(v)}
         placeholder={
           isAuto
             ? "Set a fixed prompt — the node will run this automatically…"
@@ -540,13 +829,8 @@ export function GenerateVideoPanel({
               ? "Describe the motion or scene transformation…"
               : "Describe the video you want to generate…"
         }
-        rows={4}
         readOnly={isGenerating}
-        className={cn(
-          "w-full resize-none p-3 text-sm text-slate-700 outline-none placeholder:text-slate-300 leading-relaxed",
-          isGenerating && "opacity-40 cursor-not-allowed",
-        )}
-        style={{ minHeight: 100 }}
+        minHeight={100}
       />
       <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-slate-100 flex-wrap">
         <ModelDropdown models={VIDEO_MODELS} value={model} onChange={setModel} locked={isGenerating} />
@@ -729,36 +1013,25 @@ export function LoopPanel({
   const defaultParams = Object.fromEntries(LOOP_PARAMS.map((p) => [p.id, p.options[0]]))
 
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
-  const [prompt, setPromptLocal]               = useState(data.loopPrompt ?? data.prompt ?? "")
+  const [prompt, setPromptLocal]               = useState(data.templatePrompt ?? data.prompt ?? "")
   const [model, setModelLocal]                 = useState(data.model ?? LOOP_MODELS[0].id)
   const [params, setParamsLocal]               = useState<Record<string, string>>(data.params ?? defaultParams)
   const [instanceCount, setInstanceCountLocal] = useState(data.loopCount ?? 3)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
 
   const setPrompt = (v: string) => {
     setPromptLocal(v)
-    persistChange?.({ loopPrompt: v, prompt: v })
+    persistChange?.({ templatePrompt: v, prompt: v })
   }
 
-  // Insert upstream reference at cursor position
+  // Insert chip at current cursor position inside the editor
   const handleInsertReference = useCallback((ref: string) => {
-    if (!textareaRef.current) {
-      setPrompt(prompt + ref)
-      return
-    }
-    const textarea = textareaRef.current
-    const start = textarea.selectionStart
-    const end   = textarea.selectionEnd
-    const newPrompt = prompt.slice(0, start) + ref + prompt.slice(end)
-    setPrompt(newPrompt)
-    requestAnimationFrame(() => {
-      textarea.focus()
-      textarea.setSelectionRange(start + ref.length, start + ref.length)
-    })
-  }, [prompt]) // eslint-disable-line react-hooks/exhaustive-deps
+    const nodeId = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
+    editorRef.current?.insertReference(nodeId)
+  }, [])
   const setModel = (v: string) => {
     setModelLocal(v)
     persistChange?.({ model: v })
@@ -798,21 +1071,18 @@ export function LoopPanel({
       )}
       {/* Top area: prompt left, instances right */}
       <div className="flex min-h-[110px]">
-        <textarea
-          ref={textareaRef}
+        <RefPromptEditor
+          ref={editorRef}
           value={prompt}
-          onChange={(e) => !isGenerating && setPrompt(e.target.value)}
+          onChange={(v) => !isGenerating && setPrompt(v)}
           placeholder={
             isAuto
               ? "Set the iteration rule — describe how the Seed should vary each run…"
               : "Describe the loop behavior, e.g. 'Generate 5 variations with increasing formality'…"
           }
           readOnly={isGenerating}
-          className={cn(
-            "flex-1 resize-none p-3 text-sm text-slate-700 outline-none placeholder:text-slate-300 leading-relaxed",
-            isGenerating && "opacity-40 cursor-not-allowed",
-          )}
-          style={{ minHeight: 110 }}
+          minHeight={110}
+          className="flex-1"
         />
 
         <InstancesBox
@@ -877,89 +1147,3 @@ export function LoopPanel({
 // Each module now exports its own ModalContent.
 // NodeEditor shell calls MODULE_BY_ID[type].ModalContent directly.
 
-// ─────────────────────────────────────────────
-// CyclePanel — instances only (no prompt)
-// Cycle has no LLM-driven variation — just iteration count control.
-// ─────────────────────────────────────────────
-export function CyclePanel({
-  data,
-  onDataChange,
-  isGenerating,
-  onStop,
-}: {
-  data: CustomNodeData
-  /** Direct callback — preferred over data.onDataChange to avoid async injection timing. */
-  onDataChange?: (u: Partial<CustomNodeData>) => void
-  mode: NodeMode
-  isGenerating: boolean
-  onGenerate: (prompt: string, model: string, params: Record<string, string>) => void
-  onStop: () => void
-}) {
-  // Local state for responsive UI — initialized once from data (key-remount handles node switching)
-  const [instanceCount, setInstanceCountLocal] = useState(data.loopCount ?? 3)
-
-  // Prefer the direct prop; fall back to data.onDataChange for legacy callers
-  const persistChange = onDataChange ?? data.onDataChange
-
-  const setInstanceCount = (n: number) => {
-    setInstanceCountLocal(n)
-    persistChange?.({ loopCount: n })
-  }
-
-  return (
-    <div className="flex flex-col">
-      {/* Top area: hint left, instances right */}
-      <div className="flex min-h-[140px]">
-        {/* Left: usage hint */}
-        <div className="flex-1 p-4 flex flex-col justify-center gap-3">
-          <p className="text-xs text-slate-400 leading-relaxed">
-            Connect internal nodes to the{" "}
-            <span className="text-violet-400 font-medium">↻ re-enter</span> and{" "}
-            <span className="text-violet-400 font-medium">exit ↵</span>{" "}
-            handles inside the frame to define the loop path.
-          </p>
-          <p className="text-[11px] text-slate-300 leading-relaxed">
-            Use a <span className="text-slate-400 font-medium">Gate</span> node to control exit conditions — without one the cycle will always run to the maximum count.
-          </p>
-        </div>
-
-        {/* Right: instances count */}
-        <InstancesBox
-          count={instanceCount}
-          onChange={setInstanceCount}
-          locked={isGenerating}
-          theme="violet"
-          label="Cycles"
-        />
-      </div>
-
-      {/* Footer */}
-      <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-slate-100">
-        {/* Instance summary chip */}
-        <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-violet-50 border border-violet-100/80">
-          <Infinity size={10} className="text-violet-400" strokeWidth={2.5} />
-          <span className="text-[11px] text-violet-500 font-medium">
-            ≤ {instanceCount} cycles
-          </span>
-        </div>
-
-        {isGenerating ? (
-          <button
-            onClick={onStop}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-500 hover:bg-red-100 border border-red-200/80 active:scale-95 transition-all duration-150"
-          >
-            <Square size={10} className="fill-red-500" />
-            Stop
-          </button>
-        ) : (
-          <button
-            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80 active:scale-95 transition-all duration-150"
-          >
-            <Zap size={11} />
-            Set
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}

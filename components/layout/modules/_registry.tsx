@@ -13,10 +13,9 @@ import * as Standard from './standard'
 import * as Text     from './text'
 import * as Image    from './image'
 import * as Video    from './video'
-import * as Gate     from './gate'
-import * as Batch    from './batch'   // ← was Loop
-import * as Cycle    from './cycle'   // ← new
-import * as Seed     from './seed'
+import * as Filter    from './filter'
+import * as Template  from './template'
+import * as Seed      from './seed'
 import * as Lasso    from './lasso'   // ← new
 
 // ─────────────────────────────────────────────
@@ -33,12 +32,13 @@ export interface ModuleDefinition {
   }
   defaultData:  Record<string, any>
   handles:      HandleDef[]
-  NodeUI:       React.ComponentType<{ data: any; selected?: boolean }>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  NodeUI:       React.ComponentType<{ data: any; selected?: boolean; nodeId?: string }>
   ModalContent: React.ComponentType<ModuleModalProps>
 }
 
 export const MODULES: ModuleDefinition[] = [
-  Standard, Text, Image, Video, Gate, Batch, Cycle, Seed, Lasso,
+  Standard, Text, Image, Video, Filter, Template, Seed, Lasso,
 ] as any[]
 
 export const MODULE_BY_ID = Object.fromEntries(MODULES.map((m) => [m.meta.id, m]))
@@ -95,7 +95,13 @@ function NodeLabel({
   const startEdit = () => {
     if (!selected || !nodeId) return
     setEditing(true)
-    requestAnimationFrame(() => { inputRef.current?.select() })
+    requestAnimationFrame(() => {
+      const input = inputRef.current
+      if (input) {
+        const len = input.value.length
+        input.setSelectionRange(len, len)
+      }
+    })
   }
 
   const commit = () => {
@@ -198,7 +204,7 @@ function NodeWrapper({
             className={getHandleClassName(def)}
             style={getHandleStyle(def)}
           />
-          <MagneticZone def={def} isHovered={isHovered} />
+          <MagneticZone def={def} isHovered={isHovered} nodeId={nodeId ?? ''} />
         </React.Fragment>
       ))}
       {nodeId && (
@@ -206,7 +212,7 @@ function NodeWrapper({
           nodeId={nodeId}
           isHovered={isHovered}
           aspectRatio={
-            data?.type === 'image' && data?.naturalWidth && data?.naturalHeight
+            (data?.type === 'image' || data?.type === 'video') && data?.naturalWidth && data?.naturalHeight
               ? data.naturalWidth / data.naturalHeight
               : undefined
           }
@@ -231,33 +237,28 @@ function NodeWrapper({
 // ReactFlow node components
 // ─────────────────────────────────────────────
 
-// CustomNode — text / image / video / gate / seed
+// CustomNode — text / image / video / filter / seed
 const CustomNodeInner = ({ id, data, selected }: NodeProps<CustomNodeData>) => {
   const mod = MODULE_BY_ID[data.type]
   if (!mod?.NodeUI) return null
+
   return (
     <NodeWrapper handles={(mod.handles ?? []) as HandleDef[]} label={data.label} nodeId={id} data={data} selected={selected}>
-      <mod.NodeUI data={data} selected={selected} />
+      {/* Filter node handles its own connected sources via useReactFlow */}
+      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+      <mod.NodeUI data={data} selected={selected} nodeId={id} />
     </NodeWrapper>
   )
 }
 export const CustomNode = memo(CustomNodeInner)
 
-// BatchNode — was LoopNode
-const BatchNodeInner = ({ id, data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={Batch.handles as HandleDef[]} label={data.label} nodeId={id} data={data} selected={selected}>
-    <Batch.NodeUI data={data} selected={selected} />
+// TemplateNode
+const TemplateNodeInner = ({ id, data, selected }: NodeProps<any>) => (
+  <NodeWrapper handles={Template.handles as HandleDef[]} label={data.label} nodeId={id} data={data} selected={selected}>
+    <Template.NodeUI data={data} selected={selected} />
   </NodeWrapper>
 )
-export const BatchNode = memo(BatchNodeInner)
-
-// CycleNode — no external handles (handles rendered inside NodeUI)
-const CycleNodeInner = ({ id, data, selected }: NodeProps<any>) => (
-  <NodeWrapper handles={[]} label={data.label} nodeId={id} data={data} selected={selected}>
-    <Cycle.NodeUI data={data} selected={selected} />
-  </NodeWrapper>
-)
-export const CycleNode = memo(CycleNodeInner)
+export const TemplateNode = memo(TemplateNodeInner)
 
 // LassoNode — no external handles (pure container)
 const LassoNodeInner = ({ id, data, selected }: NodeProps<any>) => (
@@ -292,8 +293,7 @@ export const GhostNode = memo(GhostNodeInner)
 export const nodeTypes = {
   StandardNode,
   CustomNode,
-  BatchNode,
-  CycleNode,
+  TemplateNode,
   LassoNode,
   GhostNode,
 }

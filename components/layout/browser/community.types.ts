@@ -55,4 +55,8 @@ export interface TemplateCardProps {
   className?: string
   onFavorite?: (id: string, action: "added" | "removed") => void
   onExecute?: (template: TemplateSummary) => void
+  onDelete?: (id: string) => void
+  onUnpublish?: (id: string) => void
+  onRepublish?: (id: string) => void
+  onLoadToCanvas?: (id: string) => void
 }

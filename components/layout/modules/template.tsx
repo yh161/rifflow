@@ -9,20 +9,20 @@ import type { HandleDef } from './_handle'
 import { LoopPanel } from '../node_editor/_panels'
 
 export const meta = {
-  id:          'batch',
-  name:        'Batch',
+  id:          'template',
+  name:        'Template',
   description: 'Expand a subgraph into multiple parallel instances with LLM-driven variation',
   icon:        Layers,
   color:       'text-indigo-500',
   bg:          'bg-indigo-50',
   border:      'hover:border-indigo-200',
-  panelTitle:  'Batch',
+  panelTitle:  'Template',
   opensEditor: true,
 }
 
 export const defaultData: Partial<CustomNodeData> = {
-  type:            'batch',
-  label:           'Batch',
+  type:            'template',
+  label:           'Template',
   width:           520,
   height:          400,
   loopCount:       undefined,
@@ -30,7 +30,7 @@ export const defaultData: Partial<CustomNodeData> = {
   currentInstance: -1,
 }
 
-// Batch output = the nodes inside it. No right handle needed.
+// Template output = the nodes inside it. No right handle needed.
 export const handles: HandleDef[] = [
   { id: 'in', side: 'left' },
 ]
@@ -106,7 +106,7 @@ export const NodeUI = ({
 export const ReactFlowNode = memo(({ data, selected }: NodeProps<CustomNodeData>) => (
   <NodeUI data={data} selected={selected} />
 ))
-ReactFlowNode.displayName = 'BatchNode'
+ReactFlowNode.displayName = 'TemplateNode'
 
 // ─────────────────────────────────────────────
 // ModalContent — wired to LoopPanel

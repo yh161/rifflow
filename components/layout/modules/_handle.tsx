@@ -1,7 +1,8 @@
 "use client"
 
-import React, { useRef, useEffect, useCallback } from 'react'
-import { Handle, Position, useReactFlow } from 'reactflow'
+import React, { useRef, useEffect, useCallback, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Handle, Position, useReactFlow, useStoreApi } from 'reactflow'
 import { CirclePlus } from 'lucide-react'
 
 // ─────────────────────────────────────────────
@@ -62,9 +63,9 @@ export function getHandleClassName(def: HandleDef): string {
 // ─────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────
-const MR = 36   // magnetic radius (px) — proximity detection
-const HD = 16   // handle distance — how far outside the node edge the icon floats
-const FD = 7    // fly distance — how far the icon starts from when invisible
+const MR = 36   // magnetic radius (px, screen-space) — proximity detection
+const HD = 16   // handle distance — how far outside the node edge the icon floats (node-space)
+const FD = 7    // fly distance — icon start offset when hidden (node-space)
 
 // ─────────────────────────────────────────────
 // One-time CSS — handle reset + outward ::before hit areas
@@ -110,9 +111,11 @@ if (typeof document !== 'undefined' && !document.getElementById('__nub-handle-st
 // ─────────────────────────────────────────────
 // Global DOM-direct mousemove loop
 // All MagneticZones register here — zero React re-renders on mouse move.
+// centerRef holds pre-computed screen-space coords (updated via store subscription),
+// so no getBoundingClientRect() reflow per frame.
 // ─────────────────────────────────────────────
 type ZoneEntry = {
-  zoneEl:    HTMLDivElement
+  centerRef: React.MutableRefObject<{ x: number; y: number; zoom: number }>
   innerEl:   HTMLDivElement
   side:      HandleDef['side']
   isHovered: () => boolean
@@ -124,10 +127,8 @@ function ensureGlobalListener() {
   if (globalAttached) return
   globalAttached = true
   window.addEventListener('mousemove', (e: MouseEvent) => {
-    zones.forEach(({ zoneEl, innerEl, side, isHovered }) => {
-      const rect  = zoneEl.getBoundingClientRect()
-      const cx    = rect.left + rect.width  / 2
-      const cy    = rect.top  + rect.height / 2
+    zones.forEach(({ centerRef, innerEl, side, isHovered }) => {
+      const { x: cx, y: cy, zoom } = centerRef.current
       const dx    = e.clientX - cx
       const dy    = e.clientY - cy
       const dist  = Math.sqrt(dx * dx + dy * dy)
@@ -135,22 +136,22 @@ function ensureGlobalListener() {
       const show  = isHovered() || close
       const t     = close ? 1 - dist / MR : 0
 
-      // Fly-in start direction (away from node edge)
-      const flyX  = side === 'left' ? FD : side === 'right' ? -FD : 0
-      const flyY  = side === 'top'  ? FD : side === 'bottom' ? -FD : 0
+      // Fly direction in screen-space (scale FD by zoom so it's proportional)
+      const flyX  = (side === 'left' ? FD : side === 'right' ? -FD : 0) * zoom
+      const flyY  = (side === 'top'  ? FD : side === 'bottom' ? -FD : 0) * zoom
       const tx    = (show ? 0 : flyX) + dx * t * 0.75
       const ty    = (show ? 0 : flyY) + dy * t * 0.75
 
-      innerEl.style.opacity    = show ? '1' : '0'
       innerEl.style.transform  = `translate(${tx}px, ${ty}px)`
       innerEl.style.transition = close
-        ? 'opacity 0.12s ease'
-        : 'opacity 0.22s ease, transform 0.28s cubic-bezier(0.34,1.56,0.64,1)'
+        ? 'transform 0.28s cubic-bezier(0.34,1.56,0.64,1)'
+        : 'transform 0.22s ease'
 
       const svg = innerEl.querySelector('svg') as SVGElement | null
       if (svg) {
-        svg.style.color  = close ? 'rgb(96 165 250)' : 'rgba(148,163,184,0.75)'
-        svg.style.filter = close ? 'drop-shadow(0 0 2px rgba(96, 165, 250, 0.36))' : 'none'
+        svg.style.strokeOpacity = show ? '1' : '0'
+        svg.style.transition    = close ? 'stroke-opacity 0.12s ease' : 'stroke-opacity 0.22s ease'
+        svg.style.color         = close ? 'rgb(96 165 250)' : 'rgba(148,163,184,0.75)'
       }
     })
   }, { passive: true })
@@ -159,62 +160,120 @@ function ensureGlobalListener() {
 // ─────────────────────────────────────────────
 // MagneticZone
 //
-// Absolutely-positioned CirclePlus that floats HD px outside the node edge,
-// centred on the handle's offsetPercent position.
-// isHovered() → ref-based callback from NodeWrapper (no re-renders).
+// Visual layer rendered via portal into #handle-portal-root — completely
+// outside the ReactFlow node tree. This isolates transform animations from
+// the ReactFlow compositor, preventing implicit compositing of sibling nodes.
+//
+// Position is kept in sync with the node via useStoreApi().subscribe() —
+// direct DOM writes, zero React re-renders on pan/zoom/node-move.
 // ─────────────────────────────────────────────
 export function MagneticZone({
   def,
   isHovered,
+  nodeId,
 }: {
   def:       HandleDef
   isHovered: () => boolean
+  nodeId:    string
 }) {
-  const zoneRef  = useRef<HTMLDivElement>(null)
-  const innerRef = useRef<HTMLDivElement>(null)
+  const innerRef      = useRef<HTMLDivElement>(null)
+  const portalWrapRef = useRef<HTMLDivElement>(null)
+  // screen-space center of this zone, updated by store subscription
+  const centerRef     = useRef({ x: 0, y: 0, zoom: 1 })
+  const storeApi      = useStoreApi()
+  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null)
   const { side, offsetPercent = 50 } = def
 
   useEffect(() => {
+    setPortalRoot(document.getElementById('handle-portal-root'))
+  }, [])
+
+  // Sync portal element screen-space position whenever pan/zoom/node changes.
+  // Uses raw Zustand subscribe → DOM writes only, no React re-renders.
+  useEffect(() => {
+    if (!portalRoot) return
+
+    const updatePos = () => {
+      const state = storeApi.getState() as any
+      const node  = state.nodeInternals?.get(nodeId)
+      const wrap  = portalWrapRef.current
+      if (!node || !wrap) return
+
+      const [tx, ty, zoom] = state.transform
+      const pos = node.positionAbsolute ?? node.position ?? { x: 0, y: 0 }
+      const w   = node.width  ?? node.style?.width  ?? 200
+      const h   = node.height ?? node.style?.height ?? 200
+
+      // Icon center in node-space (HD outside the node edge)
+      let hx = pos.x
+      let hy = pos.y
+      if (side === 'left')   { hx += -HD;    hy += h * offsetPercent / 100 }
+      if (side === 'right')  { hx += w + HD; hy += h * offsetPercent / 100 }
+      if (side === 'top')    { hx += w * offsetPercent / 100; hy += -HD    }
+      if (side === 'bottom') { hx += w * offsetPercent / 100; hy += h + HD }
+
+      // Convert to screen-space
+      const cx = hx * zoom + tx
+      const cy = hy * zoom + ty
+      centerRef.current = { x: cx, y: cy, zoom }
+
+      // Translate portal wrapper so the MR*2 zone is centred on (cx, cy)
+      wrap.style.transform = `translate(${cx - MR}px, ${cy - MR}px)`
+
+      // Scale the icon proportionally to canvas zoom
+      const svgEl = innerRef.current?.querySelector('svg') as SVGElement | null
+      if (svgEl) svgEl.style.transform = `scale(${zoom})`
+    }
+
+    updatePos()
+    const unsub = storeApi.subscribe(updatePos)
+    return unsub
+  }, [nodeId, side, offsetPercent, storeApi, portalRoot])
+
+  // Register with global mousemove handler.
+  // portalRoot in deps ensures this re-runs after the portal actually renders
+  // (first mount has innerRef.current === null because portal hasn't committed yet).
+  useEffect(() => {
+    if (!innerRef.current) return
     ensureGlobalListener()
     const entry: ZoneEntry = {
-      zoneEl:    zoneRef.current!,
-      innerEl:   innerRef.current!,
+      centerRef,
+      innerEl: innerRef.current,
       side,
       isHovered,
     }
     zones.add(entry)
     return () => { zones.delete(entry) }
-  }, [side, isHovered])
+  }, [side, isHovered, portalRoot])
 
-  // Zone is a MR*2 square centred exactly at (HD outside edge, offsetPercent along edge)
-  const zoneStyle: React.CSSProperties = (() => {
-    const base: React.CSSProperties = {
-      position: 'absolute', width: MR * 2, height: MR * 2,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      pointerEvents: 'none', zIndex: 20,
-    }
-    if (side === 'left')   return { ...base, left:   -(HD + MR), top:    `calc(${offsetPercent}% - ${MR}px)` }
-    if (side === 'right')  return { ...base, right:  -(HD + MR), top:    `calc(${offsetPercent}% - ${MR}px)` }
-    if (side === 'top')    return { ...base, top:    -(HD + MR), left:   `calc(${offsetPercent}% - ${MR}px)` }
-    return                        { ...base, bottom: -(HD + MR), left:   `calc(${offsetPercent}% - ${MR}px)` }
-  })()
+  if (!portalRoot) return null
 
-  const flyX = side === 'left' ? FD : side === 'right' ? -FD : 0
-  const flyY = side === 'top'  ? FD : side === 'bottom' ? -FD : 0
-
-  return (
-    <div ref={zoneRef} style={zoneStyle}>
-      <div
-        ref={innerRef}
-        style={{ opacity: 0, transform: `translate(${flyX}px, ${flyY}px)` }}
-      >
+  return createPortal(
+    <div
+      ref={portalWrapRef}
+      style={{
+        position:       'absolute',
+        left:           0,
+        top:            0,
+        // Start off-screen until store subscription positions it
+        transform:      'translate(-9999px, -9999px)',
+        width:          MR * 2,
+        height:         MR * 2,
+        display:        'flex',
+        alignItems:     'center',
+        justifyContent: 'center',
+        pointerEvents:  'none',
+      }}
+    >
+      <div ref={innerRef}>
         <CirclePlus
           size={18}
           strokeWidth={1.5}
-          style={{ display: 'block', color: 'rgba(148,163,184,0.75)' }}
+          style={{ display: 'block', color: 'rgba(148,163,184,0.75)', strokeOpacity: 0 }}
         />
       </div>
-    </div>
+    </div>,
+    portalRoot,
   )
 }
 
@@ -264,8 +323,11 @@ function ensureResizeListeners() {
       const cy   = rect.top  + rect.height / 2
       const dist = Math.sqrt((e.clientX - cx) ** 2 + (e.clientY - cy) ** 2)
       const show = isHovered() || dist < RH_PROXIMITY
-      innerEl.style.opacity   = show ? '1' : '0'
-      innerEl.style.transition = show ? 'opacity 0.12s ease' : 'opacity 0.22s ease'
+      const svg  = innerEl.querySelector('svg') as SVGElement | null
+      if (svg) {
+        svg.style.strokeOpacity = show ? '1' : '0'
+        svg.style.transition    = show ? 'stroke-opacity 0.12s ease' : 'stroke-opacity 0.22s ease'
+      }
     })
 
     // ── drag resize ──────────────────────────────
@@ -347,7 +409,7 @@ export function ResizeHandle({
     }
     document.body.style.userSelect = 'none'
     document.body.style.cursor     = 'nwse-resize'
-  }, [nodeId, setNodes])
+  }, [nodeId, setNodes, aspectRatio])
 
   return (
     <div
@@ -370,13 +432,14 @@ export function ResizeHandle({
     >
       <div
         ref={innerRef}
-        style={{ opacity: 0, padding: 8 }}
+        style={{ padding: 8 }}
       >
         <svg
           width={RH_SIZE}
           height={RH_SIZE}
           viewBox="0 0 20 20"
           fill="none"
+          style={{ strokeOpacity: 0 }}
         >
           <path
             d="M 2 18 Q 18 18 18 2"

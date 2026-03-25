@@ -1,9 +1,9 @@
 // Service constants
 
-export const CREDIT_COST: Record<string, number> = { 
-  text: 1, 
-  gate: 1, 
-  image: 1 
+export const CREDIT_COST: Record<string, number> = {
+  text: 1,
+  filter: 1,
+  image: 1
 }
 
 export const TEXT_MODEL_MAP: Record<string, string> = {

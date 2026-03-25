@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Filter executable nodes (exclude container nodes)
-    const executableTypes = ["text", "image", "video", "gate", "seed", "standard"]
+    const executableTypes = ["text", "image", "video", "filter", "seed", "standard"]
     const executableNodes = nodes.filter(
       (n) => executableTypes.includes(n.data?.type) || executableTypes.includes(n.type)
     )
@@ -78,6 +78,7 @@ export async function POST(req: NextRequest) {
         id: e.id,
         source: e.source,
         target: e.target,
+        ...(e.targetHandle && { targetHandle: e.targetHandle }),
       }))
 
     // Execute workflow

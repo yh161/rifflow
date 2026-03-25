@@ -1,9 +1,8 @@
 "use client"
 
-import Image from "next/image"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
-import { Heart, Play, Zap, Lock, Star } from "lucide-react"
+import { Heart, Play, Zap, Lock, Star, Trash2, ImageIcon, EyeOff, RefreshCw, DownloadCloud } from "lucide-react"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -33,9 +32,6 @@ function PriceBadge({ pricingType, priceInPoints }: {
   )
 }
 
-// 默认缩略图（占位）
-const PLACEHOLDER = "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=300&dpr=2&q=80"
-
 export function TemplateCard({
   template,
   aspectRatio = "portrait",
@@ -44,9 +40,14 @@ export function TemplateCard({
   className,
   onFavorite,
   onExecute,
+  onDelete,
+  onUnpublish,
+  onRepublish,
+  onLoadToCanvas,
 }: TemplateCardProps) {
   const [favorited, setFavorited] = useState(template.isFavorited ?? false)
   const [loading, setLoading] = useState(false)
+  const [imgFailed, setImgFailed] = useState(false)
 
   const handleFavorite = async (e?: React.MouseEvent) => {
     e?.stopPropagation()
@@ -76,16 +77,26 @@ export function TemplateCard({
             onClick={() => onExecute?.(template)}
           >
             {/* 封面图 */}
-            <Image
-              src={template.thumbnail ?? PLACEHOLDER}
-              alt={template.name}
-              width={width}
-              height={height}
-              className={cn(
-                "h-auto w-auto object-cover transition-all group-hover:scale-105",
-                isPortrait ? "aspect-[3/4]" : "aspect-square"
-              )}
-            />
+            {template.thumbnail && !imgFailed ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={template.thumbnail}
+                alt={template.name}
+                onError={() => setImgFailed(true)}
+                className={cn(
+                  "w-full object-cover transition-all group-hover:scale-105",
+                  isPortrait ? "aspect-[3/4]" : "aspect-square",
+                )}
+              />
+            ) : (
+              <div className={cn(
+                "w-full bg-slate-100 flex flex-col items-center justify-center gap-1.5",
+                isPortrait ? "aspect-[3/4]" : "aspect-square",
+              )}>
+                <ImageIcon className="h-5 w-5 text-slate-300" />
+                <span className="text-[10px] text-slate-400">封面加载中</span>
+              </div>
+            )}
 
             {/* 定价徽章 */}
             <PriceBadge
@@ -95,48 +106,109 @@ export function TemplateCard({
 
             {/* Hover 操作层 */}
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-end justify-between p-2 opacity-0 group-hover:opacity-100">
-              {/* 执行按钮 */}
-              <button
-                className="bg-white text-black p-1.5 rounded-full shadow-md hover:scale-110 transition-transform"
-                onClick={(e) => { e.stopPropagation(); onExecute?.(template) }}
-              >
-                <Play className="h-3.5 w-3.5" fill="currentColor" />
-              </button>
+              {/* 执行 / 载入按钮 */}
+              {onLoadToCanvas ? (
+                <button
+                  className="bg-white text-black p-1.5 rounded-full shadow-md hover:scale-110 transition-transform"
+                  onClick={(e) => { e.stopPropagation(); onLoadToCanvas(template.id) }}
+                  title="载入画布"
+                >
+                  <DownloadCloud className="h-3.5 w-3.5" />
+                </button>
+              ) : (
+                <button
+                  className="bg-white text-black p-1.5 rounded-full shadow-md hover:scale-110 transition-transform"
+                  onClick={(e) => { e.stopPropagation(); onExecute?.(template) }}
+                >
+                  <Play className="h-3.5 w-3.5" fill="currentColor" />
+                </button>
+              )}
 
-              {/* 收藏按钮 */}
-              <button
-                className={cn(
-                  "p-1.5 rounded-full shadow-md transition-all hover:scale-110",
-                  favorited ? "bg-red-500 text-white" : "bg-white/90 text-slate-600"
-                )}
-                onClick={handleFavorite}
-              >
-                <Heart className="h-3.5 w-3.5" fill={favorited ? "currentColor" : "none"} />
-              </button>
+              {/* 收藏按钮（仅在有 onExecute 时显示，下架卡片不显示） */}
+              {!onLoadToCanvas && (
+                <button
+                  className={cn(
+                    "p-1.5 rounded-full shadow-md transition-all hover:scale-110",
+                    favorited ? "bg-red-500 text-white" : "bg-white/90 text-slate-600"
+                  )}
+                  onClick={handleFavorite}
+                >
+                  <Heart className="h-3.5 w-3.5" fill={favorited ? "currentColor" : "none"} />
+                </button>
+              )}
             </div>
           </div>
         </ContextMenuTrigger>
 
-        {/* 右键菜单（Apple Music 风格）*/}
+        {/* 右键菜单 */}
         <ContextMenuContent className="w-44">
-          <ContextMenuItem onClick={() => onExecute?.(template)}>
-            <Play className="mr-2 h-3.5 w-3.5" />
-            执行工作流
-          </ContextMenuItem>
-          <ContextMenuItem onClick={() => handleFavorite()}>
-            <Heart className="mr-2 h-3.5 w-3.5" />
-            {favorited ? "取消收藏" : "添加收藏"}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem>
-            <Star className="mr-2 h-3.5 w-3.5" />
-            查看创作者
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem>
-            <Zap className="mr-2 h-3.5 w-3.5" />
-            分享
-          </ContextMenuItem>
+          {/* 已发布 / 普通卡片操作 */}
+          {!onLoadToCanvas && (
+            <>
+              <ContextMenuItem onClick={() => onExecute?.(template)}>
+                <Play className="mr-2 h-3.5 w-3.5" />
+                执行工作流
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => handleFavorite()}>
+                <Heart className="mr-2 h-3.5 w-3.5" />
+                {favorited ? "取消收藏" : "添加收藏"}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem>
+                <Star className="mr-2 h-3.5 w-3.5" />
+                查看创作者
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem>
+                <Zap className="mr-2 h-3.5 w-3.5" />
+                分享
+              </ContextMenuItem>
+            </>
+          )}
+
+          {/* 已下架卡片操作 */}
+          {onLoadToCanvas && (
+            <>
+              <ContextMenuItem onClick={() => onLoadToCanvas(template.id)}>
+                <DownloadCloud className="mr-2 h-3.5 w-3.5" />
+                载入画布
+              </ContextMenuItem>
+              {onRepublish && (
+                <ContextMenuItem onClick={() => onRepublish(template.id)}>
+                  <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                  重新发布
+                </ContextMenuItem>
+              )}
+            </>
+          )}
+
+          {/* 下架（已发布卡片的创作者专属） */}
+          {onUnpublish && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className="text-amber-600 focus:text-amber-600"
+                onClick={() => onUnpublish(template.id)}
+              >
+                <EyeOff className="mr-2 h-3.5 w-3.5" />
+                下架
+              </ContextMenuItem>
+            </>
+          )}
+
+          {/* 删除 */}
+          {onDelete && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className="text-red-500 focus:text-red-500"
+                onClick={() => onDelete(template.id)}
+              >
+                <Trash2 className="mr-2 h-3.5 w-3.5" />
+                删除
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
 

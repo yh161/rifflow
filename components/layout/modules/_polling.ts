@@ -82,7 +82,7 @@ export function useNodePolling(
     activeJobRef.current = jobId
 
     // Batch nodes use real progress — skip fake ticker
-    if (nodeType !== 'batch') {
+    if (nodeType !== 'template') {
       progressRef.current = setInterval(() => {
         setGenProgress(p => Math.min(p + 0.006 + Math.random() * 0.006, 0.9))
       }, 50)
@@ -98,7 +98,7 @@ export function useNodePolling(
         try { json = JSON.parse(rawText) } catch { return }
 
         // ── Batch: update real progress ──────────────────────────────────────
-        if (nodeType === 'batch' && json.status === 'running') {
+        if (nodeType === 'template' && json.status === 'running') {
           const batchResult = json.result as BatchJobResult | undefined
           const stage       = batchResult?.stage
           const progress    = batchResult?.workflowProgress
@@ -137,7 +137,7 @@ export function useNodePolling(
           const result = json.result as Record<string, any>
 
           // Batch: apply instanceResults
-          if (nodeType === 'batch') {
+          if (nodeType === 'template') {
             const batchResult     = result as BatchJobResult
             const instanceResults = (batchResult.instanceResults ?? {}) as Record<string, any>
 
@@ -207,8 +207,40 @@ export function useNodePolling(
                 },
               }
             }))
+          } else if (nodeType === 'filter') {
+            const filterResult = result.filterResult as {
+              passed:   Array<{ id: string; label?: string; type?: string }>
+              filtered: Array<{ id: string; label?: string; type?: string }>
+              reply?:   string
+            } | undefined
+
+            // Compute output content = joined content of passed nodes
+            // This is what downstream nodes see when they reference {{filterId}}
+            const currentNodes = getNodesRef.current()
+            const passedContent = (filterResult?.passed ?? [])
+              .map((item) => {
+                const n = currentNodes.find((node) => node.id === item.id)
+                if (!n) return ''
+                const d = n.data as any
+                return d?.content || d?.src || d?.videoSrc || ''
+              })
+              .filter(Boolean)
+              .join('\n\n')
+
+            setNodesRef.current(ns => ns.map(n =>
+              n.id !== nodeId ? n : {
+                ...n,
+                data: {
+                  ...n.data,
+                  content:      passedContent,
+                  filterResult,
+                  isGenerating: false,
+                  activeJobId:  undefined,
+                },
+              }
+            ))
           } else {
-            // Text / gate / seed / etc.
+            // Text / seed / etc.
             setNodesRef.current(ns => ns.map(n =>
               n.id !== nodeId ? n : {
                 ...n,

@@ -30,9 +30,22 @@ function sanitizeNode(node: Prisma.JsonValue): Prisma.JsonValue {
   return { ...n, data: cleanData as unknown as Prisma.JsonValue }
 }
 
+const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 }
+
+function parseViewport(v: Prisma.JsonValue): { x: number; y: number; zoom: number } {
+  if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+    const vp = v as Record<string, Prisma.JsonValue>
+    if (typeof vp.x === "number" && typeof vp.y === "number" && typeof vp.zoom === "number") {
+      return { x: vp.x, y: vp.y, zoom: vp.zoom }
+    }
+  }
+  return DEFAULT_VIEWPORT
+}
+
 export interface DraftData {
-  nodes: Prisma.JsonValue[]
-  edges: Prisma.JsonValue[]
+  nodes:    Prisma.JsonValue[]
+  edges:    Prisma.JsonValue[]
+  viewport: { x: number; y: number; zoom: number }
 }
 
 export interface DraftResult {
@@ -51,21 +64,21 @@ export class DraftService {
   async getDraftByUserId(userId: string): Promise<DraftResult> {
     try {
       const draft = await this.draftRepository.findByUserId(userId)
-      
+
       if (!draft) {
         return {
           success: true,
-          data: { nodes: [], edges: [] }
+          data: { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT }
         }
       }
 
-      // Convert JsonValue to array if needed
-      const nodes = Array.isArray(draft.nodesJson) ? draft.nodesJson : []
-      const edges = Array.isArray(draft.edgesJson) ? draft.edgesJson : []
+      const nodes    = Array.isArray(draft.nodesJson) ? draft.nodesJson : []
+      const edges    = Array.isArray(draft.edgesJson) ? draft.edgesJson : []
+      const viewport = parseViewport(draft.viewportJson)
 
       return {
         success: true,
-        data: { nodes, edges }
+        data: { nodes, edges, viewport }
       }
     } catch (error: unknown) {
       console.error("[DraftService] getDraftByUserId failed:", error)
@@ -76,7 +89,12 @@ export class DraftService {
     }
   }
 
-  async saveDraft(userId: string, nodes: Prisma.JsonValue[], edges: Prisma.JsonValue[]): Promise<DraftResult> {
+  async saveDraft(
+    userId:   string,
+    nodes:    Prisma.JsonValue[],
+    edges:    Prisma.JsonValue[],
+    viewport: { x: number; y: number; zoom: number },
+  ): Promise<DraftResult> {
     try {
       if (!Array.isArray(nodes) || !Array.isArray(edges)) {
         return {
@@ -85,20 +103,16 @@ export class DraftService {
         }
       }
 
-      // Sanitize nodes: strip ephemeral blob URLs and non-serialisable fields
-      // so that a draft reload after refresh always shows a clean state
-      // (the image will simply show the empty placeholder until regenerated).
       const cleanNodes = nodes.map(sanitizeNode)
 
       await this.draftRepository.upsertByUserId(userId, {
         user: { connect: { id: userId } },
-        nodesJson: cleanNodes as Prisma.InputJsonValue,
-        edgesJson: edges as Prisma.InputJsonValue
+        nodesJson:    cleanNodes as Prisma.InputJsonValue,
+        edgesJson:    edges     as Prisma.InputJsonValue,
+        viewportJson: viewport  as unknown as Prisma.InputJsonValue,
       })
 
-      return {
-        success: true
-      }
+      return { success: true }
     } catch (error: unknown) {
       console.error("[DraftService] saveDraft failed:", error)
       return {
@@ -115,9 +129,7 @@ export class DraftService {
         await this.draftRepository.delete(draft.id)
       }
 
-      return {
-        success: true
-      }
+      return { success: true }
     } catch (error: unknown) {
       console.error("[DraftService] deleteDraft failed:", error)
       return {

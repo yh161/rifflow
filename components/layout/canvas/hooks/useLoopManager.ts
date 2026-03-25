@@ -29,9 +29,9 @@ export function useLoopManager(canvasState: CanvasState) {
       (n) => n.parentNode === loopId && n.data?.instanceIdx === undefined
     )
     const result: Node[] = [...directChildren]
-    // Recurse into nested container nodes (Batch or Cycle)
+    // Recurse into nested container nodes (Template)
     for (const child of directChildren) {
-      if (child.type === 'BatchNode' || child.type === 'CycleNode') {
+      if (child.type === 'TemplateNode') {
         result.push(...collectTemplateTree(child.id, allNodes))
       }
     }

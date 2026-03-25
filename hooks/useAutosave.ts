@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react"
+import type { MutableRefObject } from "react"
 import type { Node, Edge } from "reactflow"
 
 const DEBOUNCE_MS = 500
@@ -43,11 +44,13 @@ function sanitizeNodes(nodes: Node[]): Node[] {
 //
 // enabled: false 时跳过（初始 draft 加载完成前传 false，
 //          防止空 state 覆盖已有草稿）
+// viewportRef: 当前画布 viewport 的 ref，保存时读取最新值（不触发重渲染）
 // ─────────────────────────────────────────────
 export function useAutosave(
-  nodes: Node[],
-  edges: Edge[],
-  enabled: boolean,
+  nodes:       Node[],
+  edges:       Edge[],
+  enabled:     boolean,
+  viewportRef: MutableRefObject<{ x: number; y: number; zoom: number }>,
 ) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -62,22 +65,21 @@ export function useAutosave(
           method:  "POST",
           headers: { "Content-Type": "application/json" },
           body:    JSON.stringify({
-            nodes: sanitizeNodes(nodes),
+            nodes:    sanitizeNodes(nodes),
             edges,
+            viewport: viewportRef.current,
           }),
         })
-        
+
         if (!res.ok) {
           if (res.status === 401) {
             console.warn("[autosave] Not authenticated, cannot save draft")
-            // User not logged in - autosave should be disabled by parent component
             return
           }
           console.warn("[autosave] Server error:", res.status)
           return
         }
-        
-        // Success - silent save
+
         console.log("[autosave] Draft saved successfully")
       } catch (err) {
         console.error("[autosave] Network error:", err)
@@ -87,5 +89,5 @@ export function useAutosave(
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
-  }, [nodes, edges, enabled])
+  }, [nodes, edges, enabled, viewportRef])
 }

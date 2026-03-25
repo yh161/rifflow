@@ -115,7 +115,7 @@ export function TextFormatBar({ onCollapse }: { onCollapse: () => void }) {
 }
 
 // ─────────────────────────────────────────────
-// ContainerActionBar — shared by Batch and Cycle nodes
+// ContainerActionBar — for Template nodes
 // (flat instance model)
 // ─────────────────────────────────────────────
 function ContainerActionBar({
@@ -125,7 +125,6 @@ function ContainerActionBar({
   onAddInstance,
   onDeleteInstance,
   onGoTo,
-  nodeType,
   isGenerating,
 }: {
   instanceCount: number
@@ -134,12 +133,11 @@ function ContainerActionBar({
   onAddInstance: () => void
   onDeleteInstance: () => void
   onGoTo: (idx: number) => void
-  nodeType: "batch" | "cycle"
   isGenerating?: boolean
 }) {
   const isTemplate = currentInstance === -1
   const total      = instanceCount
-  const releaseLabel = nodeType === "batch" ? "Release batch" : "Release cycle"
+  const releaseLabel = "Release template"
 
   const NavBtn = ({
     onClick,
@@ -175,7 +173,7 @@ function ContainerActionBar({
           icon={Play}
           label="Generating..."
           disabled={true}
-          className={nodeType === "batch" ? "text-indigo-500" : "text-violet-500"}
+          className="text-indigo-500"
         />
         <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
         <ActionButton icon={Trash2} label={releaseLabel} onClick={onRelease} danger />
@@ -289,6 +287,8 @@ export function NodeActionBar({
   onUpload,
   onDownload,
   onDelete,
+  // filter-specific
+  onFilterModeChange,
   // loop-specific
   onLoopRelease,
   onLoopAddInstance,
@@ -306,6 +306,7 @@ export function NodeActionBar({
   onUpload: () => void
   onDownload: () => void
   onDelete: () => void
+  onFilterModeChange?: (mode: 'label' | 'content') => void
   onLoopRelease?: () => void
   onLoopAddInstance?: () => void
   onLoopDeleteInstance?: () => void
@@ -385,11 +386,31 @@ export function NodeActionBar({
         </>
       )}
 
-      {data.type === "gate" && (
-        <ActionButton icon={Trash2} label="Delete" onClick={onDelete} danger />
+      {data.type === "filter" && (
+        <>
+          {/* Input mode toggle */}
+          <div className="flex items-center bg-slate-100/70 rounded-full p-0.5">
+            {(['label', 'content'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => onFilterModeChange?.(m)}
+                className={cn(
+                  "px-2.5 py-1 rounded-full text-[10.5px] font-medium transition-all duration-150 cursor-pointer",
+                  (data.filterInputMode ?? 'label') === m
+                    ? "bg-white text-amber-600 shadow-sm"
+                    : "text-slate-400 hover:text-slate-600",
+                )}
+              >
+                {m === 'label' ? 'Label' : 'Content'}
+              </button>
+            ))}
+          </div>
+          <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
+          <ActionButton icon={Trash2} label="Delete" onClick={onDelete} danger />
+        </>
       )}
 
-      {(data.type === "batch" || data.type === "cycle") && (
+      {data.type === "template" && (
         <ContainerActionBar
           instanceCount={loopInstanceCount ?? data.instanceCount ?? 0}
           currentInstance={data.currentInstance ?? -1}
@@ -397,7 +418,6 @@ export function NodeActionBar({
           onAddInstance={onLoopAddInstance ?? (() => {})}
           onDeleteInstance={onLoopDeleteInstance ?? (() => {})}
           onGoTo={onLoopGoTo ?? (() => {})}
-          nodeType={data.type as "batch" | "cycle"}
           isGenerating={isExecuting}
         />
       )}

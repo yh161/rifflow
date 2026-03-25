@@ -90,9 +90,9 @@ export class ModuleRegistry {
         border: "border-red-200"
       },
       {
-        id: "gate",
-        name: "Gate",
-        description: "Conditional logic gate",
+        id: "filter",
+        name: "Filter",
+        description: "Filter instances by condition",
         icon: "GitBranch",
         color: "text-yellow-600",
         bg: "bg-yellow-50",
