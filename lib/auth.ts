@@ -50,27 +50,38 @@ export const authOptions: NextAuthOptions = {
 
   callbacks: {
     async redirect({ url, baseUrl }) {
-      // Default behavior: redirect to localhost for Google OAuth
       if (url.startsWith("/")) return `${baseUrl}${url}`
       if (new URL(url).origin === baseUrl) return url
       return baseUrl
     },
-    async jwt({ token, user }) {
-      if (user) token.id = user.id
+    async jwt({ token, user, trigger }) {
+      if (user) {
+        token.id = user.id
+        token.inviteVerified = user.inviteVerified ?? false
+      }
+      // Re-fetch on session update (after invite verification)
+      if (trigger === "update" && token.id) {
+        const fresh = await prisma.user.findUnique({ where: { id: token.id as string } })
+        if (fresh) token.inviteVerified = fresh.inviteVerified
+      }
       return token
     },
     async session({ session, token }) {
-      if (session.user) session.user.id = token.id as string
+      if (session.user) {
+        session.user.id = token.id as string
+        session.user.inviteVerified = token.inviteVerified ?? false
+      }
       return session
     },
   },
 
   events: {
     async createUser({ user }) {
+      // New users start with 0 points — points are granted after invite code verification
       await prisma.wallet.create({
         data: {
           userId: user.id,
-          points: 100,
+          points: 0,
         },
       })
     },

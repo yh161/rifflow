@@ -13,6 +13,7 @@ import { useDemoLogs } from "@/components/layout/run-console"
 import UserAvatar from "@/components/layout/user-avatar"
 
 import LoginModal from "@/components/layout/login-modal"
+import InviteGate from "@/components/layout/invite-gate"
 import type { SyncStatus } from "@/hooks/useAutosave"
 
 
@@ -219,6 +220,7 @@ export default function Screen() {
       />
 
       <LoginModal open={isLoginOpen} onOpenChange={setIsLoginOpen} />
+      <InviteGate />
 
     </main>
     </ReactFlowProvider>

@@ -146,9 +146,11 @@ Every canvas can be exported as a single `.zip` file directly from the toolbar �
 
 ## Try It
 
-**Live:** [rifflow-679499639694.asia-northeast1.run.app](https://rifflow-679499639694.asia-northeast1.run.app) — sign up free, no credit card required.
+**Live:** [rifflow-679499639694.asia-northeast1.run.app](https://rifflow-679499639694.asia-northeast1.run.app)
 
-**在线体验：** 注册即用，无需信用卡。
+Rifflow is currently in early access — you'll need an invite code to sign up. [DM me on GitHub](https://github.com/yh161) to get one.
+
+**在线体验：** 目前处于早期内测阶段，注册需要邀请码。[在 GitHub 私信我](https://github.com/yh161)获取。
 
 ---
 

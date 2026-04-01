@@ -3,12 +3,9 @@ import { prisma } from "@/lib/prisma"
 import bcrypt from "bcryptjs"
 
 function getValidInviteCodes(): string[] {
-  // Fallback codes ensure registration always works
-  const fallbackCodes = ["2026"]
   const envCodes = process.env.INVITE_CODES
-  if (!envCodes) return fallbackCodes
-  const parsed = envCodes.split(",").map(c => c.trim()).filter(Boolean)
-  return parsed.length > 0 ? parsed : fallbackCodes
+  if (!envCodes) return []
+  return envCodes.split(",").map(c => c.trim()).filter(Boolean)
 }
 
 export async function POST(req: NextRequest) {
@@ -40,6 +37,7 @@ export async function POST(req: NextRequest) {
       data: {
         email,
         passwordHash,
+        inviteVerified: true,
         wallet: {
           create: {
             points: 100,

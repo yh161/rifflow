@@ -95,7 +95,7 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
     const regData = await reg.json()
     if (!reg.ok && !regData.exists) {
       if (reg.status === 403) {
-        setSubmitError("Invalid invite code. Valid code: 2026")
+        setSubmitError("Invalid invite code. DM the author on GitHub to get one.")
       } else {
         setSubmitError("Registration failed, please try again")
       }
