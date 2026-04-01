@@ -2,9 +2,28 @@ import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import bcrypt from "bcryptjs"
 
+function getValidInviteCodes(): string[] {
+  // Fallback codes ensure registration always works
+  const fallbackCodes = ["2026"]
+  const envCodes = process.env.INVITE_CODES
+  if (!envCodes) return fallbackCodes
+  const parsed = envCodes.split(",").map(c => c.trim()).filter(Boolean)
+  return parsed.length > 0 ? parsed : fallbackCodes
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { email, password } = await req.json()
+    const { email, password, inviteCode } = await req.json()
+
+    // Validate invite code
+    const validCodes = getValidInviteCodes()
+    console.log("[register] Invite code received:", inviteCode)
+    console.log("[register] Valid codes configured:", validCodes)
+    console.log("[register] ENV INVITE_CODES:", process.env.INVITE_CODES)
+
+    if (!inviteCode || !validCodes.includes(inviteCode)) {
+      return NextResponse.json({ error: "Invalid invite code" }, { status: 403 })
+    }
 
     if (!email || !password || password.length < 6) {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 })

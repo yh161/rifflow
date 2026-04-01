@@ -61,13 +61,14 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
   const [emailError,   setEmailError]   = useState("")
   const [password,     setPassword]     = useState("")
   const [showPassword, setShowPassword] = useState(false)
+  const [inviteCode,   setInviteCode]   = useState("")
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<any>(null)
 
   const handleOpenChange = (val: boolean) => {
     if (!val) {
       setView("providers"); setEmail(""); setPassword("")
-      setEmailError(""); setCaptchaToken(null)
+      setInviteCode(""); setEmailError(""); setCaptchaToken(null)
     }
     onOpenChange(val)
   }
@@ -79,25 +80,29 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
   }
 
   const [submitError, setSubmitError] = useState("")
-  const canSubmit = isValidEmail(email) && password.length >= 6 && !!captchaToken
+  const canSubmit = isValidEmail(email) && password.length >= 6 && !!captchaToken && inviteCode.trim().length > 0
 
   const handleSubmit = async () => {
     if (!canSubmit) return
     setSubmitError("")
 
-    // 先尝试注册（如果用户已存在，接口会返回 exists: true）
+    // Try to register first (API returns exists: true if user already exists)
     const reg = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, inviteCode: inviteCode.trim() }),
     })
     const regData = await reg.json()
     if (!reg.ok && !regData.exists) {
-      setSubmitError("Registration failed, please try again")
+      if (reg.status === 403) {
+        setSubmitError("Invalid invite code. Valid code: 2026")
+      } else {
+        setSubmitError("Registration failed, please try again")
+      }
       return
     }
 
-    // 注册成功或用户已存在，直接登录
+    // Registration successful or user already exists, proceed to login
     const result = await signIn("credentials", { email, password, redirect: false })
     if (result?.error) {
       setSubmitError("Invalid email or password")
@@ -229,6 +234,14 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    className="h-11 rounded-xl border-slate-200 text-[13px] text-slate-700 placeholder:text-slate-300 focus-visible:ring-1 focus-visible:ring-slate-300"
+                  />
+
+                  <Input
+                    type="text"
+                    placeholder="Invite code"
+                    value={inviteCode}
+                    onChange={(e) => setInviteCode(e.target.value)}
                     className="h-11 rounded-xl border-slate-200 text-[13px] text-slate-700 placeholder:text-slate-300 focus-visible:ring-1 focus-visible:ring-slate-300"
                   />
 

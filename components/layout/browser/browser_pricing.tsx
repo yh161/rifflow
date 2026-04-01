@@ -11,10 +11,10 @@ import { PtIcon } from "@/components/layout/user-avatar"
 // ── Credit packs ───────────────────────────────────────────────────────────
 
 const CREDIT_PACKS = [
-  { points: 100,  price: 6,   label: "入门包" },
-  { points: 500,  price: 28,  label: "标准包", popular: false },
-  { points: 2000, price: 98,  label: "进阶包", popular: true },
-  { points: 5000, price: 228, label: "专业包" },
+  { points: 100,  price: 6,   label: "Starter" },
+  { points: 500,  price: 28,  label: "Standard", popular: false },
+  { points: 2000, price: 98,  label: "Advanced", popular: true },
+  { points: 5000, price: 228, label: "Pro" },
 ]
 
 // ── Subscription plans ─────────────────────────────────────────────────────
@@ -30,12 +30,12 @@ const PLANS = [
     badge: null,
     pointsPerMonth: 100,
     features: [
-      "每月赠送 100 积分",
-      "社区模板浏览",
-      "基础工作流执行",
-      "标准响应速度",
+      "100 points per month",
+      "Community templates browsing",
+      "Basic workflow execution",
+      "Standard response speed",
     ],
-    cta: "当前计划",
+    cta: "Current Plan",
     ctaDisabled: true,
     icon: ({ className }: { className?: string }) => <PtIcon className={className} />,
   },
@@ -43,19 +43,19 @@ const PLANS = [
     key: "pro",
     name: "Pro",
     price: 49,
-    unit: "/月",
+    unit: "/month",
     color: "border-blue-500",
     headerColor: "bg-blue-500",
-    badge: "热门",
+    badge: "Popular",
     pointsPerMonth: 2000,
     features: [
-      "每月 2,000 积分（不过期）",
-      "优先执行队列",
-      "访问所有模板",
-      "创作者功能解锁",
-      "高速响应",
+      "2,000 points per month (no expiration)",
+      "Priority execution queue",
+      "Access to all templates",
+      "Creator features unlocked",
+      "High-speed response",
     ],
-    cta: "升级 Pro",
+    cta: "Upgrade to Pro",
     ctaDisabled: false,
     icon: Sparkles,
   },
@@ -63,20 +63,20 @@ const PLANS = [
     key: "max",
     name: "Max",
     price: 149,
-    unit: "/月",
+    unit: "/month",
     color: "border-violet-500",
     headerColor: "bg-violet-600",
-    badge: "最强",
+    badge: "Best",
     pointsPerMonth: 8000,
     features: [
-      "每月 8,000 积分（不过期）",
-      "最优先执行队列",
-      "访问所有模板 + 早期体验",
-      "创作者 Pro 功能",
-      "独立 API 配额",
-      "专属客服支持",
+      "8,000 points per month (no expiration)",
+      "Highest priority execution queue",
+      "Access to all templates + Early access",
+      "Creator Pro features",
+      "Dedicated API quota",
+      "Exclusive customer support",
     ],
-    cta: "升级 Max",
+    cta: "Upgrade to Max",
     ctaDisabled: false,
     icon: Crown,
   },
@@ -105,7 +105,7 @@ function PackCard({
     >
       {pack.popular && (
         <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500 text-white whitespace-nowrap">
-          推荐
+          Recommended
         </span>
       )}
       <PtIcon className={cn("text-xl", selected ? "text-blue-500" : "text-slate-400")} />
@@ -159,7 +159,7 @@ function PlanCard({ plan, current }: { plan: typeof PLANS[number]; current?: boo
         </div>
         <div className={cn("mt-2", plan.key === "free" ? "text-slate-700" : "text-white")}>
           <span className="text-3xl font-bold">
-            {plan.price === 0 ? "免费" : `¥${plan.price}`}
+            {plan.price === 0 ? "Free" : `¥${plan.price}`}
           </span>
           {plan.unit && (
             <span className="text-sm opacity-80 ml-1">{plan.unit}</span>
@@ -169,7 +169,7 @@ function PlanCard({ plan, current }: { plan: typeof PLANS[number]; current?: boo
           "text-xs mt-1 opacity-80",
           plan.key === "free" ? "text-slate-500" : "text-white",
         )}>
-          每月 {plan.pointsPerMonth.toLocaleString()} 积分，不过期
+          {plan.pointsPerMonth.toLocaleString()} points per month, no expiration
         </p>
       </div>
 
@@ -193,7 +193,7 @@ function PlanCard({ plan, current }: { plan: typeof PLANS[number]; current?: boo
           onClick={() => {
             // Stripe integration placeholder
             if (!plan.ctaDisabled) {
-              alert("Stripe 支付接入中，敬请期待")
+              alert("Stripe payment integration coming soon")
             }
           }}
         >
@@ -214,15 +214,15 @@ export function PricingPage() {
 
       {/* ── Page header ── */}
       <div className="text-center space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">定价方案</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Pricing Plans</h1>
         <p className="text-muted-foreground text-sm">
-          积分不过期，按需使用。订阅计划可随时取消。
+          Points never expire. Pay as you go. Subscription plans can be canceled anytime.
         </p>
       </div>
 
       {/* ── Subscription plans ── */}
       <div>
-        <h2 className="text-lg font-semibold mb-5">订阅计划</h2>
+        <h2 className="text-lg font-semibold mb-5">Subscription Plans</h2>
         <div className="grid grid-cols-3 gap-4">
           {PLANS.map((plan) => (
             <PlanCard key={plan.key} plan={plan} />
@@ -235,14 +235,14 @@ export function PricingPage() {
       {/* ── Credit top-up ── */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold">积分充值</h2>
+          <h2 className="text-lg font-semibold">Points Top-up</h2>
           <Badge variant="outline" className="text-xs gap-1">
             <PtIcon className="text-xs" />
-            单次购买，永久有效
+            One-time purchase, valid forever
           </Badge>
         </div>
         <p className="text-sm text-muted-foreground mb-5">
-          无需订阅，按量购买积分
+          No subscription required, buy points on demand
         </p>
 
         <div className="grid grid-cols-4 gap-3">
@@ -260,22 +260,22 @@ export function PricingPage() {
           <div className="mt-4 flex items-center justify-between p-4 rounded-2xl bg-blue-50 border border-blue-200">
             <div>
               <p className="font-semibold text-sm">
-                {CREDIT_PACKS[selectedPack].points.toLocaleString()} 积分
+                {CREDIT_PACKS[selectedPack].points.toLocaleString()} Points
                 <span className="text-muted-foreground font-normal ml-2">
                   · {CREDIT_PACKS[selectedPack].label}
                 </span>
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                到账后永久有效，不限使用期限
+                Valid forever after purchase, no time limit
               </p>
             </div>
             <Button
               size="sm"
               className="gap-1.5"
-              onClick={() => alert("Stripe 支付接入中，敬请期待")}
+              onClick={() => alert("Stripe payment integration coming soon")}
             >
               <Zap className="h-3.5 w-3.5" />
-              支付 ¥{CREDIT_PACKS[selectedPack].price}
+              Pay ¥{CREDIT_PACKS[selectedPack].price}
             </Button>
           </div>
         )}
@@ -285,12 +285,12 @@ export function PricingPage() {
 
       {/* ── FAQ / Notes ── */}
       <div className="space-y-3 pb-8">
-        <h2 className="text-base font-semibold">常见问题</h2>
+        <h2 className="text-base font-semibold">FAQ</h2>
         {[
-          ["积分会过期吗？", "不会。无论是充值积分还是订阅赠送的积分，都不会过期。"],
-          ["订阅可以随时取消吗？", "是的。取消后当月剩余积分仍可正常使用，下月不再续费。"],
-          ["积分怎么消耗？", "免费模板不消耗积分；按次付费模板按创作者设定的积分扣费；订阅专属模板对订阅用户免费。"],
-          ["支持哪些支付方式？", "支持微信支付、支付宝，信用卡接入中。"],
+          ["Do points expire?", "No. Both purchased points and subscription bonus points never expire."],
+          ["Can I cancel subscription anytime?", "Yes. After cancellation, remaining points for the current month can still be used. No renewal next month."],
+          ["How are points consumed?", "Free templates don't consume points; pay-per-use templates deduct points as set by creators; subscription-exclusive templates are free for subscribers."],
+          ["What payment methods are supported?", "WeChat Pay, Alipay supported; credit card integration coming soon."],
         ].map(([q, a]) => (
           <div key={q} className="space-y-1">
             <p className="text-sm font-medium">{q}</p>

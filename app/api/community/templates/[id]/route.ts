@@ -85,7 +85,26 @@ export async function PATCH(
     }
 
     const body = await req.json()
-    const updated = await templateRepository.update(id, body)
+
+    // Whitelist only valid Template fields — discard any unknown keys like `publish`
+    const allowed = [
+      "name", "description", "thumbnail", "category", "tags", "parameters",
+      "pricingType", "priceInPoints", "canvasSnapshot", "status", "publishedAt",
+      "isFeatured", "executionsCount", "favoritesCount", "rating",
+    ]
+    const updateData: Record<string, unknown> = {}
+    for (const key of allowed) {
+      if (key in body) {
+        // publishedAt: convert ISO string → Date for Prisma, or null
+        if (key === "publishedAt") {
+          updateData[key] = body[key] !== null ? new Date(body[key]) : null
+        } else {
+          updateData[key] = body[key]
+        }
+      }
+    }
+
+    const updated = await templateRepository.update(id, updateData)
     return NextResponse.json({ template: updated })
   } catch (error) {
     console.error("[community/templates/[id] PATCH]", error)

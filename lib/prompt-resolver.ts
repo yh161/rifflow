@@ -98,55 +98,68 @@ async function imageToBase64(url: string): Promise<string | null> {
  */
 async function resolveNodeToContent(
   node: UpstreamNodeData
-): Promise<MultimodalContent | null> {
+): Promise<MultimodalContent[]> {
   switch (node.type) {
     case "text":
     case "filter":
     case "seed":
       return node.content
-        ? { type: "text", text: node.content }
-        : null
+        ? [{ type: "text", text: node.content }]
+        : []
 
     case "image": {
-      if (!node.src) return null
+      if (!node.src) return []
 
       // Blob URL or Local URL: convert to base64 (LLM cannot access these)
       if (isBlobUrl(node.src) || isLocalUrl(node.src)) {
         const base64 = await imageToBase64(node.src)
         if (base64) {
-          return {
+          return [{
             type: "image_url",
             image_url: { url: base64, detail: "auto" }
-          }
+          }]
         }
         // Fallback: return as text if conversion fails
-        return {
+        return [{
           type: "text",
           text: `[Image: ${node.src}]`
-        }
+        }]
       }
 
       // Public URL: return as-is
-      return {
+      return [{
         type: "image_url",
         image_url: { url: node.src, detail: "auto" }
-      }
+      }]
     }
 
     case "video": {
-      if (!node.videoSrc) return null
+      if (!node.videoSrc) return []
 
       // Video: return as text since most LLMs don't support video
-      return {
+      return [{
         type: "text",
         text: `[Video: ${node.videoSrc}]`
+      }]
+    }
+
+    case "pdf": {
+      if (node.pdfOutputImages && node.pdfOutputImages.length > 0) {
+        return node.pdfOutputImages.map((url) => ({
+          type: "image_url",
+          image_url: { url, detail: "auto" },
+        }))
       }
+
+      return node.content
+        ? [{ type: "text", text: node.content }]
+        : []
     }
 
     default:
       return node.content
-        ? { type: "text", text: node.content }
-        : null
+        ? [{ type: "text", text: node.content }]
+        : []
   }
 }
 
@@ -180,9 +193,9 @@ export async function resolvePromptToMultimodal(
 
     // Resolve and add the node content
     if (node) {
-      const content = await resolveNodeToContent(node)
-      if (content) {
-        result.push(content)
+      const blocks = await resolveNodeToContent(node)
+      if (blocks.length > 0) {
+        result.push(...blocks)
       }
     }
 

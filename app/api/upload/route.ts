@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { minioClient, MINIO_BUCKET, MINIO_PUBLIC_URL, ensureBucket } from '@/lib/minio'
+import { uploadFile, ensureStorage } from '@/lib/storage'
 import { randomUUID } from 'crypto'
-import { Readable } from 'stream'
 
 // ─────────────────────────────────────────────
 // POST /api/upload
 // Accepts multipart/form-data with a "file" field (image).
-// Uploads to MinIO and returns { url } — a persistent, public URL.
+// Uploads to storage and returns { url } — a persistent, public URL.
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -17,7 +16,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    await ensureBucket()
+    await ensureStorage()
 
     const formData = await req.formData()
     const file = formData.get('file') as File | null
@@ -29,15 +28,10 @@ export async function POST(req: NextRequest) {
     const buffer   = Buffer.from(await file.arrayBuffer())
     const mimeType = file.type || 'image/png'
     const ext      = mimeType.split('/')[1]?.split('+')[0] || 'png'
-    const fileName = `${randomUUID()}.${ext}`
+    // Use userId/ prefix so per-user GC can list objects with a single prefix scan
+    const objectKey = `${session.user.id}/${randomUUID()}.${ext}`
 
-    // Upload buffer to MinIO
-    const stream = Readable.from(buffer)
-    await minioClient.putObject(MINIO_BUCKET, fileName, stream, buffer.length, {
-      'Content-Type': mimeType,
-    })
-
-    const url = `${MINIO_PUBLIC_URL}/${MINIO_BUCKET}/${fileName}`
+    const url = await uploadFile(objectKey, buffer, mimeType)
     return NextResponse.json({ url })
 
   } catch (error: unknown) {

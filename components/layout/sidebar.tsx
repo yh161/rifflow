@@ -55,7 +55,7 @@ export default function Sidebar({ isOpen, onClose, isRunning = false }: SidebarP
       className={cn(
         "absolute left-0 top-0 bottom-0 z-20 w-[320px] flex flex-col",
         "transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]",
-        "bg-white/80 backdrop-blur-xl border-r border-slate-200/50",
+        "bg-white/60 backdrop-blur-md border-r border-slate-200/40",
         "shadow-2xl shadow-black/[0.06]",
         effectiveOpen
           ? "opacity-100 translate-x-0"

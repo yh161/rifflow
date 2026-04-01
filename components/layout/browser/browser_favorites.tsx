@@ -48,7 +48,7 @@ export function FavoritesPage() {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-2">
         <Heart className="h-8 w-8 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">请先登录查看收藏夹</p>
+        <p className="text-sm text-muted-foreground">Please login to view favorites</p>
       </div>
     )
   }
@@ -57,7 +57,7 @@ export function FavoritesPage() {
     <div className="border-none p-0 outline-none h-full">
       <div className="space-y-1">
         <h2 className="text-2xl font-semibold tracking-tight">Favorites</h2>
-        <p className="text-sm text-muted-foreground">你收藏的所有工作流</p>
+        <p className="text-sm text-muted-foreground">All your favorite workflows</p>
       </div>
       <Separator className="my-4" />
 
@@ -71,12 +71,12 @@ export function FavoritesPage() {
       ) : favorites.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
           <Heart className="h-8 w-8 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">还没有收藏任何工作流</p>
-          <p className="text-xs text-muted-foreground">在 Browse 中点击 ♥ 来收藏</p>
+          <p className="text-sm text-muted-foreground">No favorite workflows yet</p>
+          <p className="text-xs text-muted-foreground">Click ♥ in Browse to add favorites</p>
         </div>
       ) : (
         <>
-          {/* 大卡片 —— 前四个 */}
+          {/* Large cards - first four */}
           <ScrollArea>
             <div className="flex space-x-4 pb-4">
               {favorites.slice(0, 4).map((t) => (
@@ -91,7 +91,7 @@ export function FavoritesPage() {
             <ScrollBar orientation="horizontal" />
           </ScrollArea>
 
-          {/* 小卡片 —— 其余的 */}
+          {/* Small cards - the rest */}
           {favorites.length > 4 && (
             <>
               <div className="mt-6 space-y-1">

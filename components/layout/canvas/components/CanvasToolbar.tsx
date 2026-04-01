@@ -1,5 +1,6 @@
 import React from "react"
 import CanvasToolbar from "@/components/layout/canvas/canvas-toolbar"
+import type { SyncStatus } from "@/hooks/useAutosave"
 
 interface CanvasToolbarWrapperProps {
   isSidebarOpen: boolean
@@ -8,6 +9,7 @@ interface CanvasToolbarWrapperProps {
   onSnapToggle: () => void
   minimapOpen?: boolean
   onMinimapToggle?: (v: boolean) => void
+  syncStatus?: SyncStatus
 }
 
 export function CanvasToolbarWrapper({
@@ -17,6 +19,7 @@ export function CanvasToolbarWrapper({
   onSnapToggle,
   minimapOpen = false,
   onMinimapToggle = () => {},
+  syncStatus,
 }: CanvasToolbarWrapperProps) {
   return (
     <CanvasToolbar
@@ -26,6 +29,7 @@ export function CanvasToolbarWrapper({
       onSnapToggle={onSnapToggle}
       minimapOpen={minimapOpen}
       onMinimapToggle={onMinimapToggle}
+      syncStatus={syncStatus}
     />
   )
 }

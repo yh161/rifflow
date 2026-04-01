@@ -21,15 +21,9 @@ export class WalletRepository extends BaseRepository<
   }
 
   async updateBalance(userId: string, amount: number): Promise<Prisma.WalletGetPayload<object>> {
-    const currentWallet = await this.findByUserId(userId)
-    if (!currentWallet) {
-      throw new Error(`Wallet not found for user ${userId}`)
-    }
-
-    const newBalance = Number(currentWallet.balance) + amount
     return this.prisma.wallet.update({
       where: { userId },
-      data: { balance: newBalance }
+      data: { points: { increment: amount } }
     })
   }
 }

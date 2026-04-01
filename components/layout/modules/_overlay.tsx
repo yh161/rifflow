@@ -1,6 +1,111 @@
 "use client"
 
-import React, { useId } from "react"
+import React, { useId, useState } from "react"
+import { RotateCcw, Copy, Check } from "lucide-react"
+
+/**
+ * ErrorOverlay
+ *
+ * Same SVG border technique as GeneratingOverlay, but at 100% progress
+ * and red. Adds a small non-blurred message panel inside the node.
+ * No CSS filter / backdropFilter to avoid Chromium rasterization bug.
+ */
+export function ErrorOverlay({
+  message,
+  onDismiss,
+}: {
+  message:   string
+  onDismiss: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(message).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <>
+      {/* Error message panel */}
+      <div
+        style={{
+          position:      "absolute",
+          bottom:        10,
+          left:          10,
+          right:         10,
+          zIndex:        35,
+          pointerEvents: "auto",
+          background:    "rgba(255,255,255,0.97)",
+          border:        "1px solid rgba(239,68,68,0.25)",
+          borderRadius:  8,
+          padding:       "6px 8px",
+          display:       "flex",
+          flexDirection: "column",
+          gap:           5,
+        }}
+      >
+        <p style={{
+          margin:     0,
+          fontSize:   10,
+          lineHeight: 1.4,
+          color:      "#64748b",
+          userSelect: "text",
+          wordBreak:  "break-word",
+          cursor:     "text",
+        }}>
+          {message}
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 4 }}>
+          <button
+            onClick={handleCopy}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              display:      "flex",
+              alignItems:   "center",
+              gap:          3,
+              padding:      "2px 8px",
+              borderRadius: 20,
+              border:       "1px solid #e2e8f0",
+              background:   "transparent",
+              color:        "#94a3b8",
+              fontSize:     10,
+              fontWeight:   600,
+              cursor:       "pointer",
+            }}
+          >
+            {copied ? <Check size={9} /> : <Copy size={9} />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDismiss() }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              display:      "flex",
+              alignItems:   "center",
+              gap:          3,
+              padding:      "2px 8px",
+              borderRadius: 20,
+              border:       "1px solid #e2e8f0",
+              background:   "transparent",
+              color:        "#94a3b8",
+              fontSize:     10,
+              fontWeight:   600,
+              cursor:       "pointer",
+            }}
+          >
+            <RotateCcw size={9} />
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
 
 /**
  * GeneratingOverlay

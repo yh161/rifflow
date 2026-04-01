@@ -20,8 +20,9 @@ model User {
   accounts      Account[]
   jobs          Job[]
   workflowJobs  WorkflowJob[]
-  riffDraft     RiffDraft?
-  sessions      Session[]
+  riffDraft          RiffDraft?
+  riffDraftSnapshots RiffDraftSnapshot[]
+  sessions           Session[]
   wallet        Wallet?
   // Community
   createdTemplates    Template[]            @relation("CreatedTemplates")
@@ -30,6 +31,11 @@ model User {
   favorites           UserFavorite[]
   assets              UserAsset[]
   templateExecutions  TemplateExecution[]
+  // Social
+  followers           Follow[]              @relation("Following")
+  following           Follow[]              @relation("Followers")
+  sentMessages        DirectMessage[]        @relation("SentMessages")
+  receivedMessages    DirectMessage[]        @relation("ReceivedMessages")
 }
 
 model Account {
@@ -94,6 +100,19 @@ model RiffDraft {
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RiffDraftSnapshot {
+  id           String   @id @default(cuid())
+  userId       String
+  nodesJson    Json     @default("[]")
+  edgesJson    Json     @default("[]")
+  viewportJson Json     @default("{\"x\":0,\"y\":0,\"zoom\":1}")
+  createdAt    DateTime @default(now())
+  isRedo       Boolean  @default(false)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model Job {
@@ -264,6 +283,38 @@ model TemplateExecution {
   @@index([userId])
   @@index([templateId])
   @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// Social
+// ─────────────────────────────────────────────
+
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  follower    User     @relation("Followers", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followingId])
+}
+
+model DirectMessage {
+  id         String   @id @default(cuid())
+  senderId   String
+  receiverId String
+  content    String
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([senderId, receiverId])
+  @@index([receiverId, senderId])
 }
 
 model UserAsset {

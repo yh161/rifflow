@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import React, { useEffect, useState } from "react"
 import { useSession } from "next-auth/react"
-import { PlusCircle, UploadCloud } from "lucide-react"
+import { PlusCircle, UploadCloud, FolderOpen } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
@@ -36,7 +36,13 @@ function EmptyState({ label, action }: { label: string; action?: React.ReactNode
   )
 }
 
-export function P3() {
+
+interface P3Props {
+  currentEditingDraftId?: string | null
+  importRef?: React.MutableRefObject<(() => void) | null>
+}
+
+export function P3({ currentEditingDraftId, importRef }: P3Props) {
   const { data: session } = useSession()
   const [activeTab, setActiveTab] = useState<Tab>("published")
   const [published,   setPublished]   = useState<TemplateSummary[]>([])
@@ -77,22 +83,26 @@ export function P3() {
     return () => window.removeEventListener("template:saved", loadAll)
   }, [session?.user?.id])
 
-  // ── 删除草稿 ──────────────────────────────────────────────────────────────
+  // ── Delete draft (editing draft cannot be deleted) ─────────────────────
   const handleDeleteDraft = async (id: string) => {
+    if (id === currentEditingDraftId) {
+      alert("Cannot delete workflow being edited")
+      return
+    }
     const res = await fetch(`/api/community/templates/${id}`, { method: "DELETE" })
     if (res.ok) setDrafts((prev) => prev.filter((t) => t.id !== id))
   }
 
-  // ── 删除已下架 ────────────────────────────────────────────────────────────
+  // ── Delete unpublished ─────────────────────────────────────────────────
   const handleDeleteUnpublished = async (id: string) => {
-    if (!confirm("确认永久删除这个工作流？此操作不可撤销。")) return
+    if (!confirm("Confirm to permanently delete this workflow? This action cannot be undone.")) return
     const res = await fetch(`/api/community/templates/${id}`, { method: "DELETE" })
     if (res.ok) setUnpublished((prev) => prev.filter((t) => t.id !== id))
   }
 
-  // ── 下架（published → unpublished）────────────────────────────────────────
+  // ── Unpublish (published → unpublished) ────────────────────────────────
   const handleUnpublish = async (id: string) => {
-    if (!confirm("确认下架这个工作流？其他用户将无法看到它，但你的数据（包括点赞）将保留。")) return
+    if (!confirm("Confirm to unpublish this workflow? Other users will no longer see it, but your data (including likes) will be retained.")) return
     const res = await fetch(`/api/community/templates/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -107,7 +117,7 @@ export function P3() {
     }
   }
 
-  // ── 重新发布（unpublished → published）────────────────────────────────────
+  // ── Republish (unpublished → published) ────────────────────────────────
   const handleRepublish = async (id: string) => {
     const now = new Date().toISOString()
     const res = await fetch(`/api/community/templates/${id}`, {
@@ -124,46 +134,71 @@ export function P3() {
     }
   }
 
-  // ── 载入画布 ──────────────────────────────────────────────────────────────
+  // ── Load to canvas (load directly without saving current state) ────────
   const handleLoadToCanvas = async (id: string) => {
     try {
       const res = await fetch(`/api/community/templates/${id}/snapshot`)
       if (!res.ok) return
       const { nodes, edges } = await res.json()
-      window.dispatchEvent(new CustomEvent("canvas:load", { detail: { nodes, edges } }))
+      window.dispatchEvent(new CustomEvent("canvas:load", { detail: { nodes, edges, draftId: id } }))
+
+      // Sync cover to toolbar
+      const tmpl = [...published, ...drafts, ...unpublished].find(t => t.id === id)
+      window.dispatchEvent(new CustomEvent("canvas:cover-change", { detail: { url: tmpl?.thumbnail ?? null } }))
     } catch (e) {
       console.error("canvas:load error", e)
     }
   }
 
   const tabs: { key: Tab; label: string; count: number }[] = [
-    { key: "published",   label: "已发布",  count: published.length },
-    { key: "unpublished", label: "已下架",  count: unpublished.length },
-    { key: "drafts",      label: "草稿",    count: drafts.length },
-    { key: "favorites",   label: "我的收藏", count: favorites.length },
+    { key: "published",   label: "Published",  count: published.length },
+    { key: "unpublished", label: "Unpublished",  count: unpublished.length },
+    { key: "drafts",      label: "Drafts",    count: drafts.length },
+    { key: "favorites",   label: "Favorites", count: favorites.length },
   ]
+
+  // Sort drafts: editing draft always first
+  const sortedDrafts = currentEditingDraftId
+    ? [...drafts].sort((a, b) => {
+        if (a.id === currentEditingDraftId) return -1
+        if (b.id === currentEditingDraftId) return 1
+        return 0
+      })
+    : drafts
 
   const current =
     activeTab === "published"   ? published
     : activeTab === "unpublished" ? unpublished
-    : activeTab === "drafts"      ? drafts
+    : activeTab === "drafts"      ? sortedDrafts
     : favorites
+
+  // Check if draft is being edited
+  const isDraftEditing = (id: string) => activeTab === "drafts" && id === currentEditingDraftId
 
   return (
     <div className="border-none p-0 outline-none h-full">
 
-      {/* ── 标题 + 发布按钮 ── */}
+      {/* ── Title + Create Button ── */}
       <div className="flex items-center justify-between mb-1">
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">Create</h2>
           <p className="text-sm text-muted-foreground">
-            你的工作流库和收藏。
+            Your workflow library and favorites.
           </p>
         </div>
-        <Button size="sm" onClick={() => window.dispatchEvent(new CustomEvent("canvas:new"))}>
-          <PlusCircle className="mr-2 h-4 w-4" />
-          新建工作流
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => importRef?.current?.()}>
+            <FolderOpen className="mr-2 h-4 w-4" />
+            Import
+          </Button>
+          <Button size="sm" onClick={() => {
+            setActiveTab("drafts")
+            window.dispatchEvent(new CustomEvent("canvas:new", { detail: { keepPanelOpen: true, currentDraftId: currentEditingDraftId } }))
+          }}>
+            <PlusCircle className="mr-2 h-4 w-4" />
+            New Workflow
+          </Button>
+        </div>
       </div>
 
       {/* ── Tab 切换 ── */}
@@ -187,9 +222,9 @@ export function P3() {
 
       <Separator className="my-4" />
 
-      {/* ── 内容区 ── */}
+      {/* ── Content Area ── */}
       {!session?.user?.id ? (
-        <EmptyState label="请先登录查看你的工作流库" />
+        <EmptyState label="Please login to view your workflow library" />
       ) : (
         <div className="relative">
           <ScrollArea>
@@ -197,30 +232,44 @@ export function P3() {
               {loading
                 ? Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
                 : current.length > 0
-                  ? current.map((t) => (
-                      <TemplateCard
-                        key={t.id}
-                        template={t}
-                        aspectRatio="square"
-                        width={150}
-                        height={150}
-                        className="w-[150px] flex-shrink-0"
-                        onDelete={
-                          activeTab === "drafts"      ? handleDeleteDraft
-                          : activeTab === "unpublished" ? handleDeleteUnpublished
-                          : undefined
-                        }
-                        onUnpublish={activeTab === "published" ? handleUnpublish : undefined}
-                        onRepublish={activeTab === "unpublished" ? handleRepublish : undefined}
-                        onLoadToCanvas={activeTab === "unpublished" ? handleLoadToCanvas : undefined}
-                      />
+                  ? current.map((t, i) => (
+                      <div key={t.id} className="relative flex-shrink-0">
+                        {/* Show "Editing" badge for current editing draft */}
+                        {isDraftEditing(t.id) && (
+                          <span className="absolute top-1.5 left-1.5 z-10 text-[9px] font-semibold bg-emerald-500 text-white px-1.5 py-0.5 rounded-full pointer-events-none">
+                            Editing
+                          </span>
+                        )}
+                        <TemplateCard
+                          template={t}
+                          aspectRatio="square"
+                          width={150}
+                          height={150}
+                          className="w-[150px]"
+                          isEditing={isDraftEditing(t.id)}
+                          onDelete={
+                            activeTab === "drafts" && !isDraftEditing(t.id)
+                              ? handleDeleteDraft
+                              : activeTab === "unpublished"
+                                ? handleDeleteUnpublished
+                                : undefined
+                          }
+                          onUnpublish={activeTab === "published" ? handleUnpublish : undefined}
+                          onRepublish={activeTab === "unpublished" ? handleRepublish : undefined}
+                          onLoadToCanvas={
+                            activeTab !== "favorites" && !isDraftEditing(t.id)
+                              ? handleLoadToCanvas
+                              : undefined
+                          }
+                        />
+                      </div>
                     ))
                   : <EmptyState
                       label={
-                        activeTab === "published"   ? "还没有发布任何工作流"
-                        : activeTab === "unpublished" ? "没有已下架的工作流"
-                        : activeTab === "drafts"      ? "没有草稿"
-                        : "还没有收藏任何工作流"
+                        activeTab === "published"   ? "No workflows published yet"
+                        : activeTab === "unpublished" ? "No unpublished workflows"
+                        : activeTab === "drafts"      ? "No drafts, click the cloud icon to save current canvas"
+                        : "No favorites yet"
                       }
                     />
               }

@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
+import { useSession } from "next-auth/react"
 import {
   Camera, Tag, ChevronRight, Loader2,
-  ImageIcon, DollarSign, Unlock, Lock,
+  ImageIcon, Sparkles,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -16,40 +17,6 @@ import { Input }    from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label }    from "@/components/ui/label"
 import { Badge }    from "@/components/ui/badge"
-import {
-  Select, SelectContent, SelectItem,
-  SelectTrigger, SelectValue,
-} from "@/components/ui/select"
-import { CATEGORY_LABELS } from "@/components/layout/browser/community.types"
-
-// ── 定价方案 ─────────────────────────────────────────────────────────
-type PricingType = "free" | "pay_per_use" | "subscription"
-
-const PRICING_OPTIONS: {
-  value: PricingType
-  icon: React.ReactNode
-  label: string
-  sub: string
-}[] = [
-  {
-    value: "free",
-    icon:  <Unlock className="h-4 w-4" />,
-    label: "免费",
-    sub:   "任何人可以免费执行",
-  },
-  {
-    value: "pay_per_use",
-    icon:  <DollarSign className="h-4 w-4" />,
-    label: "按次付费",
-    sub:   "每次执行消耗用户积分（你设定数量）",
-  },
-  {
-    value: "subscription",
-    icon:  <Lock className="h-4 w-4" />,
-    label: "订阅专属",
-    sub:   "仅订阅了你套餐的用户可用",
-  },
-]
 
 // ── 封面上传 ──────────────────────────────────────────────────────────
 function CoverUpload({
@@ -71,7 +38,7 @@ function CoverUpload({
     <div
       onClick={() => ref.current?.click()}
       className={cn(
-        "relative w-full aspect-square rounded-2xl border-2 border-dashed",
+        "group relative w-full aspect-square rounded-2xl border-2 border-dashed",
         "flex flex-col items-center justify-center cursor-pointer",
         "overflow-hidden transition-colors duration-150",
         preview
@@ -83,7 +50,7 @@ function CoverUpload({
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={preview} alt="cover" className="absolute inset-0 w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-black/0 hover:bg-black/25 transition-colors flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
             <Camera className="h-6 w-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
         </>
@@ -101,6 +68,82 @@ function CoverUpload({
         className="hidden"
         onChange={handleChange}
       />
+    </div>
+  )
+}
+
+// ── AI 封面生成 ────────────────────────────────────────────────────────
+function AICoverGen({
+  onGenerated,
+}: {
+  onGenerated: (previewUrl: string, file: File) => void
+}) {
+  const [prompt,     setPrompt]     = useState("")
+  const [generating, setGen]        = useState(false)
+  const [error, setError]           = useState<string | null>(null)
+
+  const generate = async () => {
+    if (generating || !prompt.trim()) return
+    setGen(true)
+    setError(null)
+    try {
+      const res = await fetch("/api/cover/generate", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ prompt }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error ?? "生成失败")
+      }
+      const { url } = await res.json()
+      // Convert data URL (base64) or remote URL to a File blob
+      let blob: Blob
+      if (url.startsWith("data:")) {
+        const [header, b64] = url.split(",")
+        const mime = header.replace("data:", "").replace(";base64", "") || "image/png"
+        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+        blob = new Blob([bytes], { type: mime })
+      } else {
+        const imgRes = await fetch(url)
+        blob = await imgRes.blob()
+      }
+      const file = new File([blob], "ai-cover.png", { type: blob.type || "image/png" })
+      const previewUrl = URL.createObjectURL(blob)
+      onGenerated(previewUrl, file)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "生成失败")
+    } finally {
+      setGen(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2 pt-3 border-t border-slate-100">
+      <p className="text-[11px] font-medium text-slate-500 flex items-center gap-1.5">
+        Generate by AI
+      </p>
+      <Textarea
+        value={prompt}
+        onChange={e => setPrompt(e.target.value)}
+        placeholder="Describe your cover..." 
+        className="resize-none text-xs min-h-[60px]"
+        rows={2}
+        onKeyDown={e => { if (e.key === "Enter" && e.metaKey) generate() }}
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        className="w-full h-8 text-xs gap-1.5"
+        onClick={generate}
+        disabled={generating || !prompt.trim()}
+      >
+        {generating
+          ? <><Loader2 className="h-3 w-3 animate-spin" /> Generating...</>
+          : <><Sparkles className="h-3 w-3 text-slate-500" /> Generate </>
+        }
+      </Button>
+      {error && <p className="text-[10px] text-red-500">{error}</p>}
     </div>
   )
 }
@@ -124,11 +167,11 @@ function TagInput({
 
   return (
     <div className="space-y-2">
-      <div className="flex gap-1.5 flex-wrap min-h-[28px]">
+      <div className="flex gap-1.5 flex-wrap min-h-[24px]">
         {tags.map((t) => (
           <Badge
             key={t} variant="secondary"
-            className="cursor-pointer text-xs gap-1"
+            className="cursor-pointer text-xs gap-1 h-5"
             onClick={() => onChange(tags.filter((x) => x !== t))}
           >
             {t} ×
@@ -153,8 +196,7 @@ function TagInput({
 export interface PublishModalProps {
   open: boolean
   onOpenChange: (v: boolean) => void
-  /** canvas 当前节点/边，传给 API 用 */
-  canvasSnapshot: { nodes: unknown[]; edges: unknown[] }
+  currentEditingDraftId?: string | null
   /** 封面变化时同步给 toolbar 显示 */
   onCoverChange?: (previewUrl: string | null) => void
 }
@@ -162,40 +204,76 @@ export interface PublishModalProps {
 interface FormState {
   name:          string
   description:   string
-  category:      string
   tags:          string[]
-  pricing:       PricingType
-  priceInPoints: string          // 积分数量（整数）
   coverFile:     File | null
   coverPreview:  string | null
 }
 
-const INITIAL: FormState = {
-  name: "", description: "", category: "general", tags: [],
-  pricing: "free", priceInPoints: "10",
+const EMPTY_FORM: FormState = {
+  name: "", description: "", tags: [],
   coverFile: null, coverPreview: null,
 }
 
-export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange }: PublishModalProps) {
-  const [form, setForm] = useState<FormState>(INITIAL)
-  const [loading, setLoading] = useState<"draft" | "publish" | null>(null)
-  const [error, setError] = useState<string | null>(null)
+export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCoverChange }: PublishModalProps) {
+  const { data: session } = useSession()
+  const [form,     setForm]     = useState<FormState>(EMPTY_FORM)
+  const [draftId,  setDraftId]  = useState<string | null>(null)
+  const [loading,  setLoading]  = useState<"draft" | "publish" | null>(null)
+  const [error,    setError]    = useState<string | null>(null)
+  const [metaLoading, setMetaLoading] = useState(false)
 
   const set = <K extends keyof FormState>(key: K, val: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: val }))
 
-  const reset = () => { setForm(INITIAL); setError(null) }
+  const reset = () => { setForm(EMPTY_FORM); setDraftId(null); setError(null) }
   const close  = () => { if (!loading) { reset(); onOpenChange(false) } }
 
+  // ── 打开时读取当前编辑草稿的元数据 ─────────────────────────────────
+  useEffect(() => {
+    if (!open) return
+    setMetaLoading(true)
+
+    const loadMeta = currentEditingDraftId
+      ? fetch(`/api/community/templates/${currentEditingDraftId}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => data?.template ?? null)
+      : (session?.user?.id
+          ? fetch(`/api/community/templates?creatorId=${session.user.id}&status=draft&limit=1&orderBy=newest`)
+              .then(r => r.ok ? r.json() : null)
+              .then(data => data?.templates?.[0] ?? null)
+          : Promise.resolve(null))
+
+    loadMeta
+      .then(tmpl => {
+        if (tmpl) {
+          setDraftId(tmpl.id)
+          setForm({
+            name:         tmpl.name || "",
+            description:  tmpl.description || "",
+            tags:         Array.isArray(tmpl.tags) ? tmpl.tags : [],
+            coverFile:    null,
+            coverPreview: tmpl.thumbnail || null,
+          })
+        } else {
+          setForm(EMPTY_FORM)
+          setDraftId(null)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setMetaLoading(false))
+  }, [open, currentEditingDraftId, session?.user?.id])
+
   // ── 提交 ──────────────────────────────────────────────────────────
-  const submit = async (publish: boolean) => {
+  const submit = async (mode: "draft" | "publish") => {
     if (!form.name.trim()) { setError("请填写工作流名称"); return }
     setError(null)
-    setLoading(publish ? "publish" : "draft")
+    setLoading(mode)
 
     try {
-      // 1. 上传封面（如果有）
-      let thumbnailUrl: string | null = null
+      // 1. 上传封面（如果有新文件）
+      let thumbnailUrl: string | null = form.coverPreview && !form.coverFile
+        ? form.coverPreview  // keep existing URL
+        : null
       if (form.coverFile) {
         const fd = new FormData()
         fd.append("file", form.coverFile)
@@ -206,39 +284,59 @@ export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange
         }
       }
 
-      // 2. 发布模板
-      const body = {
+      // 2. 获取当前画布快照
+      const draftRes = await fetch("/api/draft")
+      const draftData = draftRes.ok ? await draftRes.json() : null
+      const canvasSnapshot = {
+        nodes: draftData?.nodesJson ?? [],
+        edges: draftData?.edgesJson ?? [],
+      }
+
+      const publish = mode === "publish"
+      const baseFields = {
         name:           form.name.trim(),
         description:    form.description.trim() || null,
         thumbnail:      thumbnailUrl,
-        category:       form.category,
         tags:           form.tags,
-        pricingType:    form.pricing,
-        priceInPoints:  form.pricing === "pay_per_use"
-                          ? parseInt(form.priceInPoints, 10) || 10
-                          : null,
-        canvasSnapshot: canvasSnapshot,
-        publish,
+        pricingType:    "free",
+        priceInPoints:  null,
+        canvasSnapshot,
       }
 
-      const res = await fetch("/api/community/templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      })
+      let res: Response
+      if (draftId) {
+        // PATCH existing draft — use status/publishedAt, not publish boolean
+        res = await fetch(`/api/community/templates/${draftId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...baseFields,
+            status:      publish ? "published" : "draft",
+            publishedAt: publish ? new Date().toISOString() : null,
+          }),
+        })
+      } else {
+        // POST new — API accepts publish boolean
+        res = await fetch("/api/community/templates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...baseFields, publish }),
+        })
+      }
 
       if (!res.ok) {
         const d = await res.json()
-        throw new Error(d.error ?? "发布失败")
+        throw new Error(d.error ?? "保存失败")
       }
 
-      // 同步封面预览到 toolbar — 用 MinIO 持久 URL，不用 blob URL
-      if (thumbnailUrl) onCoverChange?.(thumbnailUrl)
+      // 同步封面预览到 toolbar
+      if (thumbnailUrl !== null) onCoverChange?.(thumbnailUrl)
       // 通知 browser 刷新草稿/发布列表
       window.dispatchEvent(new CustomEvent("template:saved"))
+
       close()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "发布失败，请重试")
+      setError(e instanceof Error ? e.message : "保存失败，请重试")
     } finally {
       setLoading(null)
     }
@@ -248,22 +346,27 @@ export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-w-2xl gap-0 p-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-6 pb-4 border-b">
-          <DialogTitle className="text-base font-semibold">发布到社区</DialogTitle>
+      <DialogContent className="max-w-xl gap-0 p-0 overflow-hidden">
+        <DialogHeader className="px-6 pt-5 pb-4 border-b">
+          <DialogTitle className="text-base font-semibold">工作流详情</DialogTitle>
         </DialogHeader>
 
-        <div className="flex gap-6 p-6 overflow-y-auto max-h-[70vh]">
+        <div className="flex gap-5 p-5 overflow-y-auto max-h-[72vh]">
 
           {/* ── 左：封面 ── */}
-          <div className="w-44 shrink-0 space-y-3">
-            <CoverUpload
-              preview={form.coverPreview}
-              onFile={(file, url) => setForm((f) => ({ ...f, coverFile: file, coverPreview: url }))}
+          <div className="w-40 shrink-0 space-y-3">
+            {metaLoading
+              ? <div className="aspect-square rounded-2xl bg-slate-100 animate-pulse" />
+              : <CoverUpload
+                  preview={form.coverPreview}
+                  onFile={(file, url) => setForm((f) => ({ ...f, coverFile: file, coverPreview: url }))}
+                />
+            }
+            <AICoverGen
+              onGenerated={(url, file) =>
+                setForm(f => ({ ...f, coverPreview: url, coverFile: file }))
+              }
             />
-            <p className="text-[11px] text-muted-foreground text-center leading-relaxed">
-              点击上传封面<br />作为社区卡片展示
-            </p>
           </div>
 
           {/* ── 右：表单 ── */}
@@ -271,7 +374,7 @@ export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange
 
             {/* 名称 */}
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">工作流名称 *</Label>
+              <Label className="text-xs font-medium">名称 *</Label>
               <Input
                 value={form.name}
                 onChange={(e) => set("name", e.target.value)}
@@ -287,103 +390,33 @@ export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange
               <Textarea
                 value={form.description}
                 onChange={(e) => set("description", e.target.value)}
-                placeholder="介绍这个工作流的用途和使用方法..."
+                placeholder="介绍这个工作流的用途..."
                 className="resize-none text-sm"
                 rows={3}
                 maxLength={500}
               />
             </div>
 
-            {/* 分类 + 标签 */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">分类</Label>
-                <Select value={form.category} onValueChange={(v) => set("category", v)}>
-                  <SelectTrigger className="h-9 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(CATEGORY_LABELS)
-                      .filter(([k]) => k !== "general")
-                      .map(([k, label]) => (
-                        <SelectItem key={k} value={k}>{label}</SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium flex items-center gap-1">
-                  <Tag className="h-3 w-3" /> 标签
-                </Label>
-                <TagInput tags={form.tags} onChange={(t) => set("tags", t)} />
-              </div>
-            </div>
-
-            {/* 定价方案 */}
-            <div className="space-y-2">
-              <Label className="text-xs font-medium">定价方案</Label>
-              <div className="space-y-2">
-                {PRICING_OPTIONS.map((opt) => (
-                  <label
-                    key={opt.value}
-                    className={cn(
-                      "flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors",
-                      form.pricing === opt.value
-                        ? "border-slate-900 bg-slate-50"
-                        : "border-slate-200 hover:border-slate-300",
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      name="pricing"
-                      value={opt.value}
-                      checked={form.pricing === opt.value}
-                      onChange={() => set("pricing", opt.value)}
-                      className="sr-only"
-                    />
-                    <span className={cn(
-                      "flex-shrink-0",
-                      form.pricing === opt.value ? "text-slate-900" : "text-slate-400",
-                    )}>
-                      {opt.icon}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium leading-none">{opt.label}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{opt.sub}</p>
-                    </div>
-
-                    {/* Pay per use 积分输入 */}
-                    {opt.value === "pay_per_use" && form.pricing === "pay_per_use" && (
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Input
-                          value={form.priceInPoints}
-                          onChange={(e) => set("priceInPoints", e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="h-7 w-14 text-sm text-center px-1"
-                          type="number"
-                          min="1"
-                          step="1"
-                        />
-                        <span className="text-xs text-slate-400">积分/次</span>
-                      </div>
-                    )}
-                  </label>
-                ))}
-              </div>
+            {/* 标签 */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium flex items-center gap-1">
+                <Tag className="h-3 w-3" /> 标签
+              </Label>
+              <TagInput tags={form.tags} onChange={(t) => set("tags", t)} />
             </div>
 
           </div>
         </div>
 
         {/* ── 底部 ── */}
-        <DialogFooter className="px-6 py-4 border-t bg-slate-50/80 flex-row gap-2">
+        <DialogFooter className="px-5 py-4 border-t bg-slate-50/80 flex-row gap-2">
           {error && (
             <p className="text-xs text-red-500 flex-1 self-center">{error}</p>
           )}
           <div className="flex gap-2 ml-auto">
             <Button
               variant="outline" size="sm"
-              onClick={() => submit(false)}
+              onClick={() => submit("draft")}
               disabled={busy}
             >
               {loading === "draft" ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
@@ -391,7 +424,7 @@ export function PublishModal({ open, onOpenChange, canvasSnapshot, onCoverChange
             </Button>
             <Button
               size="sm"
-              onClick={() => submit(true)}
+              onClick={() => submit("publish")}
               disabled={busy}
               className="gap-1.5"
             >

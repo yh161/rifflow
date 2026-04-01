@@ -4,6 +4,8 @@ import type { Node, Edge } from "reactflow"
 
 const DEBOUNCE_MS = 500
 
+export type SyncStatus = "syncing" | "synced" | "offline" | "error"
+
 // ─────────────────────────────────────────────
 // 存入前清理不可序列化字段：
 //   • rawFile  — File 对象
@@ -19,14 +21,13 @@ function sanitizeNodes(nodes: Node[]): Node[] {
       rawFile:            undefined,
       onDataChange:       undefined,
       onDelete:           undefined,
-      batchResumeHandled: undefined,  // ephemeral: editor sets this; must not survive refresh
+      templateResumeHandled: undefined,
       src:
         typeof n.data?.src === "string" && n.data.src.startsWith("blob:")
           ? undefined
           : n.data?.src,
-      // mediaFiles 中同样可能含 blob src
       mediaFiles: Array.isArray(n.data?.mediaFiles)
-        ? (n.data.mediaFiles as any[]).map((mf) => ({
+        ? (n.data.mediaFiles as Array<Record<string, unknown>>).map((mf) => ({
             ...mf,
             rawFile: undefined,
             src:
@@ -41,25 +42,38 @@ function sanitizeNodes(nodes: Node[]): Node[] {
 
 // ─────────────────────────────────────────────
 // useAutosave
-//
-// enabled: false 时跳过（初始 draft 加载完成前传 false，
-//          防止空 state 覆盖已有草稿）
-// viewportRef: 当前画布 viewport 的 ref，保存时读取最新值（不触发重渲染）
 // ─────────────────────────────────────────────
 export function useAutosave(
-  nodes:       Node[],
-  edges:       Edge[],
-  enabled:     boolean,
-  viewportRef: MutableRefObject<{ x: number; y: number; zoom: number }>,
+  nodes:                Node[],
+  edges:                Edge[],
+  favorites:            string[],
+  enabled:              boolean,
+  viewportRef:          MutableRefObject<{ x: number; y: number; zoom: number }>,
+  onSyncStatusChange?:  (status: SyncStatus) => void,
+  skipRef?:             MutableRefObject<boolean>,
 ) {
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const timerRef        = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const statusCallbackRef = useRef(onSyncStatusChange)
+  useEffect(() => { statusCallbackRef.current = onSyncStatusChange }, [onSyncStatusChange])
 
   useEffect(() => {
     if (!enabled) return
 
+    // Skip one cycle when undo/redo has just restored state (server already updated)
+    if (skipRef?.current) {
+      skipRef.current = false
+      return
+    }
+
     if (timerRef.current) clearTimeout(timerRef.current)
 
     timerRef.current = setTimeout(async () => {
+      if (!navigator.onLine) {
+        statusCallbackRef.current?.("offline")
+        return
+      }
+
+      statusCallbackRef.current?.("syncing")
       try {
         const res = await fetch("/api/draft", {
           method:  "POST",
@@ -67,6 +81,7 @@ export function useAutosave(
           body:    JSON.stringify({
             nodes:    sanitizeNodes(nodes),
             edges,
+            favorites,
             viewport: viewportRef.current,
           }),
         })
@@ -74,20 +89,24 @@ export function useAutosave(
         if (!res.ok) {
           if (res.status === 401) {
             console.warn("[autosave] Not authenticated, cannot save draft")
+            statusCallbackRef.current?.("error")
             return
           }
           console.warn("[autosave] Server error:", res.status)
+          statusCallbackRef.current?.("error")
           return
         }
 
+        statusCallbackRef.current?.("synced")
         console.log("[autosave] Draft saved successfully")
       } catch (err) {
         console.error("[autosave] Network error:", err)
+        statusCallbackRef.current?.(navigator.onLine ? "error" : "offline")
       }
     }, DEBOUNCE_MS)
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
-  }, [nodes, edges, enabled, viewportRef])
+  }, [nodes, edges, favorites, enabled, viewportRef])
 }

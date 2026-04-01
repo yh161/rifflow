@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { MessageSquare, Play, Pause, Square, Lasso } from "lucide-react"
+import { MessageSquare, Play, Pause, Square } from "lucide-react"
 
 import { MODULES } from "@/components/layout/modules/_registry"
 import { NodePickerMenu } from "@/components/layout/node_picker"
@@ -272,7 +272,7 @@ export default function Toolbar({
               ]
             : [
                 "rounded-[22px]",
-                "bg-white/80 border border-slate-200/60 backdrop-blur-xl",
+                "bg-white/60 border border-slate-200/50 backdrop-blur-md",
                 "shadow-lg shadow-black/[0.06]",
               ],
         )}
@@ -337,20 +337,6 @@ export default function Toolbar({
               </button>
             )
           })}
-
-          <div className="w-5 h-px bg-slate-200 my-0.5" />
-
-          {/* Lasso tool */}
-          <button
-            onClick={() => onSelectTool("lasso")}
-            title="Lasso selection"
-            className={cn(
-              "w-10 h-10 rounded-2xl flex items-center justify-center transition-all duration-200",
-              "text-slate-400 hover:text-slate-700 hover:bg-slate-100",
-            )}
-          >
-            <Lasso size={16} strokeWidth={1.8} />
-          </button>
 
           <div className="w-5 h-px bg-slate-200 my-0.5" />
 

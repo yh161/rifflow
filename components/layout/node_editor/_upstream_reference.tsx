@@ -13,7 +13,7 @@ import { MODULE_BY_ID } from "../modules/_registry"
 
 export interface UpstreamNode {
   id: string
-  type: 'text' | 'image' | 'video' | 'filter' | 'template' | 'seed'
+  type: 'text' | 'image' | 'video' | 'pdf' | 'filter' | 'template' | 'seed'
   label?: string
   thumbnail: string | null // Base64 or null
   hasOutput: boolean       // Whether the node has meaningful output
@@ -34,13 +34,13 @@ export function useUpstreamNodes(nodeId: string, handleId?: string): UpstreamNod
 
   // Use effect to avoid infinite re-renders - poll for changes
   useEffect(() => {
-    if (!nodeId) {
-      setUpstreamList([])
-      return
-    }
-
     // Function to compute upstream nodes
     const computeUpstream = () => {
+      if (!nodeId) {
+        setUpstreamList([])
+        return
+      }
+
       const nodes = getNodes()
       const edges = getEdges()
 
@@ -66,6 +66,7 @@ export function useUpstreamNodes(nodeId: string, handleId?: string): UpstreamNod
         const hasOutput = !!(
           data.src ||           // Image node with image
           data.videoSrc ||      // Video node with video
+          data.pdfSrc ||        // PDF node with document
           data.content ||       // Text node with content
           data.type === 'seed'  // Seed node always has potential output
         )

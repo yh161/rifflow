@@ -10,6 +10,7 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    // Fetch user with wallet
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
       select: {
@@ -22,27 +23,6 @@ export async function GET() {
         wallet: {
           select: { points: true },
         },
-        _count: {
-          select: {
-            favorites: true,
-            templateExecutions: true,
-            // templates created by this user
-          },
-        },
-        subscriptions: {
-          where: { status: "active" },
-          select: {
-            id: true,
-            status: true,
-            plan: {
-              select: {
-                name: true,
-                price: true,
-                creator: { select: { id: true, name: true, image: true } },
-              },
-            },
-          },
-        },
       },
     })
 
@@ -50,32 +30,57 @@ export async function GET() {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    // Count templates created by this user
-    const templatesCount = await prisma.template.count({
-      where: { creatorId: session.user.id },
-    })
-
-    // Recent transactions (last 8)
-    const transactions = await prisma.transaction.findMany({
-      where: { userId: session.user.id },
-      orderBy: { createdAt: "desc" },
-      take: 8,
-      select: {
-        id: true,
-        amount: true,
-        type: true,
-        createdAt: true,
-        metadata: true,
-      },
-    })
+    // Count related data
+    const [templatesCount, favoritesCount, executionsCount, subscriptions, transactions] = await Promise.all([
+      // Count templates created by this user
+      prisma.template.count({ where: { creatorId: session.user.id } }),
+      // Count favorites
+      prisma.userFavorite.count({ where: { userId: session.user.id } }),
+      // Count template executions
+      prisma.templateExecution.count({ where: { userId: session.user.id } }),
+      // Get active subscriptions
+      prisma.userSubscription.findMany({
+        where: { userId: session.user.id, status: "active" },
+        select: {
+          id: true,
+          status: true,
+          plan: {
+            select: {
+              name: true,
+              price: true,
+              creator: { select: { id: true, name: true, image: true } },
+            },
+          },
+        },
+      }),
+      // Recent transactions (last 8)
+      prisma.transaction.findMany({
+        where: { userId: session.user.id },
+        orderBy: { createdAt: "desc" },
+        take: 8,
+        select: {
+          id: true,
+          amount: true,
+          type: true,
+          createdAt: true,
+          metadata: true,
+        },
+      }),
+    ])
 
     return NextResponse.json({
       user: {
-        ...user,
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.image,
+        isCreator: user.isCreator,
+        creatorBio: user.creatorBio,
         templatesCount,
-        executionsCount: user._count.templateExecutions,
-        favoritesCount: user._count.favorites,
+        executionsCount,
+        favoritesCount,
         points: user.wallet?.points ?? 0,
+        subscriptions,
       },
       transactions: transactions.map((t) => ({
         ...t,
@@ -84,6 +89,55 @@ export async function GET() {
     })
   } catch (error) {
     console.error("[user/me GET]", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    const session = await getServerSession(authOptions)
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    const body = await request.json()
+    const { name, image } = body
+
+    // Validate input
+    if (name !== undefined && (typeof name !== "string" || name.length > 50)) {
+      return NextResponse.json(
+        { error: "Invalid name. Must be a string with max 50 characters." },
+        { status: 400 }
+      )
+    }
+
+    if (image !== undefined && (typeof image !== "string" || image.length > 500)) {
+      return NextResponse.json(
+        { error: "Invalid image URL. Must be a string with max 500 characters." },
+        { status: 400 }
+      )
+    }
+
+    // Update user
+    const updatedUser = await prisma.user.update({
+      where: { id: session.user.id },
+      data: {
+        ...(name !== undefined && { name: name.trim() || null }),
+        ...(image !== undefined && { image: image.trim() || null }),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        isCreator: true,
+        creatorBio: true,
+      },
+    })
+
+    return NextResponse.json({ user: updatedUser })
+  } catch (error) {
+    console.error("[user/me PUT]", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

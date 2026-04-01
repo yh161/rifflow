@@ -12,6 +12,7 @@ export interface UpstreamNodeData {
   content?: string    // Text node content
   src?: string        // Image/video URL (base64 for blob/local URLs)
   videoSrc?: string   // Video URL
+  pdfOutputImages?: string[]
 }
 
 /**
@@ -96,6 +97,7 @@ export function useUpstreamData(nodeId: string): UpstreamNodeData[] {
         
         const data = node.data as CustomNodeData
         let src = data.src
+        let pdfOutputImages = data.pdfOutputImages
         
         // Convert blob/local URLs to base64
         if (src && (isBlobUrl(src) || isLocalUrl(src))) {
@@ -103,6 +105,20 @@ export function useUpstreamData(nodeId: string): UpstreamNodeData[] {
           if (base64) {
             src = base64
           }
+        }
+
+        if (pdfOutputImages?.length) {
+          const converted = await Promise.all(
+            pdfOutputImages.map(async (url) => {
+              if (!url) return null
+              if (isBlobUrl(url) || isLocalUrl(url)) {
+                const base64 = await blobUrlToBase64(url)
+                return base64 ?? null
+              }
+              return url
+            })
+          )
+          pdfOutputImages = converted.filter((v): v is string => !!v)
         }
         
         result.push({
@@ -112,6 +128,7 @@ export function useUpstreamData(nodeId: string): UpstreamNodeData[] {
           content: data.content,
           src,
           videoSrc: data.videoSrc,
+          pdfOutputImages,
         })
       }
       

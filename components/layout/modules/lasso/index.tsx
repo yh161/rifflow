@@ -4,8 +4,8 @@ import React, { memo } from 'react'
 import { NodeProps } from 'reactflow'
 import { cn } from '@/lib/utils'
 import { Lasso } from 'lucide-react'
-import type { CustomNodeData, ModuleModalProps } from './_types'
-import type { HandleDef } from './_handle'
+import type { CustomNodeData, ModuleModalProps } from '../_types'
+import type { HandleDef } from '../_handle'
 
 export const meta = {
   id:          'lasso',
@@ -51,7 +51,12 @@ export const NodeUI = ({
         selected
           ? 'border-slate-500/80 bg-slate-50/30'
           : 'border-slate-300/50 bg-slate-50/10',
-        data.isEditing && '!border-slate-500/90',
+        data.isEditing            && '!border-slate-500/90',
+        data.isDragHovered        && '!border-slate-500/90 !bg-slate-100/40',
+        // Eject tension: border brightens as child node is pushed toward the wall
+        data.isDragEjecting && !data.isDragEjectingReady && '!border-slate-400/80',
+        // Eject ready: threshold crossed — border fully lit, signals "release to pop out"
+        data.isDragEjectingReady  && '!border-slate-600 !bg-slate-100/35',
       )}
       style={{ width: w, height: h, borderRadius: 16 }}
     >
@@ -83,3 +88,4 @@ export function ModalContent({ data }: ModuleModalProps) {
     </div>
   )
 }
+export { ActionBarContent } from './actionBar'

@@ -22,7 +22,7 @@ import {
 import { TemplateCard } from "./TemplateCard"
 import type { TemplateSummary } from "./community.types"
 
-// ── 类型 ──────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────
 interface UserAsset {
   id: string
   name: string
@@ -48,7 +48,7 @@ interface CreatorSub {
 
 type LibTab = "recent" | "assets" | "creators" | "collections"
 
-// ── 工具函数 ──────────────────────────────────────────────────────────
+// ── Utilities ─────────────────────────────────────────────────────────
 function fileIcon(type: string) {
   if (type === "video") return <Film className="h-4 w-4" />
   if (type === "image") return <Image className="h-4 w-4" />
@@ -61,7 +61,7 @@ function formatSize(bytes: number | null) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-// ── 骨架 ─────────────────────────────────────────────────────────────
+// ── Skeleton ───────────────────────────────────────────────────────────
 function SkeletonRow() {
   return (
     <div className="flex items-center gap-3 px-2 py-2.5">
@@ -92,7 +92,7 @@ function EmptyState({ label }: { label: string }) {
   )
 }
 
-// ── Recently Added（最近收藏 + 最近执行资产）────────────────────────
+// ── Recently Added (recent favorites + recent execution assets) ───────
 function RecentTab() {
   const [favorites, setFavorites] = useState<TemplateSummary[]>([])
   const [assets, setAssets] = useState<UserAsset[]>([])
@@ -120,10 +120,10 @@ function RecentTab() {
 
   return (
     <div className="space-y-6">
-      {/* 最近收藏模板 */}
+      {/* Recent favorite templates */}
       <div>
         <h3 className="text-2xl font-semibold tracking-tight">Recently Added</h3>
-        <p className="text-sm text-muted-foreground mt-1">最近收藏的工作流</p>
+        <p className="text-sm text-muted-foreground mt-1">Recently favorited workflows</p>
         <Separator className="my-4" />
         <ScrollArea>
           <div className="flex space-x-4 pb-4">
@@ -137,24 +137,24 @@ function RecentTab() {
                       className="w-[150px] flex-shrink-0"
                     />
                   ))
-                : <EmptyState label="还没有收藏任何工作流" />
+                : <EmptyState label="No favorite workflows yet" />
             }
           </div>
           <ScrollBar orientation="horizontal" />
         </ScrollArea>
       </div>
 
-      {/* 最近生成资产 */}
+      {/* Recent generated assets */}
       <div>
         <h3 className="text-2xl font-semibold tracking-tight">Recent Outputs</h3>
-        <p className="text-sm text-muted-foreground mt-1">最近生成的内容</p>
+        <p className="text-sm text-muted-foreground mt-1">Recently generated content</p>
         <Separator className="my-4" />
         <div className="space-y-1">
           {loading
             ? Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} />)
             : assets.length > 0
               ? assets.map((a) => <AssetRow key={a.id} asset={a} />)
-              : <EmptyState label="还没有生成任何内容" />
+              : <EmptyState label="No generated content yet" />
           }
         </div>
       </div>
@@ -162,7 +162,7 @@ function RecentTab() {
   )
 }
 
-// ── Assets（用户资产库）──────────────────────────────────────────────
+// ── Assets (User asset library) ───────────────────────────────────────
 function AssetsTab() {
   const [assets, setAssets] = useState<UserAsset[]>([])
   const [loading, setLoading] = useState(true)
@@ -190,7 +190,7 @@ function AssetsTab() {
       <div className="flex items-center justify-between mb-1">
         <div>
           <h3 className="text-2xl font-semibold tracking-tight">Assets</h3>
-          <p className="text-sm text-muted-foreground mt-1">你生成的所有内容</p>
+          <p className="text-sm text-muted-foreground mt-1">All your generated content</p>
         </div>
         <Badge
           variant={onlyStarred ? "default" : "outline"}
@@ -209,14 +209,14 @@ function AssetsTab() {
             ? assets.map((a) => (
                 <AssetRow key={a.id} asset={a} onDelete={handleDelete} />
               ))
-            : <EmptyState label={onlyStarred ? "没有星标内容" : "还没有生成任何内容"} />
+            : <EmptyState label={onlyStarred ? "No starred content" : "No generated content yet"} />
         }
       </div>
     </div>
   )
 }
 
-// ── Creators（已订阅的创作者）────────────────────────────────────────
+// ── Creators (Subscribed creators) ────────────────────────────────────
 function CreatorsTab() {
   const [subs, setSubs] = useState<CreatorSub[]>([])
   const [loading, setLoading] = useState(true)
@@ -231,7 +231,7 @@ function CreatorsTab() {
   return (
     <div>
       <h3 className="text-2xl font-semibold tracking-tight">Creators</h3>
-      <p className="text-sm text-muted-foreground mt-1">你订阅的创作者</p>
+      <p className="text-sm text-muted-foreground mt-1">Creators you subscribe to</p>
       <Separator className="my-4" />
       {loading
         ? Array.from({ length: 3 }).map((_, i) => <SkeletonRow key={i} />)
@@ -240,7 +240,7 @@ function CreatorsTab() {
               <div key={sub.id}
                 className="flex items-center gap-3 px-2 py-3 rounded-lg hover:bg-slate-50 transition-colors"
               >
-                {/* 创作者头像 */}
+                {/* Creator avatar */}
                 <div className="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center text-sm font-medium flex-shrink-0">
                   {sub.plan.creator.name?.[0]?.toUpperCase() ?? "?"}
                 </div>
@@ -257,27 +257,27 @@ function CreatorsTab() {
                 </Badge>
               </div>
             ))
-          : <EmptyState label="还没有订阅任何创作者" />
+          : <EmptyState label="No subscribed creators yet" />
       }
     </div>
   )
 }
 
-// ── Collections（模板分类概览）───────────────────────────────────────
+// ── Collections (Template category overview) ──────────────────────────
 function CollectionsTab() {
   const CATEGORIES = [
-    { key: "video",     label: "视频创作",  emoji: "🎬" },
-    { key: "marketing", label: "营销自动化", emoji: "📣" },
-    { key: "ecommerce", label: "电商运营",  emoji: "🛍️" },
-    { key: "coding",    label: "开发工具",  emoji: "💻" },
-    { key: "writing",   label: "文字内容",  emoji: "✍️" },
-    { key: "data",      label: "数据分析",  emoji: "📊" },
+    { key: "video",     label: "Video Creation",  emoji: "🎬" },
+    { key: "marketing", label: "Marketing Automation", emoji: "📣" },
+    { key: "ecommerce", label: "E-commerce",  emoji: "🛍️" },
+    { key: "coding",    label: "Developer Tools",  emoji: "💻" },
+    { key: "writing",   label: "Content Writing",  emoji: "✍️" },
+    { key: "data",      label: "Data Analysis",  emoji: "📊" },
   ]
 
   return (
     <div>
       <h3 className="text-2xl font-semibold tracking-tight">Collections</h3>
-      <p className="text-sm text-muted-foreground mt-1">按行业浏览工作流</p>
+      <p className="text-sm text-muted-foreground mt-1">Browse workflows by industry</p>
       <Separator className="my-4" />
       <div className="grid grid-cols-2 gap-3">
         {CATEGORIES.map((cat) => (
@@ -294,7 +294,7 @@ function CollectionsTab() {
   )
 }
 
-// ── AssetRow（资产行，复用）──────────────────────────────────────────
+// ── AssetRow (Asset row, reusable) ────────────────────────────────────
 function AssetRow({
   asset,
   onDelete,
@@ -324,12 +324,12 @@ function AssetRow({
         <ContextMenuItem asChild>
           <a href={asset.url} download={asset.name} target="_blank" rel="noreferrer">
             <Download className="mr-2 h-3.5 w-3.5" />
-            下载
+            Download
           </a>
         </ContextMenuItem>
         <ContextMenuItem>
           <Star className="mr-2 h-3.5 w-3.5" />
-          {asset.starred ? "取消星标" : "添加星标"}
+          {asset.starred ? "Remove Star" : "Add Star"}
         </ContextMenuItem>
         {onDelete && (
           <>
@@ -339,7 +339,7 @@ function AssetRow({
               onClick={() => onDelete(asset.id)}
             >
               <Trash2 className="mr-2 h-3.5 w-3.5" />
-              删除
+              Delete
             </ContextMenuItem>
           </>
         )}
@@ -348,49 +348,44 @@ function AssetRow({
   )
 }
 
-// ── 主组件 ───────────────────────────────────────────────────────────
-const TABS: { key: LibTab; icon: React.ReactNode; label: string }[] = [
+// ── Main component ───────────────────────────────────────────────────
+type LibTabWithoutCollections = "recent" | "assets" | "creators"
+
+const TABS: { key: LibTabWithoutCollections; icon: React.ReactNode; label: string }[] = [
   { key: "recent",      icon: <Clock className="h-3.5 w-3.5" />,    label: "Recent" },
   { key: "assets",      icon: <HardDrive className="h-3.5 w-3.5" />, label: "Assets" },
   { key: "creators",    icon: <Users className="h-3.5 w-3.5" />,    label: "Creators" },
-  { key: "collections", icon: <Layers className="h-3.5 w-3.5" />,   label: "Collections" },
 ]
 
-export function LibraryPage({ defaultTab = "recent" }: { defaultTab?: LibTab }) {
+export function LibraryPage({ defaultTab = "recent", onTabChange }: { defaultTab?: LibTabWithoutCollections; onTabChange?: (tab: LibTabWithoutCollections) => void }) {
   const { data: session } = useSession()
-  const [tab, setTab] = useState<LibTab>(defaultTab)
+  const [tab, setTabInternal] = useState<LibTabWithoutCollections>(defaultTab)
+
+  // Sync tab when defaultTab changes from sidebar navigation
+  useEffect(() => {
+    setTabInternal(defaultTab)
+  }, [defaultTab])
+
+  const setTab = (newTab: LibTabWithoutCollections) => {
+    setTabInternal(newTab)
+    onTabChange?.(newTab)
+  }
 
   if (!session?.user?.id) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-2">
         <HardDrive className="h-8 w-8 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">请先登录查看资产库</p>
+        <p className="text-sm text-muted-foreground">Please login to view asset library</p>
       </div>
     )
   }
 
   return (
     <div className="border-none p-0 outline-none h-full">
-      {/* Tab 切换 */}
-      <div className="flex gap-2 mb-6">
-        {TABS.map(({ key, icon, label }) => (
-          <Button
-            key={key}
-            size="sm"
-            variant={tab === key ? "secondary" : "ghost"}
-            className="gap-1.5"
-            onClick={() => setTab(key)}
-          >
-            {icon}
-            {label}
-          </Button>
-        ))}
-      </div>
-
-      {tab === "recent"      && <RecentTab />}
-      {tab === "assets"      && <AssetsTab />}
-      {tab === "creators"    && <CreatorsTab />}
-      {tab === "collections" && <CollectionsTab />}
+      {/* Content - no tabs needed since sidebar handles navigation */}
+      {tab === "recent" && <RecentTab />}
+      {tab === "assets" && <AssetsTab />}
+      {tab === "creators" && <CreatorsTab />}
     </div>
   )
 }

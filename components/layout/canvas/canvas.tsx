@@ -1,14 +1,16 @@
 "use client"
 
-import React, { useCallback, useEffect, useRef } from "react"
+import React, { useCallback, useEffect, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
 import ReactFlow, {
   Background,
   BackgroundVariant,
   Edge,
+  EdgeProps,
   MiniMap,
   Node,
   useReactFlow,
+  useNodes,
   useStore,
   OnMove,
   OnConnectStart,
@@ -19,7 +21,11 @@ import ReactFlow, {
   EdgeChange,
   ConnectionMode,
   Connection,
+  BaseEdge,
+  getBezierPath,
+  EdgeLabelRenderer,
 } from "reactflow"
+import { X } from "lucide-react"
 import "reactflow/dist/style.css"
 
 import { EditorModal } from "@/components/layout/std_node_modal"
@@ -28,22 +34,75 @@ import { NodePickerMenu } from "@/components/layout/node_picker"
 
 import { useAutosave } from "@/hooks/useAutosave"
 
-import { nodeTypes, StandardNodeUI, CustomNodeUI, MODULE_BY_ID } from "@/components/layout/modules/_registry"
-import { BatchOrchestratorContext } from "@/components/layout/modules/_polling"
+import { nodeTypes, MODULE_BY_ID, DONE_COLOR, EditorOpenContext } from "@/components/layout/modules/_registry"
+import { TemplateOrchestratorContext } from "@/components/layout/modules/_polling"
 import type { AnyNodeData, CustomNodeData } from "@/components/layout/modules/_types"
 
 // ─────────────────────────────────────────────
 // Custom Hooks
 // ─────────────────────────────────────────────
 import { useCanvasState } from "./hooks/useCanvasState"
-import { useLoopManager } from "./hooks/useLoopManager"
+import { useTemplateManager } from "./hooks/useTemplateManager"
 import { useNodeOperations } from "./hooks/useNodeOperations"
 import { useImportExport } from "./hooks/useImportExport"
+import { useDraftPersistence } from "./hooks/useDraftPersistence"
+import { useCanvasInteractions } from "./hooks/useCanvasInteractions"
+import { useCanvasLifecycle } from "./hooks/useCanvasLifecycle"
+import { useCanvasCommands } from "./hooks/useCanvasCommands"
+import { useCanvasHotkeys } from "./hooks/useCanvasHotkeys"
 
 // ─────────────────────────────────────────────
 // Shared Components
 // ─────────────────────────────────────────────
 import { GhostCursor } from "./components/GhostCursor"
+import { CanvasContextMenu } from "./components/CanvasContextMenu"
+import { NodeContextMenu }   from "./components/NodeContextMenu"
+
+// ─────────────────────────────────────────────
+// DoneAwareEdge — colors upstream edges of "done" nodes
+// ─────────────────────────────────────────────
+function DoneAwareEdge({ id, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, selected }: EdgeProps) {
+  const nodes = useNodes<CustomNodeData>()
+  const { setEdges } = useReactFlow()
+  const targetNode = nodes.find(n => n.id === target)
+  const isDone = targetNode?.data?.mode === 'done'
+  const stroke = isDone
+    ? (DONE_COLOR[targetNode?.data?.type ?? ''] ?? 'rgba(148,163,184,0.4)')
+    : 'rgba(148,163,184,0.4)'
+
+  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        style={{ strokeWidth: 1.5, ...style, stroke }}
+      />
+      {selected && (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan"
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              pointerEvents: "all",
+            }}
+          >
+            <button
+              onClick={() => setEdges(es => es.filter(e => e.id !== id))}
+              className="flex items-center justify-center w-5 h-5 rounded-full bg-white border border-slate-200 shadow-sm text-slate-400 hover:text-red-500 hover:border-red-200 transition-colors"
+            >
+              <X size={9} />
+            </button>
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  )
+}
+
+const EDGE_TYPES = { default: DoneAwareEdge }
 
 // ─────────────────────────────────────────────
 // Props
@@ -62,6 +121,7 @@ interface CanvasProps {
   snapToGrid?: boolean
   onSnapToggle?: () => void
   minimapOpen?: boolean
+  onSyncStatusChange?: (status: import("@/hooks/useAutosave").SyncStatus) => void
 }
 
 // ─────────────────────────────────────────────
@@ -84,11 +144,11 @@ function CanvasLogic({
   isSidebarOpen,
   isRunning,
   snapToGrid: propSnapToGrid,
-  onSnapToggle: propOnSnapToggle,
   minimapOpen = false,
+  onSyncStatusChange,
 }: CanvasProps) {
-  const { screenToFlowPosition, fitView, setViewport } = useReactFlow()
-  const { data: session, status } = useSession()
+  const { screenToFlowPosition, fitView, setViewport, getNodes, getViewport } = useReactFlow()
+  const { status } = useSession()
 
   // ── Stable refs for unstable ReactFlow functions ──
   // useReactFlow() returns NEW function objects on every render, so these
@@ -99,14 +159,81 @@ function CanvasLogic({
   const fitViewRef = useRef(fitView)
   useEffect(() => { fitViewRef.current = fitView }, [fitView])
 
+  // ── Block Safari back/forward swipe on canvas ──
+  // Safari triggers browser navigation on horizontal wheel events. We intercept
+  // all wheel events on the canvas wrapper with a non-passive listener so that
+  // preventDefault() actually works (passive listeners cannot call it).
+  const canvasWrapperRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = canvasWrapperRef.current
+    if (!el) return
+    const block = (e: WheelEvent) => { e.preventDefault() }
+    el.addEventListener("wheel", block, { passive: false })
+    return () => el.removeEventListener("wheel", block)
+  }, [])
+
   const transform = useStore((s) => s.transform)
   const [tx, ty, zoom] = transform
 
   // ── Custom hooks ──
   const canvasState = useCanvasState()
-  const loopManager = useLoopManager(canvasState)
+  const templateManager = useTemplateManager(canvasState)
   const nodeOperations = useNodeOperations(canvasState)
   const importExport = useImportExport(canvasState)
+  const draftPersistence = useDraftPersistence({
+    status,
+    nodesRef: canvasState.nodesRef,
+    edgesRef: canvasState.edgesRef,
+  })
+
+  const { handleNodeDrag, handleNodeDragStop } = useCanvasInteractions({
+    canvasState,
+    screenToFlowPosition,
+  })
+
+  // ── Context menu (right-click undo & paste) ──
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null)
+
+  // ── Node context menu (right-click on node) ──
+  const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null)
+
+  // ── Autosave gate (used by undo/redo restore) ──
+  const skipAutosaveRef = useRef(false)
+
+  const {
+    undoInFlight,
+    redoInFlight,
+    pasteInFlight,
+    undoCount,
+    redoCount,
+    setUndoCount,
+    setRedoCount,
+    handleUndo,
+    handleRedo,
+    handleCopyNodes,
+    hasCopiedNodes,
+    pasteFromNodeClipboard,
+    handlePaste,
+    handleDuplicateNode,
+  } = useCanvasCommands({
+    canvasState,
+    getNodes,
+    setViewportRef,
+    skipAutosaveRef,
+    contextMenu,
+    onFavoritesRestore: onFavoritesImport,
+  })
+
+  useCanvasHotkeys({
+    canvasState,
+    getNodes,
+    getViewport,
+    handleUndo,
+    handleRedo,
+    handleCopyNodes,
+    pasteFromNodeClipboard,
+    hasCopiedNodes,
+  })
 
   // ── Destructure state ──
   const {
@@ -127,7 +254,6 @@ function CanvasLogic({
     setDraftData,
     setEditingNode,
     setEditorNodeId,
-    setSnapToGrid: setInternalSnapToGrid,
     setIsDraftLoaded,
     connectStartRef,
     connectionMadeRef,
@@ -138,13 +264,14 @@ function CanvasLogic({
     setMousePos,
   } = canvasState
 
-  // ── Destructure loop manager ──
+  // ── Destructure template manager ──
   const {
-    handleLoopAddInstance,
-    handleLoopSwitchView,
-    handleLoopDeleteInstance,
-    handleLoopRelease,
-  } = loopManager
+    handleTemplateAddInstance,
+    handleTemplateAddInstances,
+    handleTemplateSwitchView,
+    handleTemplateDeleteInstance,
+    handleTemplateRelease,
+  } = templateManager
 
   // ── Destructure node operations ──
   const {
@@ -167,71 +294,26 @@ function CanvasLogic({
     handleImportPack: handleImportPackOp,
   } = importExport
 
+  const {
+    saveCurrentCanvas,
+    createDraft,
+    makeUntitledName,
+  } = draftPersistence
+
   // ── Sync activeTool to ref ──
   useEffect(() => {
     updateActiveToolRef(activeTool)
   }, [activeTool, updateActiveToolRef])
 
-  // ── Load canvas from unpublished template ──
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const { nodes: loadedNodes, edges: loadedEdges } = (e as CustomEvent<{ nodes: unknown[]; edges: unknown[] }>).detail
-      if (Array.isArray(loadedNodes)) setNodes(loadedNodes as Parameters<typeof setNodes>[0])
-      if (Array.isArray(loadedEdges)) setEdges(loadedEdges as Parameters<typeof setEdges>[0])
-      requestAnimationFrame(() => fitViewRef.current({ padding: 0.1, duration: 400 }))
-    }
-    window.addEventListener("canvas:load", handler)
-    return () => window.removeEventListener("canvas:load", handler)
-  // fitView intentionally excluded — use stable ref instead
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setNodes, setEdges])
-
-  // ── New blank canvas — save current state first, then clear ──
-  useEffect(() => {
-    const handler = async () => {
-      if (status === "authenticated") {
-        const currentNodes   = canvasState.nodesRef.current
-        const currentEdges   = canvasState.edgesRef.current
-        const currentViewport = canvasState.viewportRef.current
-
-        // 1. Always update the autosave RiffDraft (restores viewport on refresh)
-        try {
-          await fetch("/api/draft", {
-            method:  "POST",
-            headers: { "Content-Type": "application/json" },
-            body:    JSON.stringify({ nodes: currentNodes, edges: currentEdges, viewport: currentViewport }),
-          })
-        } catch { /* silent */ }
-
-        // 2. If canvas has content, save as a community template draft so it
-        //    appears in Create → 草稿. Auto-titled with date; user can rename at publish.
-        if (currentNodes.length > 0) {
-          const now   = new Date()
-          const label = now.toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
-          try {
-            await fetch("/api/community/templates", {
-              method:  "POST",
-              headers: { "Content-Type": "application/json" },
-              body:    JSON.stringify({
-                name:           `未命名工作流 ${label}`,
-                canvasSnapshot: { nodes: currentNodes, edges: currentEdges },
-                publish:        false,
-              }),
-            })
-            // Notify browser_p3 to reload its draft list
-            window.dispatchEvent(new CustomEvent("template:saved"))
-          } catch { /* silent */ }
-        }
-      }
-      setNodes([])
-      setEdges([])
-      requestAnimationFrame(() => setViewportRef.current({ x: 0, y: 0, zoom: 1 }))
-    }
-    window.addEventListener("canvas:new", handler)
-    return () => window.removeEventListener("canvas:new", handler)
-  // setViewport intentionally excluded — use stable ref instead
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, setNodes, setEdges, canvasState.nodesRef, canvasState.edgesRef, canvasState.viewportRef])
+  useCanvasLifecycle({
+    status,
+    canvasState,
+    setViewportRef,
+    fitViewRef,
+    saveCurrentCanvas,
+    createDraft,
+    makeUntitledName,
+  })
 
   // ── Ghost cursor mouse tracking (same as original canvas.tsx) ──
   useEffect(() => {
@@ -289,20 +371,23 @@ function CanvasLogic({
         if (Array.isArray(savedEdges) && savedEdges.length > 0) {
           setEdges(savedEdges)
         }
+        if (Array.isArray(data.favorites)) {
+          onFavoritesImport(data.favorites.filter((x: unknown): x is string => typeof x === "string"))
+        }
         // Restore viewport — use requestAnimationFrame so ReactFlow is mounted
         const vp = data.viewportJson
         if (vp && typeof vp.x === "number" && typeof vp.y === "number" && typeof vp.zoom === "number") {
           requestAnimationFrame(() => setViewportRef.current({ x: vp.x, y: vp.y, zoom: vp.zoom }))
         }
+        setUndoCount(data.undoCount ?? 0)
+        setRedoCount(data.redoCount ?? 0)
       })
       .catch((err) => console.error("[draft] load failed:", err))
       .finally(() => setIsDraftLoaded(true))
   // setViewport intentionally excluded — use stable ref instead
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, setNodes, setEdges, setIsDraftLoaded])
+  }, [status, setNodes, setEdges, setIsDraftLoaded, setUndoCount, setRedoCount])
 
-  // ── Autosave (only when authenticated) ──
-  useAutosave(nodes, edges, isDraftLoaded && status === "authenticated", canvasState.viewportRef)
+  useAutosave(nodes, edges, favorites, isDraftLoaded && status === "authenticated", canvasState.viewportRef, onSyncStatusChange, skipAutosaveRef)
 
   // ─────────────────────────────────────────────
   // Template — wraps selected nodes in a Template container
@@ -329,18 +414,18 @@ function CanvasLogic({
     const encH = maxY - minY
 
     const templateId = `template-${Date.now()}`
-    const batchX  = minX - PAD - SEED_W - SEED_GAP
-    const batchY  = minY - PAD
-    const batchW  = PAD + SEED_W + SEED_GAP + encW + PAD
-    const batchH  = Math.max(encH, SEED_H) + PAD * 2
-    const seedY   = (batchH - SEED_H) / 2
+    const templateX  = minX - PAD - SEED_W - SEED_GAP
+    const templateY  = minY - PAD
+    const templateW  = PAD + SEED_W + SEED_GAP + encW + PAD
+    const templateH  = Math.max(encH, SEED_H) + PAD * 2
+    const seedY   = (templateH - SEED_H) / 2
 
     const templateNode: Node = {
       id:       templateId,
       type:     "TemplateNode",
-      position: { x: batchX, y: batchY },
-      style:    { width: batchW, height: batchH },
-      data:     { ...MODULE_BY_ID["template"]?.defaultData, width: batchW, height: batchH, instanceCount: 0 },
+      position: { x: templateX, y: templateY },
+      style:    { width: templateW, height: templateH },
+      data:     { ...MODULE_BY_ID["template"]?.defaultData, width: templateW, height: templateH, instanceCount: 0 },
       zIndex:   -1,
     }
     const seedNode: Node = {
@@ -499,8 +584,31 @@ function CanvasLogic({
   const handleImportPack = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    handleImportPackOp(file, onFavoritesImport, fitView)
-  }, [handleImportPackOp, onFavoritesImport, fitView])
+
+    // 1. Save current canvas before overwriting
+    if (status === "authenticated") {
+      const existingId = localStorage.getItem("currentEditingDraftId")
+      try { await saveCurrentCanvas({ existingDraftId: existingId }) } catch { /* silent */ }
+    }
+
+    // 2. Do the actual import (uploads assets, sets nodes/edges, syncs /api/draft)
+    const imported = await handleImportPackOp(file, onFavoritesImport, fitView)
+
+    // 3. Create a new community draft for the imported content
+    if (imported && status === "authenticated") {
+      try {
+        const draftId = await createDraft({
+          name: makeUntitledName("导入工作流"),
+          nodes: imported.nodes,
+          edges: imported.edges,
+          publish: false,
+        })
+        if (draftId) {
+          window.dispatchEvent(new CustomEvent("canvas:draft-changed", { detail: { draftId } }))
+        }
+      } catch { /* silent */ }
+    }
+  }, [handleImportPackOp, onFavoritesImport, fitView, status, saveCurrentCanvas, createDraft, makeUntitledName])
 
   // ── Register handlers into external refs ──
   useEffect(() => {
@@ -571,7 +679,7 @@ function CanvasLogic({
     if (activeTool === "template" || activeTool === "lasso") loopSelectionRef.current = selected
   }, [activeTool, loopSelectionRef])
 
-  const handleContainerMouseDown = useCallback((_e: React.MouseEvent) => {
+  const handleContainerMouseDown = useCallback(() => {
     if (activeTool !== "template" && activeTool !== "lasso") return
     loopSelectionRef.current = []
   }, [activeTool, loopSelectionRef])
@@ -600,8 +708,10 @@ function CanvasLogic({
   // Render
   // ─────────────────────────────────────────────
   return (
-    <BatchOrchestratorContext.Provider value={{ addInstance: handleLoopAddInstance }}>
+    <EditorOpenContext.Provider value={editorNodeId}>
+    <TemplateOrchestratorContext.Provider value={{ addInstance: handleTemplateAddInstance, addInstances: handleTemplateAddInstances }}>
     <div
+      ref={canvasWrapperRef}
       className="w-full h-full relative"
       style={{
         touchAction: "none",
@@ -610,6 +720,15 @@ function CanvasLogic({
       onDoubleClick={handleWrapperDoubleClick}
       onMouseDown={handleContainerMouseDown}
       onMouseUp={handleContainerMouseUp}
+      onContextMenu={(e) => {
+        // Only show context menu when right-clicking on blank canvas area
+        const target = e.target as Element
+        if (target.closest(".react-flow__node, .react-flow__edge, .react-flow__handle, .react-flow__minimap")) return
+        e.preventDefault()
+        setNodeContextMenu(null)
+        const flowPos = screenToFlowPosition({ x: e.clientX, y: e.clientY })
+        setContextMenu({ x: e.clientX, y: e.clientY, flowX: flowPos.x, flowY: flowPos.y })
+      }}
     >
       <style>{`
         .react-flow__node, .react-flow__node-default {
@@ -631,6 +750,7 @@ function CanvasLogic({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={EDGE_TYPES}
         connectionMode={ConnectionMode.Loose}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
@@ -639,13 +759,21 @@ function CanvasLogic({
         onConnectEnd={handleConnectEnd}
         onPaneClick={handlePaneClick}
         onMove={handleMove}
+        onMoveStart={() => document.dispatchEvent(new CustomEvent('canvas-move-start'))}
+        onNodeDrag={handleNodeDrag}
+        onNodeDragStop={handleNodeDragStop}
         onNodeDoubleClick={handleNodeDoubleClick}
         onNodeClick={handleNodeClick}
+        onNodeContextMenu={(e, node) => {
+          e.preventDefault()
+          setContextMenu(null)
+          setNodeContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id })
+        }}
         onSelectionChange={handleContainerSelectionChange}
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}
         minZoom={0.1}
         maxZoom={10}
-        defaultEdgeOptions={{ type: "default", style: { stroke: "#94a3b8", strokeWidth: 1.5 } }}
+        defaultEdgeOptions={{ type: "default", style: { stroke: "rgba(148,163,184,0.6)", strokeWidth: 1.5 } }}
         panOnDrag={activeTool !== "template" && activeTool !== "lasso"}
         selectionOnDrag={activeTool === "template" || activeTool === "lasso"}
         zoomOnPinch={true}
@@ -657,29 +785,27 @@ function CanvasLogic({
         snapGrid={[16, 16]}
       >
         <Background color="#94a3b8" gap={40} variant={BackgroundVariant.Dots} />
-        <MiniMap
-          zoomable pannable
-          nodeStrokeWidth={2}
-          nodeColor="#cbd5e1"
-          maskColor="rgba(241,245,249,0.65)"
-          style={{
-            position:      "absolute",
-            bottom:        80,
-            left:          isSidebarOpen ? 336 : 16,
-            right:         "unset" as never,
-            width:         192,
-            height:        128,
-            background:    "rgba(255,255,255,0.85)",
-            borderRadius:  16,
-            border:        "1px solid rgba(226,232,240,0.6)",
-            boxShadow:     "0 4px 24px rgba(0,0,0,0.06)",
-            opacity:       minimapOpen && !isRunning ? 1 : 0,
-            pointerEvents: minimapOpen && !isRunning ? "auto" : "none",
-            transform:     minimapOpen && !isRunning ? "translateY(0)" : "translateY(6px)",
-            transition:    "opacity 0.3s ease, transform 0.3s ease",
-            zIndex:        600,
-          }}
-        />
+        {minimapOpen && !isRunning && (
+          <MiniMap
+            zoomable pannable
+            nodeStrokeWidth={2}
+            nodeColor="#cbd5e1"
+            maskColor="rgba(241,245,249,0.65)"
+            style={{
+              position:      "absolute",
+              bottom:        80,
+              left:          isSidebarOpen ? 336 : 16,
+              right:         "unset" as never,
+              width:         192,
+              height:        128,
+              background:    "rgba(255,255,255,0.85)",
+              borderRadius:  16,
+              border:        "1px solid rgba(226,232,240,0.6)",
+              boxShadow:     "0 4px 24px rgba(0,0,0,0.06)",
+              zIndex:        600,
+            }}
+          />
+        )}
       </ReactFlow>
 
       {/* Portal layer for handle visuals (MagneticZone CirclePlus icons).
@@ -720,6 +846,7 @@ function CanvasLogic({
           favorites={favorites}
           onToggleFavorite={onToggleFavorite}
           showArrow={!!quickAddMenu.sourceNodeId}
+          favoritesOnly
           left={menuLeft}
           top={menuTop}
         />
@@ -731,10 +858,10 @@ function CanvasLogic({
           nodeId={editorNodeId}
           onClose={() => setEditorNodeId(null)}
           onDelete={handleDeleteCustomNode}
-          onLoopAddInstance={handleLoopAddInstance}
-          onLoopDeleteInstance={handleLoopDeleteInstance}
-          onLoopSwitchView={handleLoopSwitchView}
-          onLoopRelease={handleLoopRelease}
+          onTemplateAddInstance={handleTemplateAddInstance}
+          onTemplateDeleteInstance={handleTemplateDeleteInstance}
+          onTemplateSwitchView={handleTemplateSwitchView}
+          onTemplateRelease={handleTemplateRelease}
           onLassoRelease={handleLassoRelease}
         />
       )}
@@ -743,7 +870,7 @@ function CanvasLogic({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".zip,.formula"
+        accept=".zip"
         className="hidden"
         onChange={handleImportPack}
       />
@@ -778,8 +905,37 @@ function CanvasLogic({
         mousePos={mousePos}
         ghostZoom={ghostZoom}
       />
+
+      {/* Right-click context menu */}
+      {contextMenu && (
+        <CanvasContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onPaste={handlePaste}
+          onStartLasso={() => onActiveTool("lasso")}
+          onClose={() => setContextMenu(null)}
+          undoDisabled={undoInFlight || undoCount < 2}
+          redoDisabled={redoInFlight || redoCount === 0}
+          pasteDisabled={pasteInFlight}
+        />
+      )}
+
+      {/* Node right-click context menu */}
+      {nodeContextMenu && (
+        <NodeContextMenu
+          x={nodeContextMenu.x}
+          y={nodeContextMenu.y}
+          onCopy={() => handleCopyNodes([nodeContextMenu.nodeId])}
+          onDuplicate={() => handleDuplicateNode(nodeContextMenu.nodeId)}
+          onDelete={() => handleDeleteNodeOp(getNodes().find(n => n.id === nodeContextMenu.nodeId) ?? null)}
+          onClose={() => setNodeContextMenu(null)}
+        />
+      )}
     </div>
-    </BatchOrchestratorContext.Provider>
+    </TemplateOrchestratorContext.Provider>
+    </EditorOpenContext.Provider>
   )
 }
 

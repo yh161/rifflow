@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { JobService } from "./job.service"
 import type { MultimodalContent } from "@/lib/prompt-resolver"
 import { Prisma } from "@prisma/client"
+import { DEFAULT_TEXT_MODEL_ID } from "@/lib/models"
 
 export interface WorkflowNode {
   id: string
@@ -30,10 +31,18 @@ export interface WorkflowSubgraph {
   edges: WorkflowEdge[]
 }
 
+export interface WorkflowBudget {
+  /** Total credits spent by this workflow */
+  spent: number
+  /** Optional max budget (for future use) */
+  limit?: number
+}
+
 export interface WorkflowExecutionContext {
   workflowJobId: string
   userId: string
   results: Map<string, unknown>
+  budget: WorkflowBudget
 }
 
 /**
@@ -76,11 +85,12 @@ export class WorkflowEngine {
 
     const workflowJobId = workflowJob.id
 
-    // 2. Initialize execution context
+    // 2. Initialize execution context with budget tracking
     const ctx: WorkflowExecutionContext = {
       workflowJobId,
       userId,
       results: new Map(),
+      budget: { spent: 0 },
     }
 
     // 3. Start execution asynchronously (fire-and-forget)
@@ -273,7 +283,7 @@ export class WorkflowEngine {
               }
             }
           } else {
-            console.error(`[WorkflowEngine] Node ${nodeId} execution failed:`, (result as any).error || "Unknown error")
+            console.error(`[WorkflowEngine] Node ${nodeId} execution failed`)
             failed.add(nodeId)
           }
         }).catch((err) => {
@@ -340,7 +350,7 @@ export class WorkflowEngine {
     const nodeType = node.data.type || node.type
 
     // ── Pre-resolved external nodes ──────────────────────────────────────────
-    // Nodes tagged _preResolved come from outside the batch container.
+    // Nodes tagged _preResolved come from outside the template container.
     // Their existing content is already the correct value — skip LLM execution
     // and register the result immediately so downstream nodes can reference them.
     if (node.data._preResolved) {
@@ -371,15 +381,29 @@ export class WorkflowEngine {
       ? upstreamEdges.filter((e) => e.targetHandle === "in" || e.targetHandle === "left" || !e.targetHandle)
       : []
 
-    // Build upstream data for prompt resolution (REF edges only)
+    // Build upstream data for prompt resolution (REF edges only).
+    // For image nodes, reconstruct the data URI from b64 + mime so downstream
+    // {{nodeId}} references resolve to image_url content blocks instead of
+    // empty strings.
     const upstreamData = refEdges.map((edge) => {
-      const result = results.get(edge.source)
+      const result = results.get(edge.source) as Record<string, unknown> | undefined
+      const srcNode = nodeMap.get(edge.source)
+      const upstreamType = (srcNode?.data.type as string) || "text"
+
+      let src: string | undefined
+      if (upstreamType === "image" && result) {
+        if (result.b64 && result.mime) {
+          src = `data:${result.mime};base64,${result.b64}`
+        } else if (typeof result.src === "string") {
+          src = result.src
+        }
+      }
+
       return {
         id: edge.source,
-        type: "text" as const,
-        content: result && typeof result === "object" && "content" in result
-          ? String(result.content)
-          : String(result || ""),
+        type: upstreamType,
+        content: result && "content" in result ? String(result.content) : "",
+        src,
       }
     })
 
@@ -441,7 +465,7 @@ CRITICAL RULES:
         // Store on the node data temporarily so the post-execution block can use it.
         ;(node.data as Record<string, unknown>)._filterItems = items
       }
-    } else if (nodeType === "text" || nodeType === "seed") {
+    } else if (nodeType === "text" || nodeType === "seed" || nodeType === "pdf") {
       const prompt = node.data.prompt || ""
       const textContent = node.data.content || ""
 
@@ -461,6 +485,13 @@ CRITICAL RULES:
       const prompt = node.data.prompt || ""
       // Resolve any {{nodeId}} references in the prompt
       content = await this.resolvePromptWithUpstream(prompt, upstreamData)
+      // Append upstream image outputs as image_url blocks
+      for (const edge of upstreamEdges) {
+        const result = results.get(edge.source)
+        if (result && typeof result === "object" && "b64" in result && "mime" in result) {
+          content.push({ type: "image_url", image_url: { url: `data:${result.mime};base64,${result.b64}` } })
+        }
+      }
     } else if (nodeType === "standard") {
       // Standard nodes pass through their name/label as content
       shouldExecuteLLM = false
@@ -512,7 +543,7 @@ CRITICAL RULES:
         nodeId: node.id,
         nodeType,
         content,
-        model: node.data.model || "gemini-2.0-flash",
+        model: node.data.model || DEFAULT_TEXT_MODEL_ID,
       })
 
       if (!jobResult.success || !jobResult.jobId) {
@@ -534,7 +565,8 @@ CRITICAL RULES:
         userId,
         nodeType,
         content,
-        model: node.data.model || "gemini-2.0-flash",
+        model: node.data.model || DEFAULT_TEXT_MODEL_ID,
+        modelParams: node.data.params as Record<string, string> | undefined,
       })
 
       // Get execution result
@@ -593,12 +625,16 @@ CRITICAL RULES:
   }
 
   /**
-   * Resolve prompt with upstream node references
-   * Replaces {{nodeId}} with actual content from upstream nodes
+   * Resolve prompt with upstream node references.
+   * Produces an interleaved MultimodalContent[] array:
+   *   text before ref → image_url (for image nodes) or text (for text nodes) → text after ref
+   *
+   * Image nodes must have `src` pre-populated as a data URI (b64 reconstructed
+   * by the caller) so this method stays synchronous and server-safe (no FileReader).
    */
   private async resolvePromptWithUpstream(
     prompt: string,
-    upstreamData: Array<{ id: string; type: string; content: string }>
+    upstreamData: Array<{ id: string; type: string; content: string; src?: string }>
   ): Promise<MultimodalContent[]> {
     if (!prompt.includes("{{")) {
       // No references, return prompt as-is
@@ -625,9 +661,14 @@ CRITICAL RULES:
         }
       }
 
-      // Add the upstream node content
-      if (node && node.content) {
-        result.push({ type: "text", text: node.content })
+      // Resolve the referenced node to the appropriate content block
+      if (node) {
+        if (node.type === "image" && node.src) {
+          // Image node: emit an image_url block (interleaved with surrounding text)
+          result.push({ type: "image_url", image_url: { url: node.src, detail: "auto" } })
+        } else if (node.content) {
+          result.push({ type: "text", text: node.content })
+        }
       }
 
       lastIndex = match.index + match[0].length
@@ -641,7 +682,7 @@ CRITICAL RULES:
       }
     }
 
-    // If no references were resolved, return the original prompt
+    // If no blocks were produced, return the original prompt as plain text
     if (result.length === 0) {
       return [{ type: "text", text: prompt }]
     }

@@ -9,21 +9,18 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   Menubar,
-  MenubarContent,
-  MenubarItem,
   MenubarMenu,
-  MenubarSeparator,
-  MenubarShortcut,
   MenubarTrigger,
 } from "@/components/ui/menubar"
 
 import {
-  Globe,
-  LayoutGrid,
   PanelLeftOpen,
-  PlayCircle,
-  Mic,
+  Zap,
+  MessageCircle,
+  User,
   Search,
+  PlayCircle,
+  LayoutGrid,
   GitBranch,
   Clock,
   Users,
@@ -31,11 +28,6 @@ import {
   HardDrive,
   Workflow,
   Star,
-  Folder,
-  FolderOpen,
-  Video,
-  Zap,
-  ChevronLeft,
 } from "lucide-react"
 
 // Sub-page components
@@ -46,16 +38,11 @@ import { LibraryPage } from "./browser_library"
 import { FavoritesPage } from "./browser_favorites"
 import { AccountPage } from "./browser_account"
 import { PricingPage } from "./browser_pricing"
+import { WorkflowDetailPage } from "./browser_detail"
+import { ProfilePage } from "./browser_profile"
+import { MessagesPage } from "./browser_messages"
+import type { TemplateSummary } from "./community.types"
 
-// User-defined workflow collections (analogous to user-created playlists in Apple Music)
-const workflowCollections = [
-  { name: "电商内容生产线", icon: Folder },
-  { name: "短视频矩阵", icon: Folder },
-  { name: "品牌素材库", icon: FolderOpen },
-  { name: "营销自动化", icon: Folder },
-  { name: "年终汇报套装", icon: Folder },
-  { name: "客服话术生成", icon: Folder },
-]
 
 interface PanelProps {
   isSidebarOpen?: boolean
@@ -64,28 +51,90 @@ interface PanelProps {
   isRunning?: boolean
   importRef?: React.MutableRefObject<(() => void) | null>
   exportRef?: React.MutableRefObject<(() => void) | null>
+  currentEditingDraftId?: string | null
 }
 
-export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChange, isRunning = false, importRef, exportRef }: PanelProps) {
+export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChange, isRunning = false, importRef, exportRef, currentEditingDraftId }: PanelProps) {
   const setIsOpen = (val: boolean) => onOpenChange?.(val)
-  const [activePage, setActivePage] = useState<"watch" | "browse" | "create" | "library" | "favorites" | "account" | "pricing">("watch")
+  const [activePage, setActivePage] = useState<"watch" | "browse" | "create" | "library" | "favorites" | "account" | "pricing" | "detail" | "profile" | "messages">("watch")
+  const [libraryTab, setLibraryTab] = useState<"recent" | "assets" | "creators">("recent")
   const [prevPage, setPrevPage]     = useState<typeof activePage>("watch")
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateSummary | null>(null)
+  const [profileUserId, setProfileUserId] = useState<string | null>(null)
+  const [chatContactId, setChatContactId] = useState<string | null>(null)
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  // Poll unread message count every 30s
+  React.useEffect(() => {
+    const fetchUnread = () => {
+      fetch("/api/messages")
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.conversations) {
+            const total = data.conversations.reduce((sum: number, c: { unreadCount: number }) => sum + c.unreadCount, 0)
+            setUnreadCount(total)
+          }
+        })
+        .catch(() => {})
+    }
+    fetchUnread()
+    const id = setInterval(fetchUnread, 30000)
+    return () => clearInterval(id)
+  }, [])
 
   const navigate = (page: typeof activePage) => {
     setPrevPage(activePage)
     setActivePage(page)
   }
 
-  // Avatar click → account page
+  const handleOpenDetail = (template: TemplateSummary) => {
+    setSelectedTemplate(template)
+    navigate("detail")
+  }
+
+  const handleOpenProfile = (userId: string) => {
+    setProfileUserId(userId)
+    navigate("profile")
+  }
+
+  const handleOpenChat = (contactId: string) => {
+    setChatContactId(contactId)
+    navigate("messages")
+  }
+
+  // Avatar click → open panel + profile page (my profile)
   React.useEffect(() => {
-    const handler = () => navigate("account")
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      setIsOpen(true)
+      if (detail?.userId) {
+        setProfileUserId(detail.userId)
+        navigate("profile")
+      } else {
+        navigate("account")
+      }
+    }
     window.addEventListener("navigate:account", handler)
     return () => window.removeEventListener("navigate:account", handler)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage])
 
+  // Navigate to profile from anywhere
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail?.userId) {
+        setIsOpen(true)
+        handleOpenProfile(detail.userId)
+      }
+    }
+    window.addEventListener("navigate:profile", handler)
+    return () => window.removeEventListener("navigate:profile", handler)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage])
+
   // Fullscreen pages (no sidebar)
-  const isFullscreen = activePage === "account" || activePage === "pricing"
+  const isFullscreen = activePage === "account" || activePage === "pricing" || activePage === "messages"
 
   // Completely hidden during run mode — no edge, no interaction
   if (isRunning) {
@@ -111,11 +160,11 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
       />
     </div>
     
-    <div className="hidden md:block h-screen w-full bg-background lg:p-10">
+    <div className="hidden md:block h-screen w-full lg:p-10">
       <div 
         className={cn(
           "absolute top-4 bottom-4", 
-          "overflow-hidden rounded-xl border bg-background shadow-xl", 
+          "overflow-hidden rounded-xl border bg-white/70 backdrop-blur-lg shadow-xl", 
           "flex flex-col",
           "transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]",
           !isOpen && "cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900"
@@ -129,7 +178,7 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
         }}
       >
         {/* --- Top Menubar --- */}
-        <Menubar className="rounded-none border-b border-none px-2 lg:px-4">
+        <Menubar className="rounded-none border-b border-none px-2 lg:px-4 bg-white/70 backdrop-blur-lg">
           <MenubarMenu>
             <MenubarTrigger
               className="font-bold"
@@ -139,67 +188,26 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
             </MenubarTrigger>
           </MenubarMenu>
           <MenubarMenu>
-            <MenubarTrigger>File</MenubarTrigger>
-            <MenubarContent>
-              <MenubarItem onClick={() => window.dispatchEvent(new CustomEvent("canvas:new"))}>
-                New <MenubarShortcut>⌘N</MenubarShortcut>
-              </MenubarItem>
-              <MenubarItem onClick={() => importRef?.current?.()}>
-                Import... <MenubarShortcut>⌘O</MenubarShortcut>
-              </MenubarItem>
-              <MenubarItem onClick={() => exportRef?.current?.()}>
-                Export... <MenubarShortcut>⌘R</MenubarShortcut>
-              </MenubarItem>
-            </MenubarContent>
+            <MenubarTrigger onClick={() => navigate("account")}>
+              <User className="h-3.5 w-3.5 mr-1" />
+              Account
+            </MenubarTrigger>
           </MenubarMenu>
           <MenubarMenu>
-            <MenubarTrigger>Edit</MenubarTrigger>
-            <MenubarContent>
-              <MenubarItem disabled>
-                Undo <MenubarShortcut>⌘Z</MenubarShortcut>
-              </MenubarItem>
-              <MenubarItem disabled>
-                Redo <MenubarShortcut>⇧⌘Z</MenubarShortcut>
-              </MenubarItem>
-              <MenubarSeparator />
-              <MenubarItem disabled>
-                Cut <MenubarShortcut>⌘X</MenubarShortcut>
-              </MenubarItem>
-              <MenubarItem disabled>
-                Copy <MenubarShortcut>⌘C</MenubarShortcut>
-              </MenubarItem>
-              <MenubarItem disabled>
-                Paste <MenubarShortcut>⌘V</MenubarShortcut>
-              </MenubarItem>
-              <MenubarSeparator />
-              <MenubarItem>
-                Select All <MenubarShortcut>⌘A</MenubarShortcut>
-              </MenubarItem>
-              <MenubarItem disabled>
-                Deselect All <MenubarShortcut>⇧⌘A</MenubarShortcut>
-              </MenubarItem>
-              <MenubarSeparator />
-              <MenubarItem>
-                Smart Dictation...{" "}
-                <MenubarShortcut>
-                  <Mic className="h-4 w-4" />
-                </MenubarShortcut>
-              </MenubarItem>
-              <MenubarItem>
-                Emoji & Symbols{" "}
-                <MenubarShortcut>
-                  <Globe className="h-4 w-4" />
-                </MenubarShortcut>
-              </MenubarItem>
-            </MenubarContent>
-          </MenubarMenu>
-          <MenubarMenu>
-            <MenubarTrigger onClick={() => navigate("account")}>Account</MenubarTrigger>
+            <MenubarTrigger onClick={() => { setChatContactId(null); navigate("messages") }}>
+              <MessageCircle className="h-3.5 w-3.5 mr-1" />
+              Messages
+              {unreadCount > 0 && (
+                <span className="ml-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-[9px] font-semibold text-white">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
+            </MenubarTrigger>
           </MenubarMenu>
           <MenubarMenu>
             <MenubarTrigger onClick={() => navigate("pricing")}>
               <Zap className="h-3.5 w-3.5 mr-1 text-blue-500" />
-              定价方案
+              Pricing Plans
             </MenubarTrigger>
           </MenubarMenu>
         
@@ -215,143 +223,148 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
         </Menubar>
 
         {/* --- Main Layout --- */}
-        <div className="border-t bg-background">
-          <div className={cn("grid", isFullscreen ? "" : "lg:grid-cols-5")}>
-
-            {/* ── Back button row for fullscreen pages ── */}
-            {isFullscreen && (
-              <div className="px-4 pt-4 pb-0">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="gap-1.5 text-muted-foreground hover:text-foreground -ml-1"
-                  onClick={() => setActivePage(prevPage)}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  返回
-                </Button>
-              </div>
-            )}
-
+        <div className={cn("flex flex-col border-t bg-white/70 h-[calc(100vh-100px)]", isFullscreen && "h-[calc(100dvh-80px)]")}>
+          <div className={cn("flex flex-1 min-h-0", !isFullscreen && "lg:grid lg:grid-cols-5")}>
             {/* --- Left Sidebar (Menu) — hidden on fullscreen pages --- */}
-            <aside className={cn("hidden pb-12 lg:flex flex-col h-[calc(100vh-120px)]", isFullscreen && "lg:hidden")}>
-              <div className="px-6 py-4">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search..."
-                    className="pl-9 rounded-lg bg-slate-100/50 dark:bg-slate-900/50 border-none h-9 focus-visible:ring-1 focus-visible:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto custom-scrollbar px-2 space-y-4">
-
-                {/* --- Discover section --- */}
-                <div className="px-2 py-2">
-                  <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">
-                    Discover
-                  </h2>
-                  <div className="space-y-1">
-                    <Button 
-                      variant={activePage === "watch" ? "secondary" : "ghost"} 
-                      className="w-full justify-start"
-                      onClick={() => setActivePage("watch")}
-                    >
-                      <PlayCircle className="mr-2 h-4 w-4" />
-                      Start Now
-                    </Button>
-                    <Button 
-                      variant={activePage === "browse" ? "secondary" : "ghost"} 
-                      className="w-full justify-start"
-                      onClick={() => setActivePage("browse")}
-                    >
-                      <LayoutGrid className="mr-2 h-4 w-4" />
-                      Browse
-                    </Button>
-                    <Button 
-                      variant={activePage === "create" ? "secondary" : "ghost"} 
-                      className="w-full justify-start"
-                      onClick={() => setActivePage("create")}
-                    >
-                      <GitBranch className="mr-2 h-4 w-4" />
-                      Create
-                    </Button>
+            {!isFullscreen && (
+              <aside className="hidden lg:flex flex-col h-full border-r">
+                <div className="px-6 py-4">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search..."
+                      className="pl-9 rounded-lg bg-slate-100/50 dark:bg-slate-900/50 border-none h-9 focus-visible:ring-1 focus-visible:ring-blue-500"
+                    />
                   </div>
                 </div>
 
-                {/* --- Library section --- */}
-                <div className="px-2 py-2">
-                  <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">
-                    Library
-                  </h2>
-                  <div className="space-y-1">
-                    <Button variant={activePage === "library" ? "secondary" : "ghost"} className="w-full justify-start" onClick={() => setActivePage("library")}>
-                      <Clock className="mr-2 h-4 w-4" />
-                      Recently Added
-                    </Button>
-                    <Button variant={activePage === "library" ? "ghost" : "ghost"} className="w-full justify-start" onClick={() => setActivePage("library")}>
-                      <Users className="mr-2 h-4 w-4" />
-                      Creators
-                    </Button>
-                    <Button variant="ghost" className="w-full justify-start" onClick={() => setActivePage("library")}>
-                      <Layers className="mr-2 h-4 w-4" />
-                      Collections
-                    </Button>
-                    <Button variant="ghost" className="w-full justify-start" onClick={() => setActivePage("library")}>
-                      <HardDrive className="mr-2 h-4 w-4" />
-                      Assets
-                    </Button>
-                  </div>
-                </div>
+                <div className="flex-1 overflow-y-auto custom-scrollbar px-2 space-y-4 pb-4">
 
-                {/* --- Workflows list section --- */}
-                <div className="px-2 py-2">
-                  <h2 className="relative px-4 text-lg font-semibold tracking-tight mb-2">
-                    Workflows
-                  </h2>
-                  <div className="space-y-1">
-                    {/* Pinned items */}
-                    <Button variant="ghost" className="w-full justify-start font-normal">
-                      <Workflow className="mr-2 h-4 w-4" />
-                      All Workflows
-                    </Button>
-                    <Button variant={activePage === "favorites" ? "secondary" : "ghost"} className="w-full justify-start font-normal" onClick={() => setActivePage("favorites")}>
-                      <Star className="mr-2 h-4 w-4" />
-                      Favorites
-                    </Button>
-
-                    {/* Divider */}
-                    <div className="my-2 mx-4 border-t border-border/50" />
-
-                    {/* User-defined collections */}
-                    {workflowCollections.map((col) => (
-                      <Button key={col.name} variant="ghost" className="w-full justify-start font-normal">
-                        <col.icon className="mr-2 h-4 w-4" />
-                        {col.name}
+                  {/* --- Discover section --- */}
+                  <div className="px-2 py-2">
+                    <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">
+                      Discover
+                    </h2>
+                    <div className="space-y-1">
+                      <Button 
+                        variant={activePage === "watch" ? "secondary" : "ghost"} 
+                        className="w-full justify-start"
+                        onClick={() => setActivePage("watch")}
+                      >
+                        <PlayCircle className="mr-2 h-4 w-4" />
+                        Start Now
                       </Button>
-                    ))}
+                      <Button 
+                        variant={activePage === "browse" ? "secondary" : "ghost"} 
+                        className="w-full justify-start"
+                        onClick={() => setActivePage("browse")}
+                      >
+                        <LayoutGrid className="mr-2 h-4 w-4" />
+                        Browse
+                      </Button>
+                      <Button 
+                        variant={activePage === "create" ? "secondary" : "ghost"} 
+                        className="w-full justify-start"
+                        onClick={() => setActivePage("create")}
+                      >
+                        <GitBranch className="mr-2 h-4 w-4" />
+                        Create
+                      </Button>
+                    </div>
                   </div>
-                </div>
 
-              </div>
-            </aside>
+                  {/* --- Library section --- */}
+                  <div className="px-2 py-2">
+                    <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">
+                      Library
+                    </h2>
+                    <div className="space-y-1">
+                      <Button 
+                        variant={activePage === "library" && libraryTab === "recent" ? "secondary" : "ghost"} 
+                        className="w-full justify-start" 
+                        onClick={() => { setLibraryTab("recent"); setActivePage("library") }}
+                      >
+                        <Clock className="mr-2 h-4 w-4" />
+                        Recently Added
+                      </Button>
+                      <Button 
+                        variant={activePage === "library" && libraryTab === "creators" ? "secondary" : "ghost"} 
+                        className="w-full justify-start" 
+                        onClick={() => { setLibraryTab("creators"); setActivePage("library") }}
+                      >
+                        <Users className="mr-2 h-4 w-4" />
+                        Creators
+                      </Button>
+                      <Button 
+                        variant={activePage === "library" && libraryTab === "assets" ? "secondary" : "ghost"} 
+                        className="w-full justify-start" 
+                        onClick={() => { setLibraryTab("assets"); setActivePage("library") }}
+                      >
+                        <HardDrive className="mr-2 h-4 w-4" />
+                        Assets
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* --- Workflows list section --- */}
+                  <div className="px-2 py-2">
+                    <h2 className="relative px-4 text-lg font-semibold tracking-tight mb-2">
+                      Workflows
+                    </h2>
+                    <div className="space-y-1">
+                      {/* Pinned items */}
+                      <Button variant="ghost" className="w-full justify-start font-normal">
+                        <Workflow className="mr-2 h-4 w-4" />
+                        All Workflows
+                      </Button>
+                      <Button variant={activePage === "favorites" ? "secondary" : "ghost"} className="w-full justify-start font-normal" onClick={() => setActivePage("favorites")}>
+                        <Star className="mr-2 h-4 w-4" />
+                        Favorites
+                      </Button>
+                    </div>
+                  </div>
+
+                </div>
+              </aside>
+            )}
 
             {/* --- Right Content Area --- */}
             <div className={cn(
-              "flex",
-              isFullscreen
-                ? "col-span-full h-[calc(100vh-80px)]"
-                : "col-span-3 lg:col-span-4 lg:border-l h-[calc(100vh-120px)]",
+              "flex-1 flex flex-col min-h-0",
+              !isFullscreen && "lg:col-span-4"
             )}>
-              <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8">
-                {activePage === "watch"     && <P1 />}
+              <div className={cn("flex-1 overflow-y-auto min-h-0", !["detail", "profile", "messages"].includes(activePage) && "px-4 py-6 lg:px-8")}>
+                {activePage === "watch"     && <P1 onOpenDetail={handleOpenDetail} />}
                 {activePage === "browse"    && <P2 />}
-                {activePage === "create"    && <P3 />}
-                {activePage === "library"   && <LibraryPage />}
+                {activePage === "create"    && <P3 currentEditingDraftId={currentEditingDraftId} importRef={importRef} />}
+                {activePage === "library"   && <LibraryPage defaultTab={libraryTab} onTabChange={setLibraryTab} />}
                 {activePage === "favorites" && <FavoritesPage />}
                 {activePage === "account"   && <AccountPage onPricing={() => navigate("pricing")} />}
                 {activePage === "pricing"   && <PricingPage />}
+                {activePage === "detail" && selectedTemplate && (
+                  <WorkflowDetailPage
+                    template={selectedTemplate}
+                    onBack={() => setActivePage(prevPage)}
+                    onOpenProfile={handleOpenProfile}
+                  />
+                )}
+                {activePage === "profile" && profileUserId && (
+                  <ProfilePage
+                    userId={profileUserId}
+                    onBack={() => setActivePage(prevPage)}
+                    onOpenDetail={handleOpenDetail}
+                    onOpenChat={(id) => { setChatContactId(id === "__inbox__" ? null : id); navigate("messages") }}
+                    unreadCount={unreadCount}
+                  />
+                )}
+                {activePage === "messages" && (
+                  <MessagesPage
+                    onBack={() => setActivePage(prevPage)}
+                    initialContactId={chatContactId}
+                    onOpenProfile={handleOpenProfile}
+                    onRead={() => setUnreadCount(0)}
+                  />
+                )}
               </div>
             </div>
 

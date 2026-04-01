@@ -4,11 +4,11 @@ import React, { memo, useMemo, useState, useEffect, useRef } from 'react'
 import { NodeProps, useReactFlow } from 'reactflow'
 import { cn } from '@/lib/utils'
 import { Filter } from 'lucide-react'
-import type { CustomNodeData, FilterResult, FilterResultItem, ModuleModalProps } from './_types'
-import type { HandleDef } from './_handle'
+import type { CustomNodeData, FilterResult, FilterResultItem, ModuleModalProps } from '../_types'
+import type { HandleDef } from '../_handle'
 import { GenerateTextPanel } from '@/components/layout/node_editor/_panels'
 import { getThumbnail, getTypeColor } from '@/lib/image-compress'
-import { MODULE_BY_ID } from './_registry'
+import { MODULE_BY_ID } from '../_registry'
 
 export const meta = {
   id: 'filter',
@@ -20,6 +20,7 @@ export const meta = {
   border: 'hover:border-amber-200',
   opensEditor: true,
   panelTitle: 'Filter Condition',
+  category: 'Logic',
 }
 
 export const defaultData: Partial<CustomNodeData> = {
@@ -484,3 +485,5 @@ export function ModalContent({
     />
   )
 }
+export { resultHandler } from './resultHandler'
+export { ActionBarContent } from './actionBar'

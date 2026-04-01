@@ -5,8 +5,8 @@ import { createPortal } from 'react-dom'
 import { NodeProps, useStore, useReactFlow } from 'reactflow'
 import { cn } from '@/lib/utils'
 import { Video as VideoIcon, Play, Pause } from 'lucide-react'
-import type { CustomNodeData, ModuleModalProps } from './_types'
-import type { HandleDef } from './_handle'
+import type { CustomNodeData, ModuleModalProps } from '../_types'
+import type { HandleDef } from '../_handle'
 import { GenerateVideoPanel } from '@/components/layout/node_editor/_panels'
 
 export const meta = {
@@ -19,6 +19,9 @@ export const meta = {
   border: 'hover:border-violet-200',
   opensEditor: true,
   panelTitle: 'Generate Video',
+  category: 'Assets',
+  modelBadge: 'Wan',
+  doneColor: 'rgba(167, 139, 250, 0.55)',
 }
 
 export const defaultData: Partial<CustomNodeData> = {
@@ -61,16 +64,29 @@ export const NodeUI = ({
 }) => {
   const { setNodes } = useReactFlow()
   const videoRef    = useRef<HTMLVideoElement>(null)
-  const rafRef      = useRef<number>()
+  const rafRef      = useRef<number | undefined>(undefined)
   const [playing,     setPlaying]     = useState(false)
   const [hovered,     setHovered]     = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration,    setDuration]    = useState(0)
   const [portalEl,    setPortalEl]    = useState<HTMLElement | null>(null)
 
+  // Scale-from-bottom-center animation when dimensions change
+  const prevSizeRef = useRef({ w: data.width ?? 180, h: data.height ?? 180 })
+  const [initialScale, setInitialScale] = useState<{ sx: number; sy: number } | null>(null)
+  useEffect(() => {
+    const dw = data.width ?? 180, dh = data.height ?? 180
+    const prev = prevSizeRef.current
+    if (prev.w === dw && prev.h === dh) return
+    const sx = prev.w / dw, sy = prev.h / dh
+    prevSizeRef.current = { w: dw, h: dh }
+    setInitialScale({ sx, sy })
+    requestAnimationFrame(() => requestAnimationFrame(() => setInitialScale(null)))
+  }, [data.width, data.height])
+
   // Debounced hover — prevents flicker when cursor moves between
   // the ReactFlow placeholder and portal interactive elements.
-  const hoverTimer = useRef<ReturnType<typeof setTimeout>>()
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const setHoveredDebounced = useCallback((val: boolean) => {
     clearTimeout(hoverTimer.current)
     if (val) {
@@ -180,20 +196,23 @@ export const NodeUI = ({
   const progress = duration > 0 ? currentTime / duration : 0
 
   return (
-    <div
-      className={cn(
-        'overflow-hidden',
-        'bg-white/70 border border-slate-300/60',
-        'transition-all duration-200',
-        selected && 'ring-2 ring-violet-300 ring-offset-1 border-violet-200',
-      )}
-      style={{
-        width:        w,
-        height:       h,
-        borderRadius: data.isEditing ? '0px' : '12px',
-        transition:   'border-radius 300ms cubic-bezier(0.4,0,0.2,1), box-shadow 200ms',
-      }}
-    >
+    <div style={{ width: w, height: h, position: 'relative' }}>
+      {/* Scale wrapper: carries border + animates from bottom-center */}
+      <div
+        className={cn(
+          'overflow-hidden',
+          'bg-white/70 border',
+          data.mode === 'done' ? 'border-violet-400/70' : 'border-slate-300/60',
+          selected && 'ring-2 ring-violet-300 ring-offset-1 border-violet-200',
+        )}
+        style={{
+          width: '100%', height: '100%',
+          borderRadius: data.isEditing ? '0px' : '12px',
+          transform: initialScale ? `scaleX(${initialScale.sx}) scaleY(${initialScale.sy})` : 'scale(1)',
+          transformOrigin: 'bottom center',
+          transition: initialScale ? 'none' : 'transform 300ms cubic-bezier(0.4,0,0.2,1)',
+        }}
+      >
       {data.videoSrc ? (
         <>
           {/* Placeholder: fills node, receives hover/drag events.
@@ -223,6 +242,21 @@ export const NodeUI = ({
                 userSelect:      'none',
               }}
             >
+              {/* Outer: frame grows from bottom-center */}
+              <div style={{
+                width: '100%', height: '100%',
+                transform: initialScale ? `scaleX(${initialScale.sx}) scaleY(${initialScale.sy})` : 'scale(1)',
+                transformOrigin: 'bottom center',
+                transition: initialScale ? 'none' : 'transform 300ms cubic-bezier(0.4,0,0.2,1)',
+                overflow: 'hidden',
+              }}>
+              {/* Inner: counter-scale keeps content stable */}
+              <div style={{
+                width: '100%', height: '100%',
+                transform: initialScale ? `scaleX(${1 / initialScale.sx}) scaleY(${1 / initialScale.sy})` : 'scale(1)',
+                transformOrigin: 'bottom center',
+                transition: initialScale ? 'none' : 'transform 300ms cubic-bezier(0.4,0,0.2,1)',
+              }}>
               <video
                 ref={videoRef}
                 src={data.videoSrc}
@@ -235,13 +269,23 @@ export const NodeUI = ({
                   const v = videoRef.current
                   if (!v) return
                   setDuration(v.duration)
-                  // Save natural dimensions so ResizeHandle can lock aspect ratio
+                  // On first load: save natural dims + resize node to match aspect ratio
                   if (nodeId && v.videoWidth && v.videoHeight && (!data.naturalWidth || !data.naturalHeight)) {
-                    setNodes(ns => ns.map(n =>
-                      n.id === nodeId
-                        ? { ...n, data: { ...n.data, naturalWidth: v.videoWidth, naturalHeight: v.videoHeight } }
-                        : n
-                    ))
+                    const BASE = 240
+                    const vw = v.videoWidth, vh = v.videoHeight
+                    const newW = vw >= vh ? BASE : Math.round(BASE * vw / vh)
+                    const newH = vh >= vw ? BASE : Math.round(BASE * vh / vw)
+                    setNodes(ns => ns.map(n => {
+                      if (n.id !== nodeId) return n
+                      const oldW = (n.style?.width  as number | undefined) ?? n.data.width  ?? 180
+                      const oldH = (n.style?.height as number | undefined) ?? n.data.height ?? 180
+                      return {
+                        ...n,
+                        style:    { ...n.style, width: newW, height: newH },
+                        data:     { ...n.data, naturalWidth: vw, naturalHeight: vh, width: newW, height: newH },
+                        position: { x: n.position.x + (oldW - newW) / 2, y: n.position.y + (oldH - newH) },
+                      }
+                    }))
                   }
                 }}
                 onEnded={() => setPlaying(false)}
@@ -313,23 +357,26 @@ export const NodeUI = ({
                     )}
                   </div>
                 </div>
-              </div>
+              </div>{/* end bottom control bar */}
+              </div>{/* end inner counter-scale */}
+              </div>{/* end outer scale */}
             </div>,
             portalEl,
           )}
         </>
       ) : (
-        <div className="w-full h-full bg-violet-50/60 flex flex-col items-center justify-center gap-2">
-          <VideoIcon size={24} className="text-violet-200" />
+        <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+          <VideoIcon size={24} className="text-slate-200" />
           <span className="text-[10px] text-slate-300">Double-click to edit</span>
         </div>
       )}
+      </div>{/* end scale wrapper */}
     </div>
   )
 }
 
-export const ReactFlowNode = memo(({ data, selected }: NodeProps<CustomNodeData>) => (
-  <NodeUI data={data} selected={selected} />
+export const ReactFlowNode = memo(({ id, data, selected }: NodeProps<CustomNodeData>) => (
+  <NodeUI data={data} selected={selected} nodeId={id} />
 ))
 ReactFlowNode.displayName = 'VideoNode'
 
@@ -347,3 +394,5 @@ export function ModalContent({ data, nodeId, onUpdate, mode = 'auto', isGenerati
     />
   )
 }
+export { resultHandler } from './resultHandler'
+export { ActionBarContent } from './actionBar'

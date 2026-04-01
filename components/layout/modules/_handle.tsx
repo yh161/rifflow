@@ -119,39 +119,68 @@ type ZoneEntry = {
   innerEl:   HTMLDivElement
   side:      HandleDef['side']
   isHovered: () => boolean
+  wasClose:  { current: boolean }
 }
 const zones = new Set<ZoneEntry>()
 let globalAttached = false
+
+// Returns true if mouse is inside the rectangular zone matching the ::before hit area.
+// For each side the rectangle starts at the node edge and extends MR*2 outward,
+// MR*2 tall/wide centred on the handle — exactly matching the CSS ::before dimensions.
+function inHandleRect(
+  side: HandleDef['side'],
+  cx: number, cy: number, zoom: number,
+  mx: number, my: number,
+): boolean {
+  const inset = HD * zoom   // screen-space distance from icon centre to node edge
+  switch (side) {
+    case 'right':  return mx > cx - inset && mx < cx - inset + MR * 2 && Math.abs(my - cy) < MR
+    case 'left':   return mx < cx + inset && mx > cx + inset - MR * 2 && Math.abs(my - cy) < MR
+    case 'bottom': return my > cy - inset && my < cy - inset + MR * 2 && Math.abs(mx - cx) < MR
+    case 'top':    return my < cy + inset && my > cy + inset - MR * 2 && Math.abs(mx - cx) < MR
+  }
+}
 
 function ensureGlobalListener() {
   if (globalAttached) return
   globalAttached = true
   window.addEventListener('mousemove', (e: MouseEvent) => {
-    zones.forEach(({ centerRef, innerEl, side, isHovered }) => {
+    zones.forEach(({ centerRef, innerEl, side, isHovered, wasClose }) => {
       const { x: cx, y: cy, zoom } = centerRef.current
       const dx    = e.clientX - cx
       const dy    = e.clientY - cy
-      const dist  = Math.sqrt(dx * dx + dy * dy)
-      const close = dist < MR
-      const show  = isHovered() || close
-      const t     = close ? 1 - dist / MR : 0
+      const magnetic = inHandleRect(side, cx, cy, zoom, e.clientX, e.clientY)
+      const hovered  = isHovered()
 
       // Fly direction in screen-space (scale FD by zoom so it's proportional)
-      const flyX  = (side === 'left' ? FD : side === 'right' ? -FD : 0) * zoom
-      const flyY  = (side === 'top'  ? FD : side === 'bottom' ? -FD : 0) * zoom
-      const tx    = (show ? 0 : flyX) + dx * t * 0.75
-      const ty    = (show ? 0 : flyY) + dy * t * 0.75
+      const flyX = (side === 'left' ? FD : side === 'right' ? -FD : 0) * zoom
+      const flyY = (side === 'top'  ? FD : side === 'bottom' ? -FD : 0) * zoom
 
-      innerEl.style.transform  = `translate(${tx}px, ${ty}px)`
-      innerEl.style.transition = close
-        ? 'transform 0.28s cubic-bezier(0.34,1.56,0.64,1)'
-        : 'transform 0.22s ease'
+      if (magnetic) {
+        // Snap to mouse on entry, then track exactly with no lag
+        if (!wasClose.current) {
+          innerEl.style.transition = 'transform 0.25s cubic-bezier(0.34,1.56,0.64,1)'
+          wasClose.current = true
+        } else {
+          innerEl.style.transition = 'none'
+        }
+        innerEl.style.transform = `translate(${dx}px, ${dy}px)`
+      } else {
+        wasClose.current = false
+        innerEl.style.transition = 'transform 0.22s ease'
+        // Hovering node but outside magnetic zone → rest at fixed fly-out position
+        // Not hovering at all → hide at fly-back offset
+        innerEl.style.transform = hovered
+          ? 'translate(0px, 0px)'
+          : `translate(${flyX}px, ${flyY}px)`
+      }
 
       const svg = innerEl.querySelector('svg') as SVGElement | null
       if (svg) {
+        const show = hovered || magnetic
         svg.style.strokeOpacity = show ? '1' : '0'
-        svg.style.transition    = close ? 'stroke-opacity 0.12s ease' : 'stroke-opacity 0.22s ease'
-        svg.style.color         = close ? 'rgb(96 165 250)' : 'rgba(148,163,184,0.75)'
+        svg.style.transition    = show ? 'stroke-opacity 0.12s ease' : 'stroke-opacity 0.22s ease'
+        svg.style.color         = magnetic ? 'rgb(96 165 250)' : 'rgba(148,163,184,0.75)'
       }
     })
   }, { passive: true })
@@ -180,6 +209,7 @@ export function MagneticZone({
   const portalWrapRef = useRef<HTMLDivElement>(null)
   // screen-space center of this zone, updated by store subscription
   const centerRef     = useRef({ x: 0, y: 0, zoom: 1 })
+  const wasCloseRef   = useRef(false)
   const storeApi      = useStoreApi()
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null)
   const { side, offsetPercent = 50 } = def
@@ -238,9 +268,10 @@ export function MagneticZone({
     ensureGlobalListener()
     const entry: ZoneEntry = {
       centerRef,
-      innerEl: innerRef.current,
+      innerEl:  innerRef.current,
       side,
       isHovered,
+      wasClose: wasCloseRef,
     }
     zones.add(entry)
     return () => { zones.delete(entry) }

@@ -1,9 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Search } from "lucide-react"
 
-import { Input } from "@/components/ui/input"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
@@ -29,14 +27,50 @@ export function P2() {
   const [templates, setTemplates] = useState<TemplateSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [activeCategory, setActiveCategory] = useState("general")
-  const [search, setSearch] = useState("")
-  const [debounced, setDebounced] = useState("")
 
-  // 搜索防抖
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search), 400)
-    return () => clearTimeout(t)
-  }, [search])
+  const handleCopyToDraft = async (id: string) => {
+    try {
+      const snapRes = await fetch(`/api/community/templates/${id}/snapshot`)
+      if (!snapRes.ok) return
+      const { nodes, edges } = await snapRes.json()
+      const tmpl = templates.find(t => t.id === id)
+      await fetch("/api/community/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name:           tmpl?.name ? `${tmpl.name} Copy` : "Untitled Workflow",
+          thumbnail:      tmpl?.thumbnail ?? undefined,
+          canvasSnapshot: { nodes, edges },
+          publish:        false,
+        }),
+      })
+      window.dispatchEvent(new CustomEvent("template:saved"))
+    } catch (e) {
+      console.error("copy to draft error", e)
+    }
+  }
+
+  const handleCopyAndLoadToCanvas = async (id: string) => {
+    try {
+      const snapRes = await fetch(`/api/community/templates/${id}/snapshot`)
+      if (!snapRes.ok) return
+      const { nodes, edges } = await snapRes.json()
+      const tmpl = templates.find(t => t.id === id)
+      // Load community canvas with Copy suffix and save current content before loading
+      window.dispatchEvent(new CustomEvent("canvas:load", {
+        detail: {
+          nodes,
+          edges,
+          draftName: tmpl?.name ? `${tmpl.name} Copy` : "Untitled Workflow Copy",
+          thumbnail: tmpl?.thumbnail ?? null,
+          saveBefore: true
+        }
+      }))
+      window.dispatchEvent(new CustomEvent("canvas:cover-change", { detail: { url: tmpl?.thumbnail ?? null } }))
+    } catch (e) {
+      console.error("copy and load error", e)
+    }
+  }
 
   useEffect(() => {
     const load = async () => {
@@ -46,7 +80,6 @@ export function P2() {
           orderBy: "popular",
           limit:   "20",
           ...(activeCategory !== "general" && { category: activeCategory }),
-          ...(debounced && { search: debounced }),
         })
         const res = await fetch(`/api/community/templates?${params}`)
         if (res.ok) {
@@ -60,27 +93,16 @@ export function P2() {
       }
     }
     load()
-  }, [activeCategory, debounced])
+  }, [activeCategory])
 
-  // 把模板按行业分组，用于分区显示
+  // Group templates by industry for section display
   const featured = templates.filter((_, i) => i < 4)
   const rest     = templates.filter((_, i) => i >= 4)
 
   return (
     <div className="border-none p-0 outline-none h-full">
 
-      {/* ── 搜索框 ── */}
-      <div className="relative mb-4">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="搜索工作流..."
-          className="pl-9 bg-slate-50 border-slate-200"
-        />
-      </div>
-
-      {/* ── 分类筛选徽章 ── */}
+      {/* ── Category Filter Badges ── */}
       <div className="flex gap-2 flex-wrap mb-4">
         {CATEGORIES.map(([key, label]) => (
           <Badge
@@ -94,7 +116,7 @@ export function P2() {
         ))}
       </div>
 
-      {/* ── 热门精选（大卡片）── */}
+      {/* ── Featured (Large Cards) ── */}
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">Industries</h2>
@@ -116,18 +138,18 @@ export function P2() {
                       width={250}
                       height={330}
                       className="w-[250px] flex-shrink-0"
+                      onCopyToDraft={handleCopyToDraft}
+                      onCopyAndLoadToCanvas={handleCopyAndLoadToCanvas}
                     />
                   ))
-                : <p className="text-sm text-muted-foreground py-4">
-                    {debounced ? `没有找到 "${debounced}" 的相关工作流` : "暂无模板"}
-                  </p>
+                    : <p className="text-sm text-muted-foreground py-4">No templates</p>
             }
           </div>
           <ScrollBar orientation="horizontal" />
         </ScrollArea>
       </div>
 
-      {/* ── 更多模板（小卡片）── */}
+      {/* ── More Templates (Small Cards) ── */}
       {(loading || rest.length > 0) && (
         <>
           <div className="mt-6 space-y-1">
@@ -148,6 +170,8 @@ export function P2() {
                         width={150}
                         height={150}
                         className="w-[150px] flex-shrink-0"
+                        onCopyToDraft={handleCopyToDraft}
+                        onCopyAndLoadToCanvas={handleCopyAndLoadToCanvas}
                       />
                     ))
                 }

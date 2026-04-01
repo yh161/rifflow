@@ -124,6 +124,13 @@ export function useNodeOperations(canvasState: CanvasState) {
     if (!quickAddMenu) return
     const mod = MODULE_BY_ID[type]
     const id = `${type}-${Date.now()}`
+
+    // Get source node info to determine parent container
+    const sourceNode = quickAddMenu.sourceNodeId
+      ? nodesRef.current.find((n) => n.id === quickAddMenu.sourceNodeId)
+      : null
+
+    // Calculate base position
     const pos = quickAddMenu.sourceNodeId
       ? (() => {
           const h = (mod?.defaultData?.height as number | undefined) ?? 180
@@ -139,12 +146,55 @@ export function useNodeOperations(canvasState: CanvasState) {
       return
     }
 
-    setNodes((nds) => nds.concat({
+    // Build node data - inherit templateId and instanceIdx from source if applicable
+    const nodeData: Record<string, unknown> = { ...mod?.defaultData, type }
+
+    // If source node is inside a template or is a template/instance child, inherit container info
+    if (sourceNode) {
+      // Case 1: Source is directly inside a template/lasso (has parentNode)
+      if (sourceNode.parentNode) {
+        nodeData.templateId = sourceNode.parentNode
+        // If source has instanceIdx, inherit it (source is in an instance view)
+        if (sourceNode.data?.instanceIdx !== undefined) {
+          nodeData.instanceIdx = sourceNode.data.instanceIdx
+        }
+      }
+      // Case 2: Source itself is a template/lasso node
+      else if (sourceNode.data?.type === 'template' || sourceNode.data?.type === 'lasso') {
+        // New node becomes a child of this container
+        nodeData.templateId = sourceNode.id
+      }
+      // Case 3: Source has a templateId (it's a template child node)
+      else if (sourceNode.data?.templateId) {
+        nodeData.templateId = sourceNode.data.templateId
+        if (sourceNode.data?.instanceIdx !== undefined) {
+          nodeData.instanceIdx = sourceNode.data.instanceIdx
+        }
+      }
+    }
+
+    const newNode: Node = {
       id,
       type: type === "standard" ? "StandardNode" : "CustomNode",
       position: pos,
-      data: { ...mod?.defaultData, type: type as any },
-    }))
+      data: nodeData as AnyNodeData,
+    }
+
+    // If the new node belongs to a container, add parentNode and extent
+    if (nodeData.templateId) {
+      const parentNode = nodesRef.current.find((n) => n.id === nodeData.templateId)
+      if (parentNode) {
+        newNode.parentNode = nodeData.templateId as string
+        newNode.extent = "parent"
+        // Adjust position to be relative to parent
+        newNode.position = {
+          x: pos.x - parentNode.position.x,
+          y: pos.y - parentNode.position.y,
+        }
+      }
+    }
+
+    setNodes((nds) => nds.concat(newNode))
 
     if (quickAddMenu.sourceNodeId) {
       setEdges((es) => addEdge({
@@ -158,7 +208,7 @@ export function useNodeOperations(canvasState: CanvasState) {
     clearQuickAddMenu()
 
     if (MODULE_BY_ID[type]?.meta.opensEditor) setEditorNodeId(id)
-  }, [centerPosition, removeGhost, setNodes, setEdges, clearQuickAddMenu, setEditorNodeId])
+  }, [centerPosition, removeGhost, nodesRef, setNodes, setEdges, clearQuickAddMenu, setEditorNodeId])
 
   // ─────────────────────────────────────────────
   // Node editing operations
@@ -217,7 +267,7 @@ export function useNodeOperations(canvasState: CanvasState) {
               changed = true
               continue
             }
-            if (n.data?.loopId && idsToRemove.has(n.data.loopId)) {
+            if (n.data?.templateId && idsToRemove.has(n.data.templateId)) {
               idsToRemove.add(n.id)
               changed = true
             }
@@ -282,14 +332,14 @@ export function useNodeOperations(canvasState: CanvasState) {
         type: type === "template" ? "TemplateNode" : type === "lasso" ? "LassoNode" : "CustomNode",
         position: centeredPos,
         ...((type === "template" || type === "lasso") && { style: { width: mod?.defaultData?.width ?? 520, height: mod?.defaultData?.height ?? 400 }, zIndex: -1 }),
-        data: { ...mod?.defaultData, type: type as any },
+        data: { ...mod?.defaultData, type: type as AnyNodeData['type'] },
       }))
       setEditorNodeId(id)
       return
     }
 
     setPendingPos({ ...centeredPos, type })
-    setDraftData({ ...mod?.defaultData, type: type as any })
+    setDraftData({ ...mod?.defaultData, type: type as AnyNodeData['type'] })
   }, [centerPosition, setNodes, setEditorNodeId, setPendingPos, setDraftData])
 
   const handleConfirmNode = useCallback((pendingPos: { x: number; y: number; type: string } | null, draftData: Partial<AnyNodeData>) => {
@@ -299,10 +349,10 @@ export function useNodeOperations(canvasState: CanvasState) {
       id,
       type: pendingPos.type === "standard" ? "StandardNode" : "CustomNode",
       position: { x: pendingPos.x, y: pendingPos.y },
-      ...(pendingPos.type === "standard" && { style: { width: 240, height: 120 } }),
-      ...(pendingPos.type === "image" && (draftData as any).width && {
-        style: { width: (draftData as any).width, height: (draftData as any).height },
-      }),
+      ...(pendingPos.type === "standard" ? { style: { width: 240, height: 120 } } : {}),
+      ...(pendingPos.type === "image" && (draftData as Record<string, unknown>).width
+        ? { style: { width: (draftData as Record<string, unknown>).width as number, height: (draftData as Record<string, unknown>).height as number } }
+        : {}),
       data: { ...draftData },
     }))
     clearPendingState()

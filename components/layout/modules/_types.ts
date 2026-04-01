@@ -21,21 +21,22 @@ export interface StandardNodeData {
 }
 
 // Edge data for container nodes (Template)
-export interface LoopEdgeData {
-  loopId?: string
+export interface TemplateEdgeData {
+  templateId?: string
   instanceIdx?: number
   templateEdgeId?: string
 }
 
-// DEPRECATED — kept for migration
-export interface LoopChildSnapshot {
+
+// Template child snapshot for instance cloning
+export interface TemplateChildSnapshot {
   id:   string
-  data: Record<string, any>
+  data: Record<string, unknown>
 }
-export interface LoopInstance {
+export interface TemplateInstance {
   id:       string
   modified: boolean
-  children: LoopChildSnapshot[]
+  children: TemplateChildSnapshot[]
   seedContent?: string
 }
 
@@ -53,7 +54,7 @@ export interface FilterResult {
 
 export interface CustomNodeData {
   label?: string
-  type: 'text' | 'image' | 'video' | 'filter' | 'template' | 'seed' | 'lasso'
+  type: 'text' | 'image' | 'video' | 'pdf' | 'filter' | 'template' | 'seed' | 'lasso'
   width?: number
   height?: number
   // text
@@ -66,28 +67,48 @@ export interface CustomNodeData {
   naturalHeight?: number
   fileName?: string
   rawFile?: File
+  rotation?: number  // rotation angle in degrees (0, 90, 180, 270)
   // video
   videoSrc?: string
   videoPoster?: string
   videoDuration?: string
+  // pdf
+  pdfSrc?: string
+  pdfPageCount?: number
+  pdfCurrentPage?: number
+  pdfOutputRules?: Array<{ pages: string; dpi: number }>
+  pdfOutputImages?: string[]
+  pdfOutputPageNums?: number[]
+  pdfPreviewDpi?: number
+  pdfIncludeCurrentPage?: boolean
+  pdfIncludeCurrentPageDpi?: number
+  pdfPlanRaw?: string
+  pdfPlanError?: string
   // container data (template)
   seedContent?: string
   templatePrompt?: string
-  loopCount?: number
+  templateCount?: number    // max instances cap for template
+  // DEPRECATED: use templateCount
+  templateCountLegacy?: number
   currentInstance?: number   // -1 = template view, 0+ = instance index
   instanceCount?: number     // total instances (flat model)
-  // DEPRECATED — old array-based instances
-  instances?: LoopInstance[]
+  // DEPRECATED — old array-based instances (kept for backward compatibility with saved drafts)
+  instances?: TemplateInstance[]
   // flat instance fields (on child nodes)
-  loopId?: string            // which container this node belongs to
+  templateId?: string        // which container this node belongs to
+  // DEPRECATED: use templateId
+  templateIdLegacy?: string
   instanceIdx?: number       // undefined = template child, 0+ = instance child
   templateNodeId?: string    // for cloned nodes: original template node id
+  // inline preview (show prompt text below node on canvas)
+  showPromptInline?: boolean
   // LLM fields
   prompt?:       string
   model?:        string
-  mode?:         "auto" | "manual"
+  mode?:         "auto" | "manual" | "done"
   params?:       Record<string, string>  // generation params (duration, fps, style, etc.)
   isGenerating?: boolean
+  generationError?: string
   // filter
   filterInputMode?: 'label' | 'content'
   filterResult?: FilterResult
@@ -95,6 +116,9 @@ export interface CustomNodeData {
   isExpanded?: boolean
   isEditing?: boolean
   isLocked?: boolean
+  isDragHovered?: boolean       // set transiently by canvas when an external node is dragged over this container
+  isDragEjecting?: boolean      // set transiently when a child node is being forced against the container wall
+  isDragEjectingReady?: boolean // set transiently when overshoot exceeds eject threshold (about to pop out)
   isSeed?: boolean           // auto-created Seed inside Batch containers
   onDataChange?: (updates: Partial<CustomNodeData>) => void
   onDelete?: () => void
@@ -102,7 +126,7 @@ export interface CustomNodeData {
 
 export type AnyNodeData = StandardNodeData & CustomNodeData & Record<string, unknown>
 
-export type NodeMode = "auto" | "manual"
+export type NodeMode = "auto" | "manual" | "done"
 
 export interface ModuleModalProps {
   data: AnyNodeData
@@ -115,7 +139,11 @@ export interface ModuleModalProps {
   isGenerating?: boolean
   onGenerate?: (prompt: string, model: string, params: Record<string, string>) => void
   onStop?: () => void
-  // For template — use existing loop instance management
-  onLoopAddInstance?: (loopId: string, seedContent?: string) => void
-  onLoopSwitchView?: (loopId: string, viewIdx: number) => void
+  // For template — use existing template instance management
+  onTemplateAddInstance?: (templateId: string, seedContent?: string) => void
+  onTemplateSwitchView?: (templateId: string, viewIdx: number) => void
+  // DEPRECATED: use onTemplateAddInstance
+  onTemplateAddInstanceLegacy?: (templateIdLegacy: string, seedContent?: string) => void
+  // DEPRECATED: use onTemplateSwitchView
+  onTemplateSwitchViewLegacy?: (templateIdLegacy: string, viewIdx: number) => void
 }

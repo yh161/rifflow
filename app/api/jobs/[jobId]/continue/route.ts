@@ -3,15 +3,15 @@ import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { WorkflowEngine } from "@/app/services/workflow.service"
-import type { BatchJobResult } from "@/app/services/job.service"
+import type { TemplateJobResult } from "@/app/services/job.service"
 import type { Prisma } from "@prisma/client"
 
 // ─────────────────────────────────────────────
 // POST /api/jobs/[jobId]/continue
 //
 // Called by the frontend after it has:
-//   1. Received seeds from the batch job (stage='seeds_ready')
-//   2. Created all instances (onLoopAddInstance)
+//   1. Received seeds from the template job (stage='seeds_ready')
+//   2. Created all instances (onTemplateAddInstance)
 //   3. Filled each seed node with generated content
 //
 // Body: {
@@ -43,7 +43,7 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 })
   }
 
-  const existingResult = (job.result ?? {}) as unknown as BatchJobResult
+  const existingResult = (job.result ?? {}) as unknown as TemplateJobResult
   if (existingResult.stage !== "seeds_ready") {
     return NextResponse.json(
       { error: `Wrong stage: expected seeds_ready, got ${existingResult.stage}` },
@@ -64,7 +64,7 @@ export async function POST(
   }
 
   // Transition to executing_workflows immediately
-  const initResult: BatchJobResult = {
+  const initResult: TemplateJobResult = {
     ...existingResult,
     stage:            "executing_workflows",
     workflowProgress: { current: 0, total: instances.length },
@@ -76,15 +76,15 @@ export async function POST(
   })
 
   // Fire-and-forget: execute each instance workflow sequentially
-  void runBatchWorkflows(jobId, session.user.id, instances, existingResult)
+  void runTemplateWorkflows(jobId, session.user.id, instances, existingResult)
 
   return NextResponse.json({ ok: true })
 }
 
 // ─────────────────────────────────────────────
-// runBatchWorkflows — runs in the background
+// runTemplateWorkflows — runs in the background
 // ─────────────────────────────────────────────
-async function runBatchWorkflows(
+async function runTemplateWorkflows(
   jobId:          string,
   userId:         string,
   instances:      Array<{
@@ -92,7 +92,7 @@ async function runBatchWorkflows(
     nodes: Array<{ id: string; type: string; data: Record<string, unknown> }>
     edges: Array<{ id: string; source: string; target: string }>
   }>,
-  existingResult: BatchJobResult,
+  existingResult: TemplateJobResult,
 ): Promise<void> {
   const engine          = new WorkflowEngine()
   const allResults:      Record<string, unknown> = {}
@@ -105,7 +105,7 @@ async function runBatchWorkflows(
       // Start workflow for this instance
       const { workflowJobId, success } = await engine.executeWorkflow(userId, { nodes, edges })
       if (!success) {
-        console.error(`[batch/continue] Instance ${i} workflow failed to start`)
+        console.error(`[template/continue] Instance ${i} workflow failed to start`)
         continue
       }
 
@@ -117,7 +117,7 @@ async function runBatchWorkflows(
 
       // Update progress in job.result after each instance
       const current   = i + 1
-      const progResult: BatchJobResult = {
+      const progResult: TemplateJobResult = {
         ...existingResult,
         stage:            "executing_workflows",
         workflowProgress: { current, total },
@@ -130,7 +130,7 @@ async function runBatchWorkflows(
     }
 
     // All instances done
-    const doneResult: BatchJobResult = {
+    const doneResult: TemplateJobResult = {
       ...existingResult,
       stage:            "done",
       workflowProgress: { current: total, total },
@@ -145,12 +145,12 @@ async function runBatchWorkflows(
     })
 
   } catch (err: unknown) {
-    console.error("[batch/continue] runBatchWorkflows failed:", err)
+    console.error("[template/continue] runTemplateWorkflows failed:", err)
     await prisma.job.update({
       where: { id: jobId },
       data: {
         status: "failed",
-        error:  err instanceof Error ? err.message : "Batch workflow execution failed",
+        error:  err instanceof Error ? err.message : "Template workflow execution failed",
       },
     })
   }
@@ -179,7 +179,7 @@ async function waitForWorkflow(
     }
 
     if (wfJob.status === "failed") {
-      console.error(`[batch/continue] Workflow ${workflowJobId} failed:`, wfJob.error)
+      console.error(`[template/continue] Workflow ${workflowJobId} failed:`, wfJob.error)
       return null
     }
 
@@ -187,6 +187,6 @@ async function waitForWorkflow(
     await new Promise(r => setTimeout(r, POLL_MS))
   }
 
-  console.error(`[batch/continue] Workflow ${workflowJobId} timed out`)
+  console.error(`[template/continue] Workflow ${workflowJobId} timed out`)
   return null
 }

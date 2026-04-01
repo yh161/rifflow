@@ -1,8 +1,14 @@
 "use client"
 
-import React, { useState, useRef, useLayoutEffect, useCallback, useEffect, useImperativeHandle } from "react"
-import { useReactFlow } from "reactflow"
-import { Sparkles, Zap, RefreshCw, Square, Bot, Hand, ChevronUp, Infinity, Hash } from "lucide-react"
+import React, { useState, useRef, useLayoutEffect, useCallback, useEffect, useImperativeHandle, useMemo } from "react"
+import { creditLabel, calculateCreditCost } from "@/lib/credits"
+import { useReactFlow, useNodes } from "reactflow"
+import { EditorContent, useEditor } from "@tiptap/react"
+import StarterKit from "@tiptap/starter-kit"
+import { Node as TiptapNode, mergeAttributes, type JSONContent, type Editor as TiptapEditor } from "@tiptap/core"
+import type { DOMOutputSpec } from "@tiptap/pm/model"
+import { TextSelection } from "@tiptap/pm/state"
+import { Sparkles, Zap, RefreshCw, Square, Bot, Hand, ChevronUp, Infinity, Hash, StickyNote, Lock, SlidersHorizontal, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   DropdownMenu,
@@ -10,9 +16,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import * as SliderPrimitive from "@radix-ui/react-slider"
 import type { CustomNodeData, NodeMode } from "../modules/_types"
 import { UpstreamReference } from "./_upstream_reference"
+import { getRefChipIconDataUri } from "./_ref_chip_icon"
+import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, type ModelDef } from "@/lib/models"
 import { getTypeColor, getThumbnail } from "@/lib/image-compress"
 import { MODULE_BY_ID } from "../modules/_registry"
 
@@ -27,103 +36,216 @@ export type { NodeMode }
 
 /** Poll for node id → { label, type, src } while mounted */
 function useNodeDataMap() {
-  const { getNodes } = useReactFlow()
-  const [nodeMap, setNodeMap] = useState<Map<string, { label: string; type: string; src?: string }>>(new Map())
-  useEffect(() => {
-    const compute = () => {
-      const map = new Map<string, { label: string; type: string; src?: string }>()
-      getNodes().forEach((n) => {
-        const d = n.data as CustomNodeData & { src?: string; videoPoster?: string }
-        map.set(n.id, {
-          label: d.label || n.id.slice(-6),
-          type:  d.type  || 'text',
-          src:   d.src   || d.videoPoster,
-        })
+  const nodes = useNodes<CustomNodeData>()
+  return useMemo(() => {
+    const map = new Map<string, { label: string; type: string; src?: string }>()
+    nodes.forEach((n) => {
+      const d = n.data as CustomNodeData & { src?: string; videoPoster?: string }
+      map.set(n.id, {
+        label: d.label || n.id.slice(-6),
+        type:  d.type  || 'text',
+        src:   d.src   || d.videoPoster,
       })
-      setNodeMap(map)
-    }
-    compute()
-    const timer = setInterval(compute, 1000)
-    return () => clearInterval(timer)
-  }, [getNodes])
-  return nodeMap
+    })
+    return map
+  }, [nodes])
 }
 
 const REF_SPLIT = /(\{\{[^}]+\}\})/g
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
+const RefChipNode = TiptapNode.create({
+  name: 'refChip',
+  inline: true,
+  group: 'inline',
+  atom: true,
+  selectable: false,
 
-/** Returns the inner SVG elements for a given node type (matches Lucide icons used in modules). */
-function getTypeIconSvgInner(type: string): string {
-  switch (type) {
-    case 'text':
-      return '<line x1="21" x2="3" y1="6" y2="6" stroke-linecap="round"/><line x1="15" x2="3" y1="12" y2="12" stroke-linecap="round"/><line x1="17" x2="3" y1="18" y2="18" stroke-linecap="round"/>'
-    case 'image':
-      return '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>'
-    case 'video':
-      return '<path d="m22 8-6 4 6 4V8z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>'
-    case 'filter':
-      return '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>'
-    case 'seed':
-      return '<path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>'
-    case 'template':
-      return '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m6.08 9.5-3.5 1.6a1 1 0 0 0 0 1.81l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9a1 1 0 0 0 0-1.83l-3.5-1.59"/>'
-    default:
-      return '<line x1="21" x2="3" y1="6" y2="6" stroke-linecap="round"/><line x1="15" x2="3" y1="12" y2="12" stroke-linecap="round"/>'
-  }
-}
-
-function buildChipHtml(nodeId: string, info: { label: string; type: string } | undefined): string {
-  const label = info?.label || nodeId.slice(-6)
-  const type  = info?.type  || 'text'
-  const color = getTypeColor(type)
-  // Icon box: 16×16 with Lucide SVG icon — matches upstream-reference REF chip style
-  const iconBox =
-    `<span data-chip-icon style="display:inline-flex;align-items:center;justify-content:center;` +
-    `width:16px;height:16px;border-radius:4px;background-color:${color}20;flex-shrink:0;">` +
-    `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" ` +
-    `fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
-    getTypeIconSvgInner(type) +
-    `</svg></span>`
-  return (
-    `<span contenteditable="false" data-ref="${escapeHtml(nodeId)}" ` +
-    `style="background-color:#ffffff;border:1px solid #e2e8f0;color:#475569;` +
-    `display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 4px;border-radius:6px;` +
-    `font-size:9px;font-weight:500;line-height:inherit;vertical-align:middle;user-select:none;">` +
-    iconBox +
-    `<span data-chip-label style="max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</span>` +
-    `</span>`
-  )
-}
-
-function valueToHtml(text: string, nodeMap: Map<string, { label: string; type: string }>): string {
-  if (!text) return ''
-  return text
-    .split(REF_SPLIT)
-    .map((part) => {
-      const m = part.match(/^\{\{([^}]+)\}\}$/)
-      if (m) return buildChipHtml(m[1].trim(), nodeMap.get(m[1].trim()))
-      return escapeHtml(part).replace(/\n/g, '<br>')
-    })
-    .join('')
-}
-
-function serializeContent(div: HTMLDivElement): string {
-  let text = ''
-  const walk = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent ?? ''
-    } else if (node instanceof HTMLElement) {
-      if (node.dataset.ref) { text += `{{${node.dataset.ref}}}`; return }
-      if (node.tagName === 'BR') { text += '\n'; return }
-      node.childNodes.forEach(walk)
-      if ((node.tagName === 'DIV' || node.tagName === 'P') && node !== div) text += '\n'
+  addAttributes() {
+    return {
+      nodeId: { default: '' },
+      label: { default: '' },
+      type: { default: 'text' },
+      thumb: { default: null },
     }
-  }
-  div.childNodes.forEach(walk)
-  return text.replace(/\n$/, '') // strip trailing newline contentEditable appends
+  },
+
+  parseHTML() {
+    return [{ tag: 'span[data-ref]' }]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const nodeId = String(HTMLAttributes.nodeId || HTMLAttributes['data-ref'] || '')
+    const type = String(HTMLAttributes.type || 'text')
+    const label = String(HTMLAttributes.label || nodeId.slice(-6))
+    const thumb = HTMLAttributes.thumb ? String(HTMLAttributes.thumb) : null
+    const color = getTypeColor(type)
+
+    const iconContent: DOMOutputSpec = thumb
+      ? ['img', { src: thumb, style: 'width:16px;height:16px;object-fit:cover;display:block;border-radius:4px;' }]
+      : ['img', {
+          src: getRefChipIconDataUri(type, color),
+          style: 'width:10px;height:10px;display:block;'
+        }]
+
+    return [
+      'span',
+      mergeAttributes(HTMLAttributes, {
+        'data-ref': nodeId,
+        contenteditable: 'false',
+        style:
+          'background-color:#ffffff;border:1px solid #e2e8f0;color:#475569;' +
+          'display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 3px;border-radius:6px;' +
+          'font-size:9px;font-weight:500;line-height:normal;vertical-align:middle;user-select:none;margin:0 1px;cursor:default;',
+      }),
+      [
+        'span',
+        {
+          style:
+            `display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:4px;` +
+            `background-color:${thumb ? 'transparent' : `${color}20`};flex-shrink:0;overflow:hidden;`,
+        },
+        iconContent,
+      ],
+      ['span', { style: 'display:block;line-height:1.3;max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-bottom:1px;' }, label],
+    ]
+  },
+
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement('span')
+      dom.contentEditable = 'false'
+      dom.style.display = 'inline-flex'
+      dom.style.alignItems = 'center'
+      dom.style.verticalAlign = 'middle'
+      dom.style.whiteSpace = 'nowrap'
+
+      const makeAnchor = () => {
+        const a = document.createElement('span')
+        a.setAttribute('aria-hidden', 'true')
+        a.style.display = 'inline-block'
+        a.style.width = '1px'
+        a.style.height = '1em'
+        a.style.pointerEvents = 'none'
+        a.style.flexShrink = '0'
+        return a
+      }
+
+      const leftAnchor = makeAnchor()
+      const rightAnchor = makeAnchor()
+
+      const chip = document.createElement('span')
+      chip.contentEditable = 'false'
+      chip.style.cssText =
+        'background-color:#ffffff;border:1px solid #e2e8f0;color:#475569;' +
+        'display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 3px;border-radius:6px;' +
+        'font-size:9px;font-weight:500;line-height:normal;vertical-align:middle;user-select:none;margin:0 1px;cursor:default;'
+
+      const iconWrap = document.createElement('span')
+      iconWrap.style.cssText =
+        'display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;' +
+        'border-radius:4px;flex-shrink:0;overflow:hidden;'
+
+      const labelSpan = document.createElement('span')
+      labelSpan.style.cssText =
+        'display:block;line-height:1.3;max-width:60px;overflow:hidden;' +
+        'text-overflow:ellipsis;white-space:nowrap;padding-bottom:1px;'
+
+      chip.append(iconWrap, labelSpan)
+      dom.append(leftAnchor, chip, rightAnchor)
+
+      const applyAttrs = (attrs: Record<string, unknown>) => {
+        const nodeId = String(attrs.nodeId || '')
+        const type = String(attrs.type || 'text')
+        const label = String(attrs.label || nodeId.slice(-6))
+        const thumb = attrs.thumb ? String(attrs.thumb) : null
+        const color = getTypeColor(type)
+
+        chip.setAttribute('data-ref', nodeId)
+        iconWrap.style.backgroundColor = thumb ? 'transparent' : `${color}20`
+        labelSpan.textContent = label
+
+        while (iconWrap.firstChild) iconWrap.removeChild(iconWrap.firstChild)
+        const img = document.createElement('img')
+        if (thumb) {
+          img.src = thumb
+          img.style.cssText = 'width:16px;height:16px;object-fit:cover;display:block;border-radius:4px;'
+        } else {
+          img.src = getRefChipIconDataUri(type, color)
+          img.style.cssText = 'width:10px;height:10px;display:block;'
+        }
+        iconWrap.appendChild(img)
+      }
+
+      applyAttrs(node.attrs as Record<string, unknown>)
+
+      return {
+        dom,
+        update(updatedNode) {
+          if (updatedNode.type.name !== 'refChip') return false
+          applyAttrs(updatedNode.attrs as Record<string, unknown>)
+          return true
+        },
+      }
+    }
+  },
+})
+
+function valueToDoc(
+  text: string,
+  nodeMap: Map<string, { label: string; type: string; src?: string }>,
+  thumbCache: Map<string, string>
+): JSONContent {
+  if (!text) return { type: 'doc', content: [{ type: 'paragraph' }] }
+
+  const lines = text.split('\n')
+  const paragraphs: JSONContent[] = lines.map((line) => {
+    const content: JSONContent[] = []
+    line.split(REF_SPLIT).forEach((part) => {
+      const m = part.match(/^\{\{([^}]+)\}\}$/)
+      if (m) {
+        const nodeId = m[1].trim()
+        const info = nodeMap.get(nodeId)
+        const thumb = info?.src ? thumbCache.get(info.src) ?? null : null
+        content.push({
+          type: 'refChip',
+          attrs: {
+            nodeId,
+            label: info?.label || nodeId.slice(-6),
+            type: info?.type || 'text',
+            thumb,
+          },
+        })
+      } else if (part) {
+        content.push({ type: 'text', text: part })
+      }
+    })
+
+    return content.length > 0
+      ? { type: 'paragraph', content }
+      : { type: 'paragraph' }
+  })
+
+  return { type: 'doc', content: paragraphs }
+}
+
+function docToValue(doc: JSONContent | null | undefined): string {
+  if (!doc || !Array.isArray(doc.content)) return ''
+
+  const lines = doc.content
+    .filter((n) => n?.type === 'paragraph')
+    .map((paragraph) => {
+      const content = Array.isArray(paragraph.content) ? paragraph.content : []
+      return content
+        .map((node) => {
+          if (node.type === 'text') return node.text || ''
+          if (node.type === 'hardBreak') return '\n'
+          if (node.type === 'refChip') return `{{${String(node.attrs?.nodeId || '')}}}`
+          return ''
+        })
+        .join('')
+    })
+
+  return lines.join('\n').replace(/\n$/, '')
 }
 
 export interface RefPromptEditorHandle {
@@ -142,176 +264,222 @@ export const RefPromptEditor = React.forwardRef<
     className?: string
   }
 >(function RefPromptEditor({ value, onChange, readOnly, placeholder, minHeight = 100, className }, ref) {
-  const editorRef       = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<TiptapEditor | null>(null)
   const nodeMap         = useNodeDataMap()
-  const nodeMapRef      = useRef(nodeMap)
-  nodeMapRef.current    = nodeMap
   const [thumbCache, setThumbCache] = useState<Map<string, string>>(new Map())
   const loadingThumbsRef = useRef<Set<string>>(new Set())
+  const lastUserInputAtRef = useRef<number>(0)
+  const deferredChipSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [chipSyncRetryTick, setChipSyncRetryTick] = useState(0)
+
+  const scheduleChipSyncRetry = useCallback(() => {
+    if (deferredChipSyncTimerRef.current) clearTimeout(deferredChipSyncTimerRef.current)
+    deferredChipSyncTimerRef.current = setTimeout(() => {
+      setChipSyncRetryTick((v) => v + 1)
+    }, 900)
+  }, [])
 
   // Track last serialized value to break the onChange → value prop → DOM update loop
   const lastValueRef = useRef<string>('')
 
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions: [
+      StarterKit.configure({
+        heading: false,
+        blockquote: false,
+        bulletList: false,
+        orderedList: false,
+        codeBlock: false,
+        horizontalRule: false,
+        bold: false,
+        italic: false,
+        strike: false,
+        code: false,
+      }),
+      RefChipNode,
+    ],
+    content: valueToDoc(value, nodeMap, thumbCache),
+    editable: !readOnly,
+    editorProps: {
+      attributes: {
+        class: 'w-full outline-none p-3 text-sm text-slate-600 leading-relaxed break-words [&>p]:m-0',
+        style: `min-height:${minHeight}px`,
+      },
+      handleKeyDown(view, event) {
+        const { state } = view
+        const sel = state.selection
+        if (!sel.empty) return false
+
+        if (event.key === 'ArrowLeft') {
+          const { $from } = sel
+          const left = $from.nodeBefore
+          if (left?.type?.name === 'refChip') {
+            event.preventDefault()
+            const posBefore = $from.pos - left.nodeSize
+            view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, posBefore)))
+            return true
+          }
+        }
+
+        if (event.key === 'ArrowRight') {
+          const { $from } = sel
+          const right = $from.nodeAfter
+          if (right?.type?.name === 'refChip') {
+            event.preventDefault()
+            const posAfter = $from.pos + right.nodeSize
+            view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, posAfter)))
+            return true
+          }
+        }
+
+        return false
+      },
+      handlePaste(view, event) {
+        event.preventDefault()
+        const text = event.clipboardData?.getData('text/plain') ?? ''
+        if (text) {
+          view.dispatch(view.state.tr.insertText(text))
+        }
+        return true
+      },
+    },
+    onUpdate({ editor }) {
+      const serialized = docToValue(editor.getJSON())
+      if (editor.isFocused && serialized !== lastValueRef.current) {
+        lastUserInputAtRef.current = Date.now()
+      }
+      lastValueRef.current = serialized
+      onChange(serialized)
+    },
+  })
+
+  useEffect(() => {
+    editorRef.current = editor
+  }, [editor])
+
+  useEffect(() => {
+    return () => {
+      if (deferredChipSyncTimerRef.current) clearTimeout(deferredChipSyncTimerRef.current)
+    }
+  }, [])
+
   // ── Imperative API ──────────────────────────────────────────────────────
   useImperativeHandle(ref, () => ({
     insertReference(nodeId: string) {
-      const div = editorRef.current
-      if (!div || readOnly) return
+      const current = editorRef.current
+      if (!current || readOnly) return
 
-      // Build chip element
-      const tmp = document.createElement('span')
-      tmp.innerHTML = buildChipHtml(nodeId, nodeMapRef.current.get(nodeId))
-      const chip = tmp.firstChild as ChildNode
+      const info = nodeMap.get(nodeId)
+      const src = info?.src
+      const thumb = src ? thumbCache.get(src) ?? null : null
+      current
+        .chain()
+        .focus()
+        .insertContent({
+          type: 'refChip',
+          attrs: {
+            nodeId,
+            label: info?.label || nodeId.slice(-6),
+            type: info?.type || 'text',
+            thumb,
+          },
+        })
+        .run()
+      lastUserInputAtRef.current = Date.now()
 
-      // Insert at current cursor if already inside the editor, else append to end
-      const sel = window.getSelection()
-      if (sel && sel.rangeCount > 0 && div.contains(sel.anchorNode)) {
-        const range = sel.getRangeAt(0)
-        range.deleteContents()
-        range.insertNode(chip)
-      } else {
-        div.appendChild(chip)
+      if (src && !thumbCache.has(src) && !loadingThumbsRef.current.has(src)) {
+        loadingThumbsRef.current.add(src)
+        getThumbnail(src, 28)
+          .then((t) => {
+            if (t) {
+              setThumbCache((prev) => new Map(prev).set(src, t))
+            }
+          })
+          .catch(() => {})
+          .finally(() => { loadingThumbsRef.current.delete(src) })
       }
-
-      // Serialize and report change immediately (before focus/cursor settle)
-      const serialized = serializeContent(div)
-      lastValueRef.current = serialized
-      onChange(serialized)
-
-      // Focus + place cursor after chip.
-      // Use requestAnimationFrame so the browser has processed the DOM mutation
-      // and focus events before we set the Selection — fixes the empty-div case
-      // where addRange fails if called synchronously during a focus transition.
-      div.focus()
-      requestAnimationFrame(() => {
-        try {
-          const sel2 = window.getSelection()
-          const after = document.createRange()
-          after.setStartAfter(chip)
-          after.collapse(true)
-          sel2?.removeAllRanges()
-          sel2?.addRange(after)
-        } catch {
-          // Silently ignore if chip was removed in the meantime
-        }
-      })
     },
-    focus() { editorRef.current?.focus() },
-  }), [onChange, readOnly])
+    focus() { editorRef.current?.chain().focus().run() },
+  }), [nodeMap, readOnly, thumbCache])
+
+  useEffect(() => {
+    if (!editor) return
+    editor.setEditable(!readOnly)
+  }, [editor, readOnly])
 
   // ── Sync external value → DOM ───────────────────────────────────────────
   useEffect(() => {
-    const div = editorRef.current
-    if (!div) return
+    if (!editor) return
     if (lastValueRef.current === value) return // originated from user typing — skip
     lastValueRef.current = value
-    div.innerHTML = valueToHtml(value, nodeMapRef.current)
-    if (document.activeElement === div) {
-      // Keep cursor at end when focused (e.g. after programmatic insert)
-      const r = document.createRange()
-      r.selectNodeContents(div)
-      r.collapse(false)
-      window.getSelection()?.removeAllRanges()
-      window.getSelection()?.addRange(r)
-    }
-  }, [value])
+    editor.commands.setContent(valueToDoc(value, nodeMap, thumbCache), { emitUpdate: false })
+  }, [editor, nodeMap, thumbCache, value])
 
   // ── Update chip labels/icons/thumbnails in-place when nodeMap or thumbCache refreshes ──
   useEffect(() => {
-    const div = editorRef.current
-    if (!div) return
-    div.querySelectorAll<HTMLElement>('[data-ref]').forEach((chip) => {
-      const nodeId = chip.dataset.ref!
-      const info   = nodeMap.get(nodeId)
+    if (!editor) return
 
-      if (!info) {
-        // Node was deleted — grey out and strikethrough
-        chip.style.opacity         = '0.4'
-        chip.style.textDecoration  = 'line-through'
-        return
+    const tr = editor.state.tr
+    let changed = false
+    let hasVisualOnlyChange = false
+
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name !== 'refChip') return
+
+      const nodeId = String(node.attrs.nodeId || '')
+      const info = nodeMap.get(nodeId)
+      if (!info) return
+
+      const src = info.src
+      const thumb = src ? thumbCache.get(src) ?? null : null
+
+      const nextAttrs = {
+        ...node.attrs,
+        label: info.label || nodeId.slice(-6),
+        type: info.type || 'text',
+        thumb,
       }
 
-      chip.style.opacity        = ''
-      chip.style.textDecoration = ''
+      const labelChanged = nextAttrs.label !== node.attrs.label
+      const typeChanged = nextAttrs.type !== node.attrs.type
+      const thumbChanged = nextAttrs.thumb !== node.attrs.thumb
 
-      const label = info.label || nodeId.slice(-6)
-      const color = getTypeColor(info.type)
-
-      const labelEl = chip.querySelector('[data-chip-label]')
-      if (labelEl && labelEl.textContent !== label) labelEl.textContent = label
-
-      const iconEl = chip.querySelector<HTMLElement>('[data-chip-icon]')
-      if (!iconEl) return
-
-      const thumb = info.src ? thumbCache.get(info.src) : undefined
-
-      if (thumb) {
-        // Show compressed thumbnail — identical to REF chip img style
-        iconEl.style.backgroundColor = 'transparent'
-        iconEl.style.borderRadius    = '4px'
-        iconEl.style.overflow        = 'hidden'
-        iconEl.innerHTML = `<img src="${thumb}" style="width:16px;height:16px;object-fit:cover;display:block;border-radius:4px;" />`
-      } else {
-        // Show SVG icon with type color
-        iconEl.style.backgroundColor = `${color}20`
-        iconEl.innerHTML =
-          `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" ` +
-          `fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
-          getTypeIconSvgInner(info.type) +
-          `</svg>`
+      if (labelChanged || typeChanged || thumbChanged) {
+        tr.setNodeMarkup(pos, undefined, nextAttrs)
+        changed = true
+        if (thumbChanged || labelChanged) hasVisualOnlyChange = true
       }
 
-      // Kick off async thumbnail load if not yet cached
-      if (info.src && !thumbCache.has(info.src) && !loadingThumbsRef.current.has(info.src)) {
-        loadingThumbsRef.current.add(info.src)
-        getThumbnail(info.src, 28)
-          .then((t) => { if (t) setThumbCache((prev) => new Map(prev).set(info.src!, t)) })
+      if (src && !thumbCache.has(src) && !loadingThumbsRef.current.has(src)) {
+        loadingThumbsRef.current.add(src)
+        getThumbnail(src, 28)
+          .then((t) => {
+            if (t) {
+              setThumbCache((prev) => new Map(prev).set(src, t))
+            }
+          })
           .catch(() => {})
-          .finally(() => { loadingThumbsRef.current.delete(info.src!) })
+          .finally(() => { loadingThumbsRef.current.delete(src) })
       }
     })
-  }, [nodeMap, thumbCache])
 
-  // ── User input handler ──────────────────────────────────────────────────
-  const handleInput = useCallback(() => {
-    const div = editorRef.current
-    if (!div) return
-    const serialized = serializeContent(div)
-    lastValueRef.current = serialized
-    onChange(serialized)
-  }, [onChange])
-
-  // ── Paste: strip HTML, insert plain text ────────────────────────────────
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
-    e.preventDefault()
-    const text = e.clipboardData.getData('text/plain')
-    if (!text) return
-    const sel = window.getSelection()
-    if (!sel || sel.rangeCount === 0) return
-    const range = sel.getRangeAt(0)
-    range.deleteContents()
-    const node = document.createTextNode(text)
-    range.insertNode(node)
-    range.setStartAfter(node)
-    range.collapse(true)
-    sel.removeAllRanges()
-    sel.addRange(range)
-    handleInput()
-  }, [handleInput])
+    if (changed) {
+      const typingGuardMs = 900
+      const isTypingNow = editor.isFocused && (Date.now() - lastUserInputAtRef.current) < typingGuardMs
+      if (isTypingNow && hasVisualOnlyChange) {
+        scheduleChipSyncRetry()
+        return
+      }
+      editor.view.dispatch(tr)
+    }
+  }, [editor, nodeMap, thumbCache, scheduleChipSyncRetry, chipSyncRetryTick])
 
   return (
     <div className={cn('relative', className)} style={{ minHeight }}>
-      <div
-        ref={editorRef}
-        contentEditable={readOnly ? false : true}
-        suppressContentEditableWarning
-        onInput={handleInput}
-        onPaste={handlePaste}
-        className={cn(
-          'w-full outline-none p-3 text-sm text-slate-700 leading-relaxed break-words',
-          readOnly && 'opacity-40 cursor-not-allowed pointer-events-none',
-        )}
-        style={{ minHeight }}
+      <EditorContent
+        editor={editor}
+        className={cn(readOnly && 'opacity-40 cursor-not-allowed pointer-events-none')}
       />
       {/* Placeholder shown when content is empty */}
       {!value && placeholder && (
@@ -346,15 +514,16 @@ export function ModeToggle({
   }, [mode])
 
   const OPTIONS: { id: NodeMode; icon: React.ComponentType<any>; label: string }[] = [
-    { id: "auto",   icon: Bot,  label: "Auto"   },
-    { id: "manual", icon: Hand, label: "Manual" },
+    { id: "auto",   icon: Bot,        label: "Auto"   },
+    { id: "manual", icon: Hand,       label: "Manual" },
+    { id: "done",   icon: StickyNote, label: "Note"   },
   ]
 
   return (
     <div className="flex flex-col items-center gap-1.5">
       <div
         ref={containerRef}
-        className="relative flex items-center bg-white/90 backdrop-blur-md rounded-full p-1 shadow-md border border-slate-200/80 gap-0.5 select-none"
+        className="relative flex items-center bg-white/50 backdrop-blur-md rounded-full p-1 shadow-md border border-slate-200/50 gap-0.5 select-none"
       >
         {/* Sliding indicator */}
         <div
@@ -388,7 +557,9 @@ export function ModeToggle({
       <p className="text-[10px] text-slate-400 text-center leading-relaxed">
         {mode === "auto"
           ? "Prompt is locked — node runs automatically in the workflow"
-          : "Edit the prompt and trigger generation manually"}
+          : mode === "done"
+            ? "Note mode — no generation, just a label for this node"
+            : "Edit the prompt and trigger generation manually"}
       </p>
     </div>
   )
@@ -399,7 +570,29 @@ export function ModeToggle({
 // ─────────────────────────────────────────────
 interface ParamDef { id: string; label: string; options: string[] }
 
-function ParamDropdowns({
+/** Generic helpers — derive ParamDef[] and defaults from a ModelDef array */
+// Given an aspect_ratio string like "16:9", return node width/height
+// keeping the long side at `base` pixels.
+function nodeSizeFromRatio(ratio: string, base = 240): { width: number; height: number } {
+  if (!ratio || ratio === 'auto') return { width: base, height: base }
+  const [rw, rh] = ratio.split(':').map(Number)
+  if (!rw || !rh) return { width: base, height: base }
+  return rw >= rh
+    ? { width: base, height: Math.round(base * rh / rw) }
+    : { width: Math.round(base * rw / rh), height: base }
+}
+
+function paramsForModel(allModels: ModelDef[], modelId: string): ParamDef[] {
+  const def = allModels.find(m => m.id === modelId)
+  return (def?.params ?? []).map(p => ({ id: p.key, label: p.label, options: p.options }))
+}
+function defaultParamsForModel(allModels: ModelDef[], modelId: string): Record<string, string> {
+  const def = allModels.find(m => m.id === modelId)
+  return Object.fromEntries((def?.params ?? []).map(p => [p.key, p.default]))
+}
+
+/** Single popover button with segmented controls — replaces multiple ParamDropdowns */
+function ModelParamsPopover({
   params,
   selected,
   onChange,
@@ -410,41 +603,54 @@ function ParamDropdowns({
   onChange: (id: string, val: string) => void
   locked?: boolean
 }) {
+  if (params.length === 0) return null
+  const summary = params.map(p => selected[p.id] ?? p.options[0]).join(" · ")
   return (
-    <>
-      {params.map((param) => (
-        <DropdownMenu key={param.id}>
-          <DropdownMenuTrigger asChild disabled={locked}>
-            <button
-              disabled={locked}
-              className={cn(
-                "flex items-center gap-1 px-2 py-1 rounded-full text-xs text-slate-700 font-medium transition-all border border-transparent",
-                locked
-                  ? "opacity-30 cursor-not-allowed"
-                  : "hover:bg-slate-100/80 hover:border-slate-200/80",
-              )}
-            >
-              {selected[param.id]}
-              <ChevronUp size={10} className="text-slate-400" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start">
-            <div className="px-2 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100 mb-1">
-              {param.label}
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          disabled={locked}
+          className={cn(
+            "flex items-center gap-1.5 px-2 py-1 rounded-full text-xs text-slate-600 font-medium transition-all border border-transparent",
+            locked ? "opacity-30 cursor-not-allowed" : "hover:bg-slate-100/80 hover:border-slate-200/80",
+          )}
+        >
+          <SlidersHorizontal size={10} className="text-slate-400" />
+          <span>{summary}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="start" className="w-60 p-3">
+        <div className="space-y-3">
+          {params.map(param => (
+            <div key={param.id}>
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                {param.label}
+              </p>
+              <div className={cn(
+                "bg-slate-100 rounded-lg p-0.5 gap-0.5",
+                param.options.length <= 4 ? "flex" : "grid grid-cols-4"
+              )}>
+                {param.options.map(opt => (
+                  <button
+                    key={opt}
+                    onClick={() => onChange(param.id, opt)}
+                    className={cn(
+                      "py-1 text-xs font-medium rounded-md transition-all",
+                      param.options.length <= 4 ? "flex-1" : "",
+                      selected[param.id] === opt
+                        ? "bg-white shadow-sm text-slate-800"
+                        : "text-slate-500 hover:text-slate-700",
+                    )}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
             </div>
-            {param.options.map((opt) => (
-              <DropdownMenuItem
-                key={opt}
-                className={cn("text-xs", selected[param.id] === opt && "font-semibold text-slate-800")}
-                onClick={() => onChange(param.id, opt)}
-              >
-                {opt}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ))}
-    </>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -497,18 +703,6 @@ function ModelDropdown({
 // ─────────────────────────────────────────────
 // GenerateTextPanel
 // ─────────────────────────────────────────────
-const TEXT_MODELS = [
-  { id: "gemini-2.0-flash",  name: "Gemini 2.0 Flash"  },
-  { id: "gemini-1.5-pro",    name: "Gemini 1.5 Pro"    },
-  { id: "gpt-4o",            name: "GPT-4o"             },
-  { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet"  },
-]
-
-const TEXT_PARAMS: ParamDef[] = [
-  { id: "tone",   label: "Tone",   options: ["Neutral", "Formal", "Casual", "Creative"] },
-  { id: "length", label: "Length", options: ["Short", "Medium", "Long"]                 },
-]
-
 export function GenerateTextPanel({
   data,
   nodeId,
@@ -535,23 +729,42 @@ export function GenerateTextPanel({
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? TEXT_MODELS[0].id)
+  const [params, setParamsLocal] = useState<Record<string, string>>(data.params ?? defaultParamsForModel(TEXT_MODELS, data.model ?? TEXT_MODELS[0].id))
   const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
 
-  const setPrompt = (v: string) => {
-    setPromptLocal(v)
-    persistChange?.({ prompt: v })
-  }
-  const setModel = (v: string) => {
+  const setPrompt = (v: string) => { setPromptLocal(v); persistChange?.({ prompt: v }) }
+  const setModel  = (v: string) => {
     setModelLocal(v)
-    persistChange?.({ model: v })
+    const newDefaults = defaultParamsForModel(TEXT_MODELS, v)
+    setParamsLocal(newDefaults)
+    persistChange?.({ model: v, params: newDefaults })
+  }
+  const handleParamChange = (id: string, val: string) => {
+    const p = { ...params, [id]: val }
+    setParamsLocal(p)
+    persistChange?.({ params: p })
   }
 
   const isAuto      = mode === "auto"
+  const isNote      = mode === "done"
   const canSubmit   = prompt.trim().length > 0
-  const buttonLabel = isAuto ? "Save" : "Generate"
+  const buttonLabel = "Generate"
+
+  // Detect upstream image nodes to warn if model doesn't support image input
+  const { getNodes, getEdges } = useReactFlow()
+  const hasUpstreamImage = nodeId ? (() => {
+    const edges = getEdges().filter(e => e.target === nodeId)
+    const nodes = getNodes()
+    return edges.some(e => {
+      const src = nodes.find(n => n.id === e.source)
+      return src?.data?.type === "image"
+    })
+  })() : false
+  const textModelDef = TEXT_MODELS.find(m => m.id === model)
+  const showImageInputWarning = hasUpstreamImage && !textModelDef?.supportsImageInput
 
   // Insert chip at current cursor position inside the editor
   const handleInsertReference = useCallback((ref: string) => {
@@ -574,44 +787,63 @@ export function GenerateTextPanel({
         value={prompt}
         onChange={(v) => !isGenerating && setPrompt(v)}
         placeholder={
-          placeholder
-            ? (isAuto ? placeholder.auto : placeholder.manual)
-            : isAuto
-              ? "Set a fixed prompt — the node will run this automatically…"
-              : "Describe the text content you want to generate…"
+          isNote
+            ? "Write a note about this node…"
+            : placeholder
+              ? (isAuto ? placeholder.auto : placeholder.manual)
+              : isAuto
+                ? "Set a fixed prompt — the node will run this automatically…"
+                : "Describe the text content you want to generate…"
         }
         readOnly={isGenerating}
         minHeight={100}
       />
+      {showImageInputWarning && (
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 border-t border-amber-100 text-amber-700 text-[11px]">
+          <AlertTriangle size={11} className="flex-shrink-0" />
+          <span>{textModelDef?.name ?? model} doesn't support image input. Switch to Gemini, Claude, or GPT to use image references.</span>
+        </div>
+      )}
       <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-slate-100 flex-wrap">
-        <ModelDropdown models={TEXT_MODELS} value={model} onChange={setModel} locked={isGenerating} />
+        <ModelDropdown models={TEXT_MODELS} value={model} onChange={setModel} locked={isNote || isGenerating} />
+        <ModelParamsPopover params={paramsForModel(TEXT_MODELS, model)} selected={params} onChange={handleParamChange} locked={isNote || isGenerating} />
         {isGenerating ? (
           <button
             onClick={onStop}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-500 hover:bg-red-100 border border-red-200/80 active:scale-95 transition-all duration-150"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-300/80 active:scale-95 transition-all duration-150"
           >
-            <Square size={10} className="fill-red-500" />
+            <Square size={10} className="fill-rose-600" />
             Stop
           </button>
+        ) : isAuto || isNote ? (
+          <>
+            <span className="ml-auto text-xs font-medium text-slate-500 select-none">
+              {creditLabel(model, params)}
+            </span>
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs text-slate-300 border border-slate-100 select-none">
+              <Lock size={10} />
+              {isNote ? "Note mode" : "Runs in workflow"}
+            </div>
+          </>
         ) : (
-          <button
-            disabled={!canSubmit}
-            onClick={() => onGenerate(prompt, model, {})}
-            className={cn(
-              "ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
-              canSubmit
-                ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80 active:scale-95"
-                : "text-slate-300 cursor-not-allowed",
-            )}
-          >
-            {isAuto ? <Sparkles size={11} /> : <Zap size={11} />}
-            {buttonLabel}
-            {!isAuto && (
-              <span className={cn("ml-0.5 font-normal", canSubmit ? "text-slate-400" : "text-slate-200")}>
-                ~1
-              </span>
-            )}
-          </button>
+          <>
+            <span className="ml-auto text-xs font-medium text-slate-500 select-none">
+              {creditLabel(model, params)}
+            </span>
+            <button
+              disabled={!canSubmit}
+              onClick={() => onGenerate(prompt, model, params)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
+                canSubmit
+                  ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80 active:scale-95"
+                  : "text-slate-300 cursor-not-allowed border border-slate-200/60",
+              )}
+            >
+              <Zap size={11} />
+              {buttonLabel}
+            </button>
+          </>
         )}
       </div>
     </div>
@@ -621,11 +853,6 @@ export function GenerateTextPanel({
 // ─────────────────────────────────────────────
 // GenerateImagePanel
 // ─────────────────────────────────────────────
-// MVP: cheap OpenRouter image models (chat/completions + modalities)
-const IMAGE_MODELS = [
-  { id: "seedream-4.5", name: "Seedream 4.5" },
-]
-
 export function GenerateImagePanel({
   data,
   nodeId,
@@ -649,24 +876,49 @@ export function GenerateImagePanel({
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? IMAGE_MODELS[0].id)
+  const [params, setParamsLocal] = useState<Record<string, string>>(data.params ?? defaultParamsForModel(IMAGE_MODELS, data.model ?? IMAGE_MODELS[0].id))
   const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
 
-  const setPrompt = (v: string) => {
-    setPromptLocal(v)
-    persistChange?.({ prompt: v })
-  }
-  const setModel = (v: string) => {
+  const setPrompt = (v: string) => { setPromptLocal(v); persistChange?.({ prompt: v }) }
+  const setModel  = (v: string) => {
     setModelLocal(v)
-    persistChange?.({ model: v })
+    const newDefaults = defaultParamsForModel(IMAGE_MODELS, v)
+    setParamsLocal(newDefaults)
+    persistChange?.({ model: v, params: newDefaults })
+  }
+  const handleParamChange = (id: string, val: string) => {
+    const p = { ...params, [id]: val }
+    setParamsLocal(p)
+    const update: Partial<CustomNodeData> = { params: p }
+    if (id === 'aspect_ratio' && !hasSrc) {
+      const { width, height } = nodeSizeFromRatio(val)
+      update.width  = width
+      update.height = height
+    }
+    persistChange?.(update)
   }
 
   const isAuto      = mode === "auto"
+  const isNote      = mode === "done"
   const canSubmit   = prompt.trim().length > 0
-  const ActionIcon  = hasSrc ? RefreshCw : isAuto ? Sparkles : Zap
-  const buttonLabel = isAuto ? "Save" : hasSrc ? "Regenerate" : "Generate"
+  const ActionIcon  = hasSrc ? RefreshCw : Zap
+  const buttonLabel = hasSrc ? "Regenerate" : "Generate"
+
+  // Detect upstream image nodes to warn if model doesn't support image input
+  const { getNodes, getEdges } = useReactFlow()
+  const hasUpstreamImage = nodeId ? (() => {
+    const edges = getEdges().filter(e => e.target === nodeId)
+    const nodes = getNodes()
+    return edges.some(e => {
+      const src = nodes.find(n => n.id === e.source)
+      return src?.data?.type === "image"
+    })
+  })() : false
+  const modelDef = IMAGE_MODELS.find(m => m.id === model)
+  const showImageInputWarning = hasUpstreamImage && modelDef?.supportsImageInput === false
 
   // Insert chip at current cursor position inside the editor
   const handleInsertReference = useCallback((ref: string) => {
@@ -688,44 +940,63 @@ export function GenerateImagePanel({
         value={prompt}
         onChange={(v) => !isGenerating && setPrompt(v)}
         placeholder={
-          isAuto
-            ? "Set a fixed prompt — the node will run this automatically…"
-            : hasSrc
-              ? "Describe how to edit this image…"
-              : "Describe the image you want to generate…"
+          isNote
+            ? "Write a note about this node…"
+            : isAuto
+              ? "Set a fixed prompt — the node will run this automatically…"
+              : hasSrc
+                ? "Describe how to edit this image…"
+                : "Describe the image you want to generate…"
         }
         readOnly={isGenerating}
         minHeight={100}
       />
+      {showImageInputWarning && (
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 border-t border-amber-100 text-amber-700 text-[11px]">
+          <AlertTriangle size={11} className="flex-shrink-0" />
+          <span>nano-banana doesn't support image input. Try <button className="underline font-medium" onClick={() => setModel("nano-banana-pro")}>nano-banana-pro</button>.</span>
+        </div>
+      )}
       <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-slate-100 flex-wrap">
-        <ModelDropdown models={IMAGE_MODELS} value={model} onChange={setModel} locked={isGenerating} />
+        <ModelDropdown models={IMAGE_MODELS} value={model} onChange={setModel} locked={isNote || isGenerating} />
+        <ModelParamsPopover params={paramsForModel(IMAGE_MODELS, model)} selected={params} onChange={handleParamChange} locked={isNote || isGenerating} />
         {isGenerating ? (
           <button
             onClick={onStop}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-500 hover:bg-red-100 border border-red-200/80 active:scale-95 transition-all duration-150"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-300/80 active:scale-95 transition-all duration-150"
           >
-            <Square size={10} className="fill-red-500" />
+            <Square size={10} className="fill-rose-600" />
             Stop
           </button>
+        ) : isAuto || isNote ? (
+          <>
+            <span className="ml-auto text-xs font-medium text-slate-500 select-none">
+              {creditLabel(model, params)}
+            </span>
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs text-slate-300 border border-slate-100 select-none">
+              <Lock size={10} />
+              {isNote ? "Note mode" : "Runs in workflow"}
+            </div>
+          </>
         ) : (
-          <button
-            disabled={!canSubmit}
-            onClick={() => onGenerate(prompt, model, {})}
-            className={cn(
-              "ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
-              canSubmit
-                ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80 active:scale-95"
-                : "text-slate-300 cursor-not-allowed",
-            )}
-          >
-            <ActionIcon size={11} />
-            {buttonLabel}
-            {!isAuto && (
-              <span className={cn("ml-0.5 font-normal", canSubmit ? "text-slate-400" : "text-slate-200")}>
-                {"~$0.01"}
-              </span>
-            )}
-          </button>
+          <>
+            <span className="ml-auto text-xs font-medium text-slate-500 select-none">
+              {creditLabel(model, params)}
+            </span>
+            <button
+              disabled={!canSubmit}
+              onClick={() => onGenerate(prompt, model, params)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
+                canSubmit
+                  ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80 active:scale-95"
+                  : "text-slate-300 cursor-not-allowed border border-slate-200/60",
+              )}
+            >
+              <ActionIcon size={11} />
+              {buttonLabel}
+            </button>
+          </>
         )}
       </div>
     </div>
@@ -735,18 +1006,7 @@ export function GenerateImagePanel({
 // ─────────────────────────────────────────────
 // GenerateVideoPanel
 // ─────────────────────────────────────────────
-const VIDEO_MODELS = [
-  { id: "kling-1.5-pro", name: "Kling 1.5 Pro" },
-  { id: "runway-gen3",   name: "Runway Gen-3"   },
-  { id: "pika-2.0",      name: "Pika 2.0"       },
-  { id: "sora",          name: "Sora"            },
-]
-
-const VIDEO_PARAMS: ParamDef[] = [
-  { id: "duration", label: "Duration", options: ["3s", "5s", "8s", "10s"]                         },
-  { id: "fps",      label: "FPS",      options: ["24", "30", "60"]                                 },
-  { id: "style",    label: "Style",    options: ["Cinematic", "Anime", "3D Render", "Documentary"] },
-]
+// Video panel uses the generic helpers above
 
 export function GenerateVideoPanel({
   data,
@@ -768,13 +1028,10 @@ export function GenerateVideoPanel({
   onGenerate: (prompt: string, model: string, params: Record<string, string>) => void
   onStop: () => void
 }) {
-  // 默认参数值
-  const defaultParams = Object.fromEntries(VIDEO_PARAMS.map((p) => [p.id, p.options[0]]))
-
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? VIDEO_MODELS[0].id)
-  const [params, setParamsLocal] = useState<Record<string, string>>(data.params ?? defaultParams)
+  const [params, setParamsLocal] = useState<Record<string, string>>(data.params ?? defaultParamsForModel(VIDEO_MODELS, data.model ?? VIDEO_MODELS[0].id))
   const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
@@ -786,7 +1043,9 @@ export function GenerateVideoPanel({
   }
   const setModel = (v: string) => {
     setModelLocal(v)
-    persistChange?.({ model: v })
+    const newDefaults = defaultParamsForModel(VIDEO_MODELS, v)
+    setParamsLocal(newDefaults)
+    persistChange?.({ model: v, params: newDefaults })
   }
   const setParams = (p: Record<string, string>) => {
     setParamsLocal(p)
@@ -795,13 +1054,20 @@ export function GenerateVideoPanel({
 
   const handleParamChange = (id: string, val: string) => {
     const newParams = { ...params, [id]: val }
-    setParams(newParams)
+    setParamsLocal(newParams)
+    const update: Partial<CustomNodeData> = { params: newParams }
+    if (id === 'aspect_ratio' && !hasSrc) {
+      const { width, height } = nodeSizeFromRatio(val)
+      update.width  = width
+      update.height = height
+    }
+    persistChange?.(update)
   }
 
   const isAuto      = mode === "auto"
+  const isNote      = mode === "done"
   const canSubmit   = prompt.trim().length > 0
-  const ActionIcon  = isAuto ? Sparkles : Zap
-  const buttonLabel = isAuto ? "Save" : hasSrc ? "Regenerate" : "Generate"
+  const buttonLabel = hasSrc ? "Regenerate" : "Generate"
 
   // Insert chip at current cursor position inside the editor
   const handleInsertReference = useCallback((ref: string) => {
@@ -823,50 +1089,57 @@ export function GenerateVideoPanel({
         value={prompt}
         onChange={(v) => !isGenerating && setPrompt(v)}
         placeholder={
-          isAuto
-            ? "Set a fixed prompt — the node will run this automatically…"
-            : hasSrc
-              ? "Describe the motion or scene transformation…"
-              : "Describe the video you want to generate…"
+          isNote
+            ? "Write a note about this node…"
+            : isAuto
+              ? "Set a fixed prompt — the node will run this automatically…"
+              : hasSrc
+                ? "Describe the motion or scene transformation…"
+                : "Describe the video you want to generate…"
         }
         readOnly={isGenerating}
         minHeight={100}
       />
       <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-slate-100 flex-wrap">
-        <ModelDropdown models={VIDEO_MODELS} value={model} onChange={setModel} locked={isGenerating} />
-        <ParamDropdowns
-          params={VIDEO_PARAMS}
-          selected={params}
-          onChange={handleParamChange}
-          locked={isGenerating}
-        />
+        <ModelDropdown models={VIDEO_MODELS} value={model} onChange={setModel} locked={isNote || isGenerating} />
+        <ModelParamsPopover params={paramsForModel(VIDEO_MODELS, model)} selected={params} onChange={handleParamChange} locked={isNote || isGenerating} />
         {isGenerating ? (
           <button
             onClick={onStop}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-500 hover:bg-red-100 border border-red-200/80 active:scale-95 transition-all duration-150"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-300/80 active:scale-95 transition-all duration-150"
           >
-            <Square size={10} className="fill-red-500" />
+            <Square size={10} className="fill-rose-600" />
             Stop
           </button>
+        ) : isAuto || isNote ? (
+          <>
+            <span className="ml-auto text-xs font-medium text-slate-500 select-none">
+              {creditLabel(model, params)}
+            </span>
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs text-slate-300 border border-slate-100 select-none">
+              <Lock size={10} />
+              {isNote ? "Note mode" : "Runs in workflow"}
+            </div>
+          </>
         ) : (
-          <button
-            disabled={!canSubmit}
-            onClick={() => onGenerate(prompt, model, params)}
-            className={cn(
-              "ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
-              canSubmit
-                ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80 active:scale-95"
-                : "text-slate-300 cursor-not-allowed",
-            )}
-          >
-            <ActionIcon size={11} />
-            {buttonLabel}
-            {!isAuto && (
-              <span className={cn("ml-0.5 font-normal", canSubmit ? "text-slate-400" : "text-slate-200")}>
-                ~$0.20
-              </span>
-            )}
-          </button>
+          <>
+            <span className="ml-auto text-xs font-medium text-slate-500 select-none">
+              {creditLabel(model, params)}
+            </span>
+            <button
+              disabled={!canSubmit}
+              onClick={() => onGenerate(prompt, model, params)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
+                canSubmit
+                  ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80 active:scale-95"
+                  : "text-slate-300 cursor-not-allowed border border-slate-200/60",
+              )}
+            >
+              <Zap size={11} />
+              {buttonLabel}
+            </button>
+          </>
         )}
       </div>
     </div>
@@ -874,7 +1147,7 @@ export function GenerateVideoPanel({
 }
 
 // ─────────────────────────────────────────────
-// InstancesBox — sits to the right of the loop prompt textarea
+// InstancesBox — sits to the right of the template prompt textarea
 // Simplified: only max limit, no auto/fixed mode toggle (AI nodes always use max cap)
 // ─────────────────────────────────────────────
 export function InstancesBox({
@@ -977,21 +1250,15 @@ export function InstancesBox({
 }
 
 // ─────────────────────────────────────────────
-// LoopPanel — prompt + InstancesBox side-by-side
+// TemplatePanel — prompt + InstancesBox side-by-side
+// Template is essentially a text node with system prompt and JSON output
 // ─────────────────────────────────────────────
-const LOOP_MODELS = [
-  { id: "gemini-2.0-flash",  name: "Gemini 2.0 Flash"  },
-  { id: "gemini-1.5-pro",    name: "Gemini 1.5 Pro"    },
-  { id: "gpt-4o",            name: "GPT-4o"             },
-  { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet"  },
-]
-
-const LOOP_PARAMS: ParamDef[] = [
+const TEMPLATE_PARAMS: ParamDef[] = [
   { id: "variation", label: "Variation", options: ["Low", "Medium", "High"] },
   { id: "strategy",  label: "Strategy",  options: ["Sequential", "Parallel", "Random"] },
 ]
 
-export function LoopPanel({
+export function TemplatePanel({
   data,
   nodeId,
   onDataChange,
@@ -1009,22 +1276,34 @@ export function LoopPanel({
   onGenerate: (prompt: string, model: string, params: Record<string, string>) => void
   onStop: () => void
 }) {
-  // 默认参数值
-  const defaultParams = Object.fromEntries(LOOP_PARAMS.map((p) => [p.id, p.options[0]]))
-
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
-  const [prompt, setPromptLocal]               = useState(data.templatePrompt ?? data.prompt ?? "")
-  const [model, setModelLocal]                 = useState(data.model ?? LOOP_MODELS[0].id)
-  const [params, setParamsLocal]               = useState<Record<string, string>>(data.params ?? defaultParams)
-  const [instanceCount, setInstanceCountLocal] = useState(data.loopCount ?? 3)
+  const [prompt, setPromptLocal]             = useState(data.templatePrompt ?? data.prompt ?? "")
+  const [model,  setModelLocal]              = useState(data.model  ?? TEXT_MODELS[0].id)
+  const [params, setParamsLocal]             = useState<Record<string, string>>(data.params ?? defaultParamsForModel(TEXT_MODELS, data.model ?? TEXT_MODELS[0].id))
+  // maxInstances is the user-facing cap (templateCount). It is completely separate from
+  // instanceCount (the actual number of cloned instances managed by useTemplateManager).
+  const [maxInstances, setMaxInstancesLocal] = useState(data.templateCount ?? data.templateCountLegacy ?? 3)
   const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
 
-  const setPrompt = (v: string) => {
-    setPromptLocal(v)
-    persistChange?.({ templatePrompt: v, prompt: v })
+  const setPrompt = (v: string) => { setPromptLocal(v); persistChange?.({ templatePrompt: v, prompt: v }) }
+  const setModel  = (v: string) => {
+    setModelLocal(v)
+    const newDefaults = defaultParamsForModel(TEXT_MODELS, v)
+    setParamsLocal(newDefaults)
+    persistChange?.({ model: v, params: newDefaults })
+  }
+  const handleParamChange = (id: string, val: string) => {
+    const p = { ...params, [id]: val }
+    setParamsLocal(p)
+    persistChange?.({ params: p })
+  }
+  // Only write templateCount — never instanceCount (which tracks real cloned instances).
+  const setMaxInstances = (n: number) => {
+    setMaxInstancesLocal(n)
+    persistChange?.({ templateCount: n })
   }
 
   // Insert chip at current cursor position inside the editor
@@ -1032,31 +1311,20 @@ export function LoopPanel({
     const nodeId = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
     editorRef.current?.insertReference(nodeId)
   }, [])
-  const setModel = (v: string) => {
-    setModelLocal(v)
-    persistChange?.({ model: v })
-  }
-  const setParams = (p: Record<string, string>) => {
-    setParamsLocal(p)
-    persistChange?.({ params: p })
-  }
-  const setInstanceCount = (n: number) => {
-    setInstanceCountLocal(n)
-    persistChange?.({ loopCount: n })
-  }
 
-  const handleParamChange = (id: string, val: string) => {
-    const newParams = { ...params, [id]: val }
-    setParams(newParams)
-  }
+  const isAuto      = mode === "auto"
+  const isNote      = mode === "done"
+  const canSubmit   = prompt.trim().length > 0
+  const buttonLabel = "Run Template"
 
-  const isAuto    = mode === "auto"
-  const canSubmit = prompt.trim().length > 0
+  // Template's own cost is 1 credit (text generation returning JSON).
+  // Instance execution costs are additional, tracked by the workflow budget.
+  const templateCost = 1
 
   const handleGenerate = () => {
     onGenerate(prompt, model, {
       ...params,
-      instanceMax: String(instanceCount),
+      instanceMax: String(maxInstances),
     })
   }
 
@@ -1076,9 +1344,11 @@ export function LoopPanel({
           value={prompt}
           onChange={(v) => !isGenerating && setPrompt(v)}
           placeholder={
-            isAuto
-              ? "Set the iteration rule — describe how the Seed should vary each run…"
-              : "Describe the loop behavior, e.g. 'Generate 5 variations with increasing formality'…"
+            isNote
+              ? "Write a note about this template…"
+              : isAuto
+                ? "Set a fixed template prompt — the node will run this automatically…"
+                : "Describe the template behavior, e.g. 'Generate 5 variations with increasing formality'…"
           }
           readOnly={isGenerating}
           minHeight={110}
@@ -1086,54 +1356,64 @@ export function LoopPanel({
         />
 
         <InstancesBox
-          count={instanceCount}
-          onChange={setInstanceCount}
+          count={maxInstances}
+          onChange={setMaxInstances}
           locked={isGenerating}
           theme="indigo"
           label="Instances"
         />
       </div>
 
-      {/* Footer bar — model + params + instance chip + run button */}
+      {/* Footer bar — model + params + instance chip + credits + run button */}
       <div className="flex items-center gap-1.5 px-2.5 py-2 border-t border-slate-100 flex-wrap">
-        <ModelDropdown models={LOOP_MODELS} value={model} onChange={setModel} locked={isGenerating} />
-        <ParamDropdowns
-          params={LOOP_PARAMS}
-          selected={params}
-          onChange={handleParamChange}
-          locked={isGenerating}
-        />
+        <ModelDropdown models={TEXT_MODELS} value={model} onChange={setModel} locked={isNote || isGenerating} />
+        <ModelParamsPopover params={paramsForModel(TEXT_MODELS, model)} selected={params} onChange={handleParamChange} locked={isNote || isGenerating} />
 
         {/* Instance summary chip */}
         <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-50 border border-indigo-100/80">
           <Infinity size={10} className="text-indigo-400" strokeWidth={2.5} />
           <span className="text-[11px] text-indigo-500 font-medium">
-            ≤ {instanceCount} runs
+            ≤ {maxInstances} runs
           </span>
         </div>
 
         {isGenerating ? (
           <button
             onClick={onStop}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-500 hover:bg-red-100 border border-red-200/80 active:scale-95 transition-all duration-150"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-300/80 active:scale-95 transition-all duration-150"
           >
-            <Square size={10} className="fill-red-500" />
+            <Square size={10} className="fill-rose-600" />
             Stop
           </button>
+        ) : isAuto || isNote ? (
+          <>
+            <span className="ml-auto text-xs font-medium text-slate-500 select-none">
+              {templateCost} credit
+            </span>
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs text-slate-300 border border-slate-100 select-none">
+              <Lock size={10} />
+              {isNote ? "Note mode" : "Runs in workflow"}
+            </div>
+          </>
         ) : (
-          <button
-            disabled={!canSubmit}
-            onClick={handleGenerate}
-            className={cn(
-              "ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
-              canSubmit
-                ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80 active:scale-95"
-                : "text-slate-300 cursor-not-allowed",
-            )}
-          >
-            {isAuto ? <Sparkles size={11} /> : <Zap size={11} />}
-            {isAuto ? "Save" : "Run Loop"}
-          </button>
+          <>
+            <span className="ml-auto text-xs font-medium text-slate-500 select-none">
+              {templateCost} credit + instances
+            </span>
+            <button
+              disabled={!canSubmit}
+              onClick={() => handleGenerate()}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
+                canSubmit
+                  ? "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80 active:scale-95"
+                  : "text-slate-300 cursor-not-allowed border border-slate-200/60",
+              )}
+            >
+              <Zap size={11} />
+              {buttonLabel}
+            </button>
+          </>
         )}
       </div>
     </div>
@@ -1146,4 +1426,3 @@ export function LoopPanel({
 // PanelContent and getPanelTitle have been removed.
 // Each module now exports its own ModalContent.
 // NodeEditor shell calls MODULE_BY_ID[type].ModalContent directly.
-

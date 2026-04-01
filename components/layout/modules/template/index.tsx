@@ -4,9 +4,9 @@ import React, { memo } from 'react'
 import { NodeProps } from 'reactflow'
 import { cn } from '@/lib/utils'
 import { Layers } from 'lucide-react'
-import type { CustomNodeData, ModuleModalProps } from './_types'
-import type { HandleDef } from './_handle'
-import { LoopPanel } from '../node_editor/_panels'
+import type { CustomNodeData, ModuleModalProps } from '../_types'
+import type { HandleDef } from '../_handle'
+import { TemplatePanel } from '@/components/layout/node_editor/_panels'
 
 export const meta = {
   id:          'template',
@@ -18,6 +18,7 @@ export const meta = {
   border:      'hover:border-indigo-200',
   panelTitle:  'Template',
   opensEditor: true,
+  category:    'Logic',
 }
 
 export const defaultData: Partial<CustomNodeData> = {
@@ -25,7 +26,7 @@ export const defaultData: Partial<CustomNodeData> = {
   label:           'Template',
   width:           520,
   height:          400,
-  loopCount:       undefined,
+  templateCount:   undefined,
   instanceCount:   0,
   currentInstance: -1,
 }
@@ -59,7 +60,12 @@ export const NodeUI = ({
         selected
           ? 'border-indigo-400/80 bg-indigo-50/25'
           : 'border-indigo-200/50 bg-indigo-50/10',
-        data.isEditing && '!border-indigo-400/90',
+        data.isEditing            && '!border-indigo-400/90',
+        data.isDragHovered        && '!border-indigo-500/90 !bg-indigo-100/30',
+        // Eject tension: border brightens as child node is pushed toward the wall
+        data.isDragEjecting && !data.isDragEjectingReady && '!border-indigo-400/80',
+        // Eject ready: threshold crossed — border fully lit, signals "release to pop out"
+        data.isDragEjectingReady  && '!border-indigo-600 !bg-indigo-100/30',
       )}
       style={{ width: w, height: h, borderRadius: 16 }}
     >
@@ -109,11 +115,11 @@ export const ReactFlowNode = memo(({ data, selected }: NodeProps<CustomNodeData>
 ReactFlowNode.displayName = 'TemplateNode'
 
 // ─────────────────────────────────────────────
-// ModalContent — wired to LoopPanel
+// ModalContent — wired to TemplatePanel
 // ─────────────────────────────────────────────
 export function ModalContent({ data, nodeId, onUpdate, mode = 'auto', isGenerating = false, onGenerate, onStop }: ModuleModalProps) {
   return (
-    <LoopPanel
+    <TemplatePanel
       data={data as CustomNodeData}
       nodeId={nodeId}
       onDataChange={onUpdate as (u: Partial<CustomNodeData>) => void}
@@ -124,3 +130,5 @@ export function ModalContent({ data, nodeId, onUpdate, mode = 'auto', isGenerati
     />
   )
 }
+export { resultHandler } from './resultHandler'
+export { ActionBarContent } from './actionBar'

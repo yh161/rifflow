@@ -20,17 +20,20 @@ export async function ensureBucket(): Promise<void> {
     await minioClient.makeBucket(MINIO_BUCKET)
   }
 
-  // Set a public-read policy so images are accessible without signing
-  const policy = JSON.stringify({
-    Version: '2012-10-17',
-    Statement: [
-      {
-        Effect:    'Allow',
-        Principal: { AWS: ['*'] },
-        Action:    ['s3:GetObject'],
-        Resource:  [`arn:aws:s3:::${MINIO_BUCKET}/*`],
-      },
-    ],
-  })
-  await minioClient.setBucketPolicy(MINIO_BUCKET, policy)
+  // GCS manages public access via IAM (set at bucket creation time),
+  // so skip setBucketPolicy in production to avoid S3-compat API errors.
+  if (process.env.NODE_ENV !== 'production') {
+    const policy = JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect:    'Allow',
+          Principal: { AWS: ['*'] },
+          Action:    ['s3:GetObject'],
+          Resource:  [`arn:aws:s3:::${MINIO_BUCKET}/*`],
+        },
+      ],
+    })
+    await minioClient.setBucketPolicy(MINIO_BUCKET, policy)
+  }
 }

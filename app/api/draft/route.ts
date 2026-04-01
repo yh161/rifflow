@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth"
 import { DraftService } from "@/app/services/draft.service"
+import { RiffDraftSnapshotRepository } from "@/app/repositories/riffDraftSnapshot.repository"
 import { NextResponse } from "next/server"
 
 const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 }
@@ -25,10 +26,18 @@ export async function GET() {
   }
 
   const data = result.data ?? { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT }
+  const snapshotRepo = new RiffDraftSnapshotRepository()
+  const [undoCount, redoCount] = await Promise.all([
+    snapshotRepo.count(session.user.id),
+    snapshotRepo.countRedo(session.user.id),
+  ])
   return NextResponse.json({
     nodesJson:    data.nodes,
     edgesJson:    data.edges,
     viewportJson: data.viewport,
+    favorites:    (data as { favorites?: unknown[] }).favorites ?? [],
+    undoCount,
+    redoCount,
   })
 }
 
@@ -42,7 +51,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  let body: { nodes: unknown; edges: unknown; viewport: unknown }
+  let body: { nodes: unknown; edges: unknown; viewport: unknown; favorites?: unknown }
   try {
     body = await req.json()
   } catch {
@@ -51,6 +60,9 @@ export async function POST(req: Request) {
 
   const nodes = Array.isArray(body.nodes) ? body.nodes : []
   const edges = Array.isArray(body.edges) ? body.edges : []
+  const favorites = Array.isArray(body.favorites)
+    ? body.favorites.filter((x): x is string => typeof x === "string")
+    : []
 
   // Validate viewport shape; fall back to default if malformed
   const vp = body.viewport as Record<string, unknown> | null
@@ -60,7 +72,7 @@ export async function POST(req: Request) {
       : DEFAULT_VIEWPORT
 
   const draftService = new DraftService()
-  const result = await draftService.saveDraft(session.user.id, nodes, edges, viewport)
+  const result = await draftService.saveDraft(session.user.id, nodes, edges, viewport, favorites)
 
   if (!result.success) {
     return NextResponse.json(
@@ -68,6 +80,11 @@ export async function POST(req: Request) {
       { status: 500 }
     )
   }
+
+  // Push history snapshot (throttled — at most once per 5 s, max 40 snapshots)
+  // Fire-and-forget: snapshot failure should never block the autosave response
+  const snapshotRepo = new RiffDraftSnapshotRepository()
+  snapshotRepo.pushIfThrottled(session.user.id, nodes, edges, { ...viewport, favorites }).catch(() => {})
 
   return NextResponse.json({ ok: true })
 }

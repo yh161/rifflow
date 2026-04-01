@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { cn } from "@/lib/utils"
-import { Heart, Play, Zap, Lock, Star, Trash2, ImageIcon, EyeOff, RefreshCw, DownloadCloud } from "lucide-react"
+import { Heart, Play, Zap, Lock, Star, Trash2, EyeOff, RefreshCw, DownloadCloud, Copy, LogIn } from "lucide-react"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/context-menu"
 import type { TemplateCardProps } from "./community.types"
 
-// 定价徽章
+// Pricing badge
 function PriceBadge({ pricingType, priceInPoints }: {
   pricingType: string
   priceInPoints: number | null
@@ -38,12 +38,16 @@ export function TemplateCard({
   width = 250,
   height = 330,
   className,
+  isEditing = false,
   onFavorite,
   onExecute,
   onDelete,
   onUnpublish,
   onRepublish,
   onLoadToCanvas,
+  onCopyToDraft,
+  onCopyAndLoadToCanvas,
+  onOpenDetail,
 }: TemplateCardProps) {
   const [favorited, setFavorited] = useState(template.isFavorited ?? false)
   const [loading, setLoading] = useState(false)
@@ -69,14 +73,68 @@ export function TemplateCard({
 
   const isPortrait = aspectRatio === "portrait"
 
+  // Editing card: no context menu and hover action buttons, but keep hover zoom effect
+  if (isEditing) {
+    return (
+      <div className={className}>
+        <div className="relative overflow-hidden rounded-md group">
+          {/* Cover image - keep hover zoom effect */}
+          {template.thumbnail && !imgFailed ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={template.thumbnail}
+              alt={template.name}
+              onError={() => setImgFailed(true)}
+              className={cn(
+                "w-full object-cover transition-all group-hover:scale-105",
+                isPortrait ? "aspect-[3/4]" : "aspect-square",
+              )}
+            />
+          ) : (
+            <div className={cn(
+              "w-full bg-slate-50 relative overflow-hidden",
+              isPortrait ? "aspect-[3/4]" : "aspect-square",
+            )}>
+              <svg className="w-full h-full absolute inset-0" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <pattern id="grid" width="16" height="16" patternUnits="userSpaceOnUse">
+                    <path d="M 16 0 L 0 0 0 16" fill="none" stroke="rgb(203 213 225 / 0.5)" strokeWidth="0.5"/>
+                  </pattern>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#grid)" />
+              </svg>
+            </div>
+          )}
+
+          {/* Pricing badge */}
+          <PriceBadge
+            pricingType={template.pricingType}
+            priceInPoints={template.priceInPoints}
+          />
+        </div>
+
+        {/* Text info */}
+        <div className="mt-1 space-y-1 text-sm">
+          <h3 className="font-medium leading-none truncate">{template.name}</h3>
+          <p className="text-xs text-muted-foreground truncate">
+            {template.creator.name ?? "Unknown"}
+            {template.executionsCount > 0 && (
+              <span className="ml-2 text-slate-400">· {template.executionsCount} runs</span>
+            )}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className={cn("space-y-3", className)}>
+    <div className={className}>
       <ContextMenu>
         <ContextMenuTrigger>
           <div className="relative overflow-hidden rounded-md group cursor-pointer"
-            onClick={() => onExecute?.(template)}
+            onClick={() => onOpenDetail ? onOpenDetail(template) : onExecute?.(template)}
           >
-            {/* 封面图 */}
+            {/* Cover image */}
             {template.thumbnail && !imgFailed ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -90,28 +148,42 @@ export function TemplateCard({
               />
             ) : (
               <div className={cn(
-                "w-full bg-slate-100 flex flex-col items-center justify-center gap-1.5",
+                "w-full bg-slate-50 relative overflow-hidden",
                 isPortrait ? "aspect-[3/4]" : "aspect-square",
               )}>
-                <ImageIcon className="h-5 w-5 text-slate-300" />
-                <span className="text-[10px] text-slate-400">封面加载中</span>
+                <svg className="w-full h-full absolute inset-0" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <pattern id="grid" width="16" height="16" patternUnits="userSpaceOnUse">
+                      <path d="M 16 0 L 0 0 0 16" fill="none" stroke="rgb(203 213 225 / 0.5)" strokeWidth="0.5"/>
+                    </pattern>
+                  </defs>
+                  <rect width="100%" height="100%" fill="url(#grid)" />
+                </svg>
               </div>
             )}
 
-            {/* 定价徽章 */}
+            {/* Pricing badge */}
             <PriceBadge
               pricingType={template.pricingType}
               priceInPoints={template.priceInPoints}
             />
 
-            {/* Hover 操作层 */}
+            {/* Hover action layer */}
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-end justify-between p-2 opacity-0 group-hover:opacity-100">
-              {/* 执行 / 载入按钮 */}
-              {onLoadToCanvas ? (
+              {/* Copy / Load / Execute button */}
+              {onCopyToDraft ? (
+                <button
+                  className="bg-white text-black p-1.5 rounded-full shadow-md hover:scale-110 transition-transform"
+                  onClick={(e) => { e.stopPropagation(); onCopyToDraft(template.id) }}
+                  title="Copy to Drafts"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+              ) : onLoadToCanvas ? (
                 <button
                   className="bg-white text-black p-1.5 rounded-full shadow-md hover:scale-110 transition-transform"
                   onClick={(e) => { e.stopPropagation(); onLoadToCanvas(template.id) }}
-                  title="载入画布"
+                  title="Load to Canvas"
                 >
                   <DownloadCloud className="h-3.5 w-3.5" />
                 </button>
@@ -124,8 +196,8 @@ export function TemplateCard({
                 </button>
               )}
 
-              {/* 收藏按钮（仅在有 onExecute 时显示，下架卡片不显示） */}
-              {!onLoadToCanvas && (
+              {/* Favorite button - not shown for personal drafts/unpublished cards (with onDelete) */}
+              {!onDelete && (
                 <button
                   className={cn(
                     "p-1.5 rounded-full shadow-md transition-all hover:scale-110",
@@ -140,49 +212,73 @@ export function TemplateCard({
           </div>
         </ContextMenuTrigger>
 
-        {/* 右键菜单 */}
+        {/* Context menu */}
         <ContextMenuContent className="w-44">
-          {/* 已发布 / 普通卡片操作 */}
-          {!onLoadToCanvas && (
+          {/* Community card: copy options */}
+          {onCopyToDraft && (
             <>
-              <ContextMenuItem onClick={() => onExecute?.(template)}>
-                <Play className="mr-2 h-3.5 w-3.5" />
-                执行工作流
+              <ContextMenuItem onClick={() => onCopyToDraft(template.id)}>
+                <Copy className="mr-2 h-3.5 w-3.5" />
+                Copy to Drafts
               </ContextMenuItem>
+              {onCopyAndLoadToCanvas && (
+                <ContextMenuItem onClick={() => onCopyAndLoadToCanvas(template.id)}>
+                  <LogIn className="mr-2 h-3.5 w-3.5" />
+                  Copy and Load
+                </ContextMenuItem>
+              )}
+              <ContextMenuSeparator />
+            </>
+          )}
+
+          {/* Load to canvas - for own published/draft/unpublished cards */}
+          {onLoadToCanvas && (
+            <ContextMenuItem onClick={() => onLoadToCanvas(template.id)}>
+              <DownloadCloud className="mr-2 h-3.5 w-3.5" />
+              Load to Canvas
+            </ContextMenuItem>
+          )}
+
+          {/* Execute - when neither copy nor load available */}
+          {!onCopyToDraft && !onLoadToCanvas && (
+            <ContextMenuItem onClick={() => onExecute?.(template)}>
+              <Play className="mr-2 h-3.5 w-3.5" />
+              Execute Workflow
+            </ContextMenuItem>
+          )}
+
+          {/* Favorite / Share - not for draft cards (without onDelete) */}
+          {!onDelete && (
+            <>
               <ContextMenuItem onClick={() => handleFavorite()}>
                 <Heart className="mr-2 h-3.5 w-3.5" />
-                {favorited ? "取消收藏" : "添加收藏"}
+                {favorited ? "Remove Favorite" : "Add Favorite"}
               </ContextMenuItem>
               <ContextMenuSeparator />
-              <ContextMenuItem>
+              <ContextMenuItem onClick={() => window.dispatchEvent(new CustomEvent("navigate:profile", { detail: { userId: template.creatorId } }))}>
                 <Star className="mr-2 h-3.5 w-3.5" />
-                查看创作者
+                View Creator
               </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem>
                 <Zap className="mr-2 h-3.5 w-3.5" />
-                分享
+                Share
               </ContextMenuItem>
             </>
           )}
 
-          {/* 已下架卡片操作 */}
-          {onLoadToCanvas && (
+          {/* Republish (unpublished card creator only) */}
+          {onRepublish && (
             <>
-              <ContextMenuItem onClick={() => onLoadToCanvas(template.id)}>
-                <DownloadCloud className="mr-2 h-3.5 w-3.5" />
-                载入画布
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => onRepublish(template.id)}>
+                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                Republish
               </ContextMenuItem>
-              {onRepublish && (
-                <ContextMenuItem onClick={() => onRepublish(template.id)}>
-                  <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                  重新发布
-                </ContextMenuItem>
-              )}
             </>
           )}
 
-          {/* 下架（已发布卡片的创作者专属） */}
+          {/* Unpublish (published card creator only) */}
           {onUnpublish && (
             <>
               <ContextMenuSeparator />
@@ -191,12 +287,12 @@ export function TemplateCard({
                 onClick={() => onUnpublish(template.id)}
               >
                 <EyeOff className="mr-2 h-3.5 w-3.5" />
-                下架
+                Unpublish
               </ContextMenuItem>
             </>
           )}
 
-          {/* 删除 */}
+          {/* Delete (draft/unpublished card creator only) */}
           {onDelete && (
             <>
               <ContextMenuSeparator />
@@ -205,15 +301,15 @@ export function TemplateCard({
                 onClick={() => onDelete(template.id)}
               >
                 <Trash2 className="mr-2 h-3.5 w-3.5" />
-                删除
+                Delete
               </ContextMenuItem>
             </>
           )}
         </ContextMenuContent>
       </ContextMenu>
 
-      {/* 文字信息 */}
-      <div className="space-y-1 text-sm">
+      {/* Text info */}
+      <div className="mt-1 space-y-1 text-sm">
         <h3 className="font-medium leading-none truncate">{template.name}</h3>
         <p className="text-xs text-muted-foreground truncate">
           {template.creator.name ?? "Unknown"}

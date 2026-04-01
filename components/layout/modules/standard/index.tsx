@@ -16,8 +16,8 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Database } from 'lucide-react'
-import type { StandardNodeData, StandardNodeMediaFile, ModuleModalProps } from './_types'
-import type { HandleDef } from './_handle'
+import type { StandardNodeData, StandardNodeMediaFile, ModuleModalProps } from '../_types'
+import type { HandleDef } from '../_handle'
 
 // ─────────────────────────────────────────────
 // Module meta

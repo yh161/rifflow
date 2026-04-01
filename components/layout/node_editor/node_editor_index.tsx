@@ -31,6 +31,8 @@ import { NodeActionBar }                          from "./_action_bar"
 import { ModeToggle }    from "./_panels"
 import type { NodeMode } from "../modules/_types"
 import { MODULE_BY_ID }  from "../modules/_registry"
+import { TemplateOrchestratorContext } from "../modules/_polling"
+import type { BatchInstanceResult } from "../canvas/hooks/useTemplateManager"
 
 // ─────────────────────────────────────────────
 // Layout constants
@@ -54,11 +56,11 @@ export interface NodeEditorProps {
   nodeId: string
   onClose: () => void
   onDelete: (nodeId: string) => void
-  // ── Loop instance actions (provided by canvas.tsx) ──
-  onLoopAddInstance?: (loopId: string) => void
-  onLoopDeleteInstance?: (loopId: string, instanceIdx: number) => void
-  onLoopSwitchView?: (loopId: string, viewIdx: number) => void
-  onLoopRelease?: (loopId: string) => void
+  // ── Template instance actions (provided by canvas.tsx) ──
+  onTemplateAddInstance?: (templateId: string) => void
+  onTemplateDeleteInstance?: (templateId: string, instanceIdx: number) => void
+  onTemplateSwitchView?: (templateId: string, viewIdx: number) => void
+  onTemplateRelease?: (templateId: string) => void
   onLassoRelease?: (lassoId: string) => void
 }
 
@@ -66,10 +68,10 @@ export function NodeEditor({
   nodeId,
   onClose,
   onDelete,
-  onLoopAddInstance,
-  onLoopDeleteInstance,
-  onLoopSwitchView,
-  onLoopRelease,
+  onTemplateAddInstance,
+  onTemplateDeleteInstance,
+  onTemplateSwitchView,
+  onTemplateRelease,
   onLassoRelease,
 }: NodeEditorProps) {
   const nodes        = useNodes()
@@ -94,7 +96,13 @@ export function NodeEditor({
       setMode((data?.mode ?? "manual") as NodeMode)
       prevNodeIdRef.current = nodeId
     }
-  }, [nodeId, data?.mode])
+    // Clear any error when the editor opens for this node
+    if (data?.generationError) {
+      setNodes(ns => ns.map(n =>
+        n.id !== nodeId ? n : { ...n, data: { ...n.data, generationError: undefined } }
+      ))
+    }
+  }, [nodeId, data?.mode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Text-edit mode ───────────────────────────
   const [isTextEditing, setIsTextEditing] = useState(false)
@@ -107,10 +115,10 @@ export function NodeEditor({
   const workflowPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const workflowJobRef  = useRef<string | null>(null)
 
-  // ── Batch seed-ready polling ref ─────────────
+  // ── Template seed-ready polling ref ─────────────
   // While seeds are being generated we do a short local poll.
   // Once /continue is POSTed, _polling.ts (NodeWrapper) handles the rest.
-  const batchSeedPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const templateSeedPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Refs for accessing latest nodes/edges in async operations ──
   const getNodesRef = useRef(() => getNodes())
@@ -123,7 +131,7 @@ export function NodeEditor({
   // Polling and progress live in NodeWrapper (_polling.ts).
   // ─────────────────────────────────────────────
   const handleStartGenerate = useCallback(
-    async (prompt: string, model: string, _params: Record<string, string>) => {
+    async (prompt: string, model: string, params: Record<string, string>) => {
       // Signal generating immediately so the overlay appears
       setNodes((ns) => ns.map((n) =>
         n.id !== nodeId ? n : { ...n, data: { ...n.data, isEditing: false, isGenerating: true } }
@@ -138,6 +146,7 @@ export function NodeEditor({
             nodeType: data?.type ?? "text",
             prompt,
             model,
+            modelParams: params,
             upstreamData,
           }),
         })
@@ -156,8 +165,9 @@ export function NodeEditor({
 
       } catch (err) {
         console.error("[generate]", err)
+        const msg = err instanceof Error ? err.message : 'Generation failed'
         setNodes((ns) => ns.map((n) =>
-          n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+          n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined, generationError: msg } }
         ))
       }
     },
@@ -174,7 +184,7 @@ export function NodeEditor({
   // Separates REF edges (condition context) from IN edges (items to classify).
   // Sends pre-built content + filterItems metadata to /api/jobs.
   const handleFilterGenerate = useCallback(
-    async (prompt: string, model: string, _params: Record<string, string>) => {
+    async (prompt: string, model: string, params: Record<string, string>) => {
       const currentNodes = getNodes()
       const currentEdges = getEdges()
 
@@ -275,6 +285,7 @@ export function NodeEditor({
             nodeType: 'filter',
             content:  fullContent,
             model,
+            modelParams: params,
             filterItems,
           }),
         })
@@ -286,8 +297,9 @@ export function NodeEditor({
         ))
       } catch (err) {
         console.error('[filter generate]', err)
+        const msg = err instanceof Error ? err.message : 'Generation failed'
         setNodes((ns) => ns.map((n) =>
-          n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+          n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined, generationError: msg } }
         ))
       }
     },
@@ -297,6 +309,7 @@ export function NodeEditor({
   // ── File input ref ───────────────────────────
   const uploadInputRef      = useRef<HTMLInputElement>(null)
   const videoUploadInputRef = useRef<HTMLInputElement>(null)
+  const pdfUploadInputRef   = useRef<HTMLInputElement>(null)
 
   // ── Data update helper ───────────────────────
   const handleUpdate = useCallback(
@@ -305,10 +318,19 @@ export function NodeEditor({
         if (n.id !== nodeId) return n
         const next = { ...n, data: { ...n.data, ...updates } }
         if (updates.width !== undefined || updates.height !== undefined) {
+          const oldW = (n.style?.width  as number | undefined) ?? n.data.width  ?? 180
+          const oldH = (n.style?.height as number | undefined) ?? n.data.height ?? 180
+          const newW = updates.width  ?? oldW
+          const newH = updates.height ?? oldH
           next.style = {
             ...n.style,
-            ...(updates.width  !== undefined && { width:  updates.width  }),
-            ...(updates.height !== undefined && { height: updates.height }),
+            width:  newW,
+            height: newH,
+          }
+          // Keep bottom-center fixed (instant — animation handled by NodeUI scale trick)
+          next.position = {
+            x: n.position.x + (oldW - newW) / 2,
+            y: n.position.y + (oldH - newH),
           }
         }
         return next
@@ -345,6 +367,7 @@ export function NodeEditor({
   const isEditingForNode =
     data?.type === "image" ? !isGenerating :
     data?.type === "video" ? !isGenerating :
+    data?.type === "pdf" ? !isGenerating :
     data?.type === "filter" ? !isGenerating :
     data?.type === "template" ? !isGenerating :
     data?.type === "seed"  ? isTextEditing :
@@ -384,37 +407,37 @@ export function NodeEditor({
   // ── Delete ───────────────────────────────────
   const handleDeleteNode = useCallback(() => onDelete(nodeId), [nodeId, onDelete])
 
-  // ── Loop instance controls (flat model) ──────
-  const handleLoopAddInstance = useCallback(() => {
-    onLoopAddInstance?.(nodeId)
-  }, [nodeId, onLoopAddInstance])
+  // ── Template instance controls (flat model) ──────
+  const handleTemplateAddInstance = useCallback(() => {
+    onTemplateAddInstance?.(nodeId)
+  }, [nodeId, onTemplateAddInstance])
 
-  const handleLoopDeleteInstance = useCallback(() => {
+  const handleTemplateDeleteInstance = useCallback(() => {
     const idx = data?.currentInstance ?? -1
     if (idx < 0) return
-    onLoopDeleteInstance?.(nodeId, idx)
-  }, [nodeId, data?.currentInstance, onLoopDeleteInstance])
+    onTemplateDeleteInstance?.(nodeId, idx)
+  }, [nodeId, data?.currentInstance, onTemplateDeleteInstance])
 
-  const handleLoopGoTo = useCallback((idx: number) => {
-    onLoopSwitchView?.(nodeId, idx)
-  }, [nodeId, onLoopSwitchView])
+  const handleTemplateGoTo = useCallback((idx: number) => {
+    onTemplateSwitchView?.(nodeId, idx)
+  }, [nodeId, onTemplateSwitchView])
 
-  // ── Loop release with confirmation ───────────
+  // ── Template release with confirmation ───────────
   const [showReleaseConfirm, setShowReleaseConfirm] = useState(false)
 
-  const handleLoopReleaseClick = useCallback(() => {
+  const handleTemplateReleaseClick = useCallback(() => {
     const count = data?.instanceCount ?? 0
     if (count > 0) {
       setShowReleaseConfirm(true)
     } else {
-      onLoopRelease?.(nodeId)
+      onTemplateRelease?.(nodeId)
     }
-  }, [nodeId, data?.instanceCount, onLoopRelease])
+  }, [nodeId, data?.instanceCount, onTemplateRelease])
 
   const handleReleaseConfirm = useCallback(() => {
     setShowReleaseConfirm(false)
-    onLoopRelease?.(nodeId)
-  }, [nodeId, onLoopRelease])
+    onTemplateRelease?.(nodeId)
+  }, [nodeId, onTemplateRelease])
 
   const handleReleaseCancel = useCallback(() => {
     setShowReleaseConfirm(false)
@@ -501,15 +524,46 @@ export function NodeEditor({
     vid.src = tempSrc
   }, []) // intentionally no deps — uses handleUpdateRef to avoid stale closure
 
+  const handleUploadPdf = useCallback((file: File) => {
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith('.pdf')) return
+
+    const tempSrc = URL.createObjectURL(file)
+    handleUpdateRef.current({
+      pdfSrc: tempSrc,
+      fileName: file.name,
+      pdfCurrentPage: 1,
+      pdfPageCount: undefined,
+    })
+
+    ;(async () => {
+      try {
+        const form = new FormData()
+        form.append('file', file)
+        const res  = await fetch('/api/upload', { method: 'POST', body: form })
+        const json = await res.json() as { url?: string; error?: string }
+        if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
+        handleUpdateRef.current({ pdfSrc: json.url })
+        URL.revokeObjectURL(tempSrc)
+      } catch (err) {
+        console.error('[handleUploadPdf] MinIO upload failed, keeping blob URL:', err)
+      }
+    })()
+  }, [])
+
   // ── Download ──────────────────────────────────
   const handleDownload = useCallback(() => {
-    const href = data?.type === "video" ? data.videoSrc : data?.src
+    const href =
+      data?.type === "video"
+        ? data.videoSrc
+        : data?.type === "pdf"
+          ? data.pdfSrc
+          : data?.src
     if (!href) return
     const a = document.createElement("a")
     a.href = href
-    a.download = data?.fileName || (data?.type === "video" ? "video" : "image")
+    a.download = data?.fileName || (data?.type === "video" ? "video" : data?.type === "pdf" ? "document.pdf" : "image")
     a.click()
-  }, [data?.type, data?.videoSrc, data?.src, data?.fileName])
+  }, [data?.type, data?.videoSrc, data?.pdfSrc, data?.src, data?.fileName])
 
   // ── Lasso workflow execution ─────────────────
   const stopWorkflowPolling = useCallback(() => {
@@ -691,19 +745,23 @@ export function NodeEditor({
     }
   }, [node, data?.type, nodeId, nodes, edges, startWorkflowPolling])
 
-  // ── Batch generation — job-based, consistent with text nodes ────────────
+  // ── Access batch instance creation via context ────────────────────────────
+  const orchestrator = React.useContext(TemplateOrchestratorContext)
+
+  // ── Template generation — job-based ────────────────────────────────────────
   /**
    * Flow:
-   *  1. POST /api/jobs { nodeType:'batch', batchParams } → jobId
+   *  1. POST /api/jobs { nodeType:'template', templateParams } → jobId
    *  2. Set node.data.isGenerating=true, activeJobId=jobId
    *     (_polling.ts in NodeWrapper starts showing the overlay)
    *  3. Local poll until job.result.stage === 'seeds_ready'
-   *  4. Create instances (onLoopAddInstance) and fill seed content  — fast, < 1s
+   *  4. Batch-create all instances in ONE state update (handleTemplateAddInstances)
+   *     — avoids the race condition of calling addInstance in a loop
    *  5. POST /api/jobs/[jobId]/continue with instance nodes/edges
    *  6. _polling.ts takes over: tracks workflow progress and applies
    *     instanceResults when job.status === 'done'
    */
-  const handleBatchGenerate = useCallback(async (
+  const handleTemplateGenerate = useCallback(async (
     prompt: string,
     model:  string,
     params: Record<string, string>,
@@ -719,7 +777,7 @@ export function NodeEditor({
     ))
 
     try {
-      // ── 2. Create batch job ──────────────────────────────────────────────
+      // ── 2. Create template job ───────────────────────────────────────────
       const jobRes = await fetch("/api/jobs", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -728,7 +786,7 @@ export function NodeEditor({
           nodeType:    "template",
           prompt,
           model,
-          batchParams: { maxInstances, upstreamContent },
+          templateParams: { maxInstances, upstreamContent },
         }),
       })
       const jobJson = await jobRes.json()
@@ -737,92 +795,38 @@ export function NodeEditor({
       const { jobId } = jobJson as { jobId: string }
 
       // Writing activeJobId activates _polling.ts in NodeWrapper.
-      // batchResumeHandled tells _polling that the editor owns seeds_ready handling
-      // (stripped from draft by sanitizeNodes, so absent after a page refresh).
+      // templateResumeHandled tells _polling that the editor owns seeds_ready handling.
       setNodes(ns => ns.map(n =>
-        n.id !== nodeId ? n : { ...n, data: { ...n.data, activeJobId: jobId, batchResumeHandled: jobId } }
+        n.id !== nodeId ? n : { ...n, data: { ...n.data, activeJobId: jobId, templateResumeHandled: jobId } }
       ))
 
       // ── 3. Wait for seeds_ready (short local poll, ~2-3s) ───────────────
-      const seeds = await waitForBatchSeeds(jobId)
+      const seeds = await waitForTemplateSeeds(jobId)
       if (!seeds || seeds.length === 0) throw new Error("No seeds returned")
 
-      // ── 4. Create instances + fill seed content ──────────────────────────
-      // All instance creation happens before we notify the backend so that
-      // /continue receives the fully-formed nodes/edges in one shot.
-      for (let i = 0; i < seeds.length; i++) {
-        onLoopAddInstance?.(nodeId)
-        await new Promise(r => setTimeout(r, 100)) // let React flush
-      }
+      // ── 4. Batch-create all instances in a single state update ───────────
+      // This is the critical fix: handleTemplateAddInstances creates ALL
+      // instances atomically, with seed content injected and external nodes
+      // pre-resolved. No loop, no race condition.
+      const seedContents = seeds.map(s => s.content)
+      const batchResult = orchestrator?.addInstances(nodeId, seeds.length, seedContents)
 
-      // Snapshot nodes/edges after all instances are rendered
-      await new Promise(r => setTimeout(r, 100))
-      const snapNodes = getNodesRef.current()
-      const snapEdges = getEdgesRef.current()
-
-      // Determine instance indices that were just created.
-      // onLoopAddInstance increments instanceCount each time; the new
-      // indices are (finalCount - seeds.length) … (finalCount - 1).
-      const batchNode     = snapNodes.find((n: Node) => n.id === nodeId)
-      const finalCount    = batchNode?.data?.instanceCount ?? seeds.length
-      const startIdx      = finalCount - seeds.length
-
-      const instances: Array<{
-        instanceIdx: number
-        nodes: Node[]
-        edges: Edge[]
-      }> = []
-
-      for (let i = 0; i < seeds.length; i++) {
-        const instanceIdx = startIdx + i
-        const seed        = seeds[i]
-
-        // Collect this instance's nodes/edges.
-        // iEdges: include any edge whose TARGET is an internal node — this
-        // captures external→internal connections, not just pure-internal ones.
-        let iNodes     = snapNodes.filter((n: Node) =>
-          n.data?.loopId === nodeId && n.data?.instanceIdx === instanceIdx
-        )
-        const iNodeIds = new Set(iNodes.map((n: Node) => n.id))
-        const iEdges   = snapEdges.filter((e: Edge) => iNodeIds.has(e.target))
-
-        // Collect external source nodes (source not in iNodeIds) and mark them
-        // _preResolved so WorkflowEngine treats them as pre-completed DAG roots
-        // (their existing content is used directly, no LLM call).
-        const externalSrcIds = new Set(
-          iEdges.filter((e: Edge) => !iNodeIds.has(e.source)).map((e: Edge) => e.source)
-        )
-        const externalNodes = snapNodes
-          .filter((n: Node) => externalSrcIds.has(n.id))
-          .map((n: Node) => ({ ...n, data: { ...n.data, _preResolved: true } }))
-
-        // ── Fix: inject seed content directly into iNodes (no re-snapshot) ──
-        // Earlier instances are hidden on canvas, so getNodes() may omit them.
-        // Mutating iNodes in-memory guarantees every instance gets its seed.
-        iNodes = iNodes.map((n: Node) =>
-          n.data?.type === "seed"
-            ? { ...n, data: { ...n.data, content: seed.content } }
-            : n
-        )
-
-        // Also update canvas UI so the seed chip is visible when viewing that instance
-        const seedNode = iNodes.find((n: Node) => n.data?.type === "seed")
-        if (seedNode) {
-          setNodes(ns => ns.map((n: Node) =>
-            n.id !== seedNode.id ? n : { ...n, data: { ...n.data, content: seed.content } }
-          ))
-        } else {
-          console.warn(`[batch] No seed node for instance ${instanceIdx}`)
-        }
-
-        // Translation of {{templateNodeId}} → {{instanceNodeId}} in prompts is
-        // handled upstream in handleLoopAddInstance (useLoopManager), so iNodes
-        // already carry the correct instance-scoped references here.
-        // External nodes are appended so the backend DAG can resolve {{ref}}.
-        instances.push({ instanceIdx, nodes: [...iNodes, ...externalNodes], edges: iEdges })
+      if (!batchResult || batchResult.instances.length === 0) {
+        throw new Error("Failed to create template instances")
       }
 
       // ── 5. Hand off to backend — /continue takes care of workflows ───────
+      const instances = batchResult.instances.map(inst => ({
+        instanceIdx: inst.instanceIdx,
+        nodes: inst.nodes.map(n => ({ id: n.id, type: n.type, data: n.data })),
+        edges: inst.edges.map(e => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          ...(e.targetHandle && { targetHandle: e.targetHandle }),
+        })),
+      }))
+
       const contRes = await fetch(`/api/jobs/${jobId}/continue`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -836,28 +840,28 @@ export function NodeEditor({
       // _polling.ts handles the rest (executing_workflows → done)
 
     } catch (err) {
-      console.error("[batch] generate failed:", err)
+      console.error("[template] generate failed:", err)
       setNodes(ns => ns.map(n =>
         n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
       ))
     }
-  }, [node, data?.type, nodeId, upstreamData, onLoopAddInstance, setNodes])
+  }, [node, data?.type, nodeId, upstreamData, orchestrator, setNodes])
 
   /** Poll job until stage='seeds_ready', then return seeds array */
-  const waitForBatchSeeds = useCallback(async (
+  const waitForTemplateSeeds = useCallback(async (
     jobId: string,
   ): Promise<Array<{ content: string; description?: string }> | null> => {
     const TIMEOUT = 30_000
     const deadline = Date.now() + TIMEOUT
 
     // Clear any previous seed poll
-    if (batchSeedPollRef.current) clearInterval(batchSeedPollRef.current)
+    if (templateSeedPollRef.current) clearInterval(templateSeedPollRef.current)
 
     return new Promise(resolve => {
-      batchSeedPollRef.current = setInterval(async () => {
+      templateSeedPollRef.current = setInterval(async () => {
         if (Date.now() > deadline) {
-          clearInterval(batchSeedPollRef.current!)
-          batchSeedPollRef.current = null
+          clearInterval(templateSeedPollRef.current!)
+          templateSeedPollRef.current = null
           resolve(null)
           return
         }
@@ -866,16 +870,16 @@ export function NodeEditor({
           const json = await res.json()
 
           if (json.status === "failed") {
-            clearInterval(batchSeedPollRef.current!)
-            batchSeedPollRef.current = null
+            clearInterval(templateSeedPollRef.current!)
+            templateSeedPollRef.current = null
             resolve(null)
             return
           }
 
           const seeds = json.result?.seeds
           if (json.result?.stage === "seeds_ready" && Array.isArray(seeds) && seeds.length > 0) {
-            clearInterval(batchSeedPollRef.current!)
-            batchSeedPollRef.current = null
+            clearInterval(templateSeedPollRef.current!)
+            templateSeedPollRef.current = null
             resolve(seeds)
           }
           // else: still generating_seeds → keep polling
@@ -886,10 +890,10 @@ export function NodeEditor({
     })
   }, [])
 
-  const handleStopBatch = useCallback(() => {
-    if (batchSeedPollRef.current) {
-      clearInterval(batchSeedPollRef.current)
-      batchSeedPollRef.current = null
+  const handleStopTemplate = useCallback(() => {
+    if (templateSeedPollRef.current) {
+      clearInterval(templateSeedPollRef.current)
+      templateSeedPollRef.current = null
     }
     setNodes(ns => ns.map(n =>
       n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
@@ -900,7 +904,7 @@ export function NodeEditor({
   useEffect(() => {
     return () => {
       if (workflowPollRef.current)    clearInterval(workflowPollRef.current)
-      if (batchSeedPollRef.current)   clearInterval(batchSeedPollRef.current)
+      if (templateSeedPollRef.current)   clearInterval(templateSeedPollRef.current)
     }
   }, [])
 
@@ -917,13 +921,16 @@ export function NodeEditor({
   const nodeH   = actualH * zoom
   const centerX = screenX + nodeW / 2
 
+  // inlineOffset is applied via translateY so top stays transition-free (no pan lag).
+  const hasInline       = !!(data.showPromptInline && data.prompt?.trim())
+  const inlineOffset    = hasInline ? Math.round(26 * zoom) : 0
   const actionBarBottom = screenY - ACTION_BAR_GAP
   const barTop          = screenY + nodeH + BAR_GAP
   const panelTop        = barTop + 62 + BAR_PANEL_GAP
 
   const isContainerNode    = data.type === 'template'
-  const loopInstanceCount  = isContainerNode ? (data.instanceCount ?? 0) : 0
-  const isLoopInstanceView = isContainerNode && (data.currentInstance ?? -1) >= 0
+  const templateInstanceCount  = isContainerNode ? (data.instanceCount ?? 0) : 0
+  const isTemplateInstanceView = isContainerNode && (data.currentInstance ?? -1) >= 0
 
   return (
     <>
@@ -946,6 +953,15 @@ export function NodeEditor({
           e.target.value = ""
         }}
       />
+      <input
+        ref={pdfUploadInputRef}
+        type="file" accept="application/pdf,.pdf" className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) handleUploadPdf(f)
+          e.target.value = ""
+        }}
+      />
 
       {/* NodeActionBar */}
       <div
@@ -955,30 +971,79 @@ export function NodeEditor({
           transform: "translate(-50%, -100%)",
           pointerEvents: isGenerating ? "none" : "auto",
           opacity:       isGenerating ? 0.35 : 1,
-          transition:    "opacity 200ms ease",
         }}
       >
         <NodeActionBar
           data={data}
           isTextEditing={isTextEditing}
           onToggleTextEdit={handleToggleTextEdit}
-          onUpload={() => data.type === "video" ? videoUploadInputRef.current?.click() : uploadInputRef.current?.click()}
+          onUpload={() => {
+            if (data.type === "video") {
+              videoUploadInputRef.current?.click()
+              return
+            }
+            if (data.type === "pdf") {
+              pdfUploadInputRef.current?.click()
+              return
+            }
+            uploadInputRef.current?.click()
+          }}
           onDownload={handleDownload}
           onDelete={handleDeleteNode}
           onFilterModeChange={(m) => handleUpdate({ filterInputMode: m })}
-          onLoopRelease={handleLoopReleaseClick}
-          onLoopAddInstance={handleLoopAddInstance}
-          onLoopDeleteInstance={handleLoopDeleteInstance}
-          onLoopGoTo={handleLoopGoTo}
-          loopInstanceCount={loopInstanceCount}
+          onTemplateRelease={handleTemplateReleaseClick}
+          onTemplateAddInstance={handleTemplateAddInstance}
+          onTemplateDeleteInstance={handleTemplateDeleteInstance}
+          onTemplateGoTo={handleTemplateGoTo}
+          templateInstanceCount={templateInstanceCount}
           onExecute={handleExecuteWorkflow}
           isExecuting={data?.type === 'template' ? isGenerating : isExecutingWorkflow}
           onLassoRelease={onLassoRelease ? () => onLassoRelease(nodeId) : undefined}
+          onToggleInlinePreview={() => handleUpdate({ showPromptInline: !data.showPromptInline })}
+          inlinePreviewEnabled={!!data.showPromptInline}
+          onPdfPrevPage={data?.type === "pdf" ? () => {
+            const total = Math.max(data.pdfPageCount ?? 1, 1)
+            const next = Math.max(1, Math.min(total, (data.pdfCurrentPage ?? 1) - 1))
+            handleUpdate({ pdfCurrentPage: next })
+          } : undefined}
+          onPdfNextPage={data?.type === "pdf" ? () => {
+            const total = Math.max(data.pdfPageCount ?? 1, 1)
+            const next = Math.max(1, Math.min(total, (data.pdfCurrentPage ?? 1) + 1))
+            handleUpdate({ pdfCurrentPage: next })
+          } : undefined}
+          onPdfSetPage={data?.type === "pdf" ? (page: number) => {
+            const total = Math.max(data.pdfPageCount ?? 1, 1)
+            const next = Math.max(1, Math.min(total, Math.round(page)))
+            handleUpdate({ pdfCurrentPage: next })
+          } : undefined}
+          onPdfSetPreviewDpi={data?.type === "pdf" ? (dpi: number) => {
+            const safe = Math.max(72, Math.min(600, Math.round(dpi)))
+            handleUpdate({ pdfPreviewDpi: safe })
+          } : undefined}
+          onRotate={data?.type === "image" ? () => {
+            // Rotate 90 degrees clockwise and swap dimensions to maintain aspect ratio
+            const currentRotation = data?.rotation ?? 0
+            const newRotation = (currentRotation + 90) % 360
+            // Prefer live node style dimensions (React Flow source of truth),
+            // then fallback to persisted data/default.
+            const currentWidth = (node?.style?.width as number | undefined) ?? data?.width ?? 180
+            const currentHeight = (node?.style?.height as number | undefined) ?? data?.height ?? 180
+            // 90° step rotation should always swap width/height.
+            // Using absolute angle (90/270) breaks after multiple rotates
+            // because currentWidth/currentHeight already reflect prior swaps.
+            const newWidth = currentHeight
+            const newHeight = currentWidth
+            handleUpdate({ 
+              rotation: newRotation,
+              width: newWidth,
+              height: newHeight,
+            })
+          } : undefined}
         />
       </div>
 
       {/* ModeToggle + Panel */}
-      {!isLoopInstanceView && data.type !== 'lasso' && (<>
+      {!isTemplateInstanceView && data.type !== 'lasso' && (<>
       <div
         className="absolute z-[500] pointer-events-auto"
         style={{
@@ -986,19 +1051,20 @@ export function NodeEditor({
           display: "flex", justifyContent: "center",
           pointerEvents: isGenerating ? "none" : "auto",
           opacity:       isGenerating ? 0.35 : 1,
-          transition:    "opacity 200ms ease",
+          transform:     `translateY(${inlineOffset}px)`,
+          transition:    "opacity 200ms ease, transform 200ms ease",
         }}
       >
         <ModeToggle mode={mode} onChange={handleModeChange} />
       </div>
 
       <div
-        className="absolute z-[500] pointer-events-auto bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/80 overflow-hidden"
-        style={{ left: centerX - PANEL_W / 2, top: panelTop, width: PANEL_W }}
+        className="absolute z-[500] pointer-events-auto bg-white/50 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/50 overflow-hidden"
+        style={{ left: centerX - PANEL_W / 2, top: panelTop, width: PANEL_W, transform: `translateY(${inlineOffset}px)`, transition: "transform 200ms ease" }}
       >
         <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 border-b border-slate-100">
           <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-            {MODULE_BY_ID[data.type]?.meta.panelTitle ?? data.type}
+            {mode === 'done' ? 'Note' : (MODULE_BY_ID[data.type]?.meta.panelTitle ?? data.type)}
           </span>
           <button
             onClick={isGenerating ? undefined : onClose}
@@ -1015,12 +1081,12 @@ export function NodeEditor({
           if (!mod?.ModalContent) return null
           
           // Template uses job-based generation (same isGenerating flag as text nodes)
-          const isBatch    = data.type === 'template'
+          const isTemplate    = data.type === 'template'
           const isFilter   = data.type === 'filter'
-          const generationProps = isBatch ? {
+          const generationProps = isTemplate ? {
             isGenerating,
-            onGenerate: handleBatchGenerate,
-            onStop:     handleStopBatch,
+            onGenerate: handleTemplateGenerate,
+            onStop:     handleStopTemplate,
           } : isFilter ? {
             isGenerating,
             onGenerate: handleFilterGenerate,
@@ -1057,7 +1123,7 @@ export function NodeEditor({
           }}
         >
           <div
-            className="bg-white/95 backdrop-blur-md rounded-xl border border-slate-200/80 p-4 min-w-[300px]"
+            className="bg-white/50 backdrop-blur-md rounded-xl border border-slate-200/50 p-4 min-w-[300px]"
             style={{ animation: "pickerIn 150ms ease-out both" }}
           >
             <style>{`
@@ -1082,7 +1148,7 @@ export function NodeEditor({
               </button>
               <button
                 onClick={handleReleaseConfirm}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200/80 transition-colors"
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-300/80 transition-colors"
               >
                 Delete instances &amp; release
               </button>

@@ -92,6 +92,7 @@ export function getTypeColor(type: string): string {
     text: "#3b82f6",   // blue
     image: "#10b981",  // emerald
     video: "#8b5cf6",  // violet
+    pdf: "#f43f5e",    // rose
     gate: "#f59e0b",   // amber
     template: "#6366f1",  // indigo
     seed: "#64748b",   // slate

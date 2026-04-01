@@ -3,22 +3,28 @@
 import React, { useState, useEffect, useRef, useContext } from 'react'
 import { useReactFlow } from 'reactflow'
 import type { Node, Edge } from 'reactflow'
-import type { BatchJobResult } from '@/app/services/job.service'
+import type { TemplateJobResult } from '@/app/services/job.service'
+import { MODULE_BY_ID } from './_registry'
+import type { ResultHandlerContext } from './_registry'
+import { resultHandler as defaultResultHandler } from './text/resultHandler'
 
 const POLL_MS = 1500
 
 // ─────────────────────────────────────────────
-// BatchOrchestratorContext
+// TemplateOrchestratorContext
 //
 // Provided by canvas.tsx (inside ReactFlowProvider).
-// Gives _polling.ts access to onLoopAddInstance so it can resume a
-// seeds_ready batch job after a page refresh (when no editor is open).
+// Gives _polling.ts access to onTemplateAddInstance so it can resume a
+// seeds_ready template job after a page refresh (when no editor is open).
 // ─────────────────────────────────────────────
-export interface BatchOrchestratorFns {
-  addInstance: (loopId: string) => void
+import type { BatchInstanceResult } from '@/components/layout/canvas/hooks/useTemplateManager'
+
+export interface TemplateOrchestratorFns {
+  addInstance: (templateId: string) => void
+  addInstances: (templateId: string, count: number, seedContents?: string[]) => BatchInstanceResult | null
 }
-export const BatchOrchestratorContext =
-  React.createContext<BatchOrchestratorFns | null>(null)
+export const TemplateOrchestratorContext =
+  React.createContext<TemplateOrchestratorFns | null>(null)
 
 /**
  * useNodePolling
@@ -26,14 +32,14 @@ export const BatchOrchestratorContext =
  * Polls /api/jobs/[activeJobId] while data.isGenerating is true.
  * Lives in NodeWrapper so generation continues independently of the editor.
  *
- * Batch-specific resume path:
+ * Template-specific resume path:
  *   If polling detects stage='seeds_ready' and the editor is NOT handling
- *   the job (batchResumeHandled !== jobId), it uses BatchOrchestratorContext
+ *   the job (templateResumeHandled !== jobId), it uses TemplateOrchestratorContext
  *   to create instances and POST /continue — resuming after a page refresh.
  *
  * On job completion:
  *  - image nodes:  decodes b64 → uploads to MinIO → updates dimensions
- *  - batch nodes:  applies instanceResults to all instance nodes
+ *  - template nodes:  applies instanceResults to all instance nodes
  *  - all others:   writes result.content to node.data.content
  */
 export function useNodePolling(
@@ -42,7 +48,7 @@ export function useNodePolling(
 ) {
   const { setNodes, getNodes, getEdges } = useReactFlow()
   const [genProgress, setGenProgress]    = useState(0)
-  const orchestrator = useContext(BatchOrchestratorContext)
+  const orchestrator = useContext(TemplateOrchestratorContext)
 
   const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const progressRef  = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -81,7 +87,7 @@ export function useNodePolling(
     clearIntervals()
     activeJobRef.current = jobId
 
-    // Batch nodes use real progress — skip fake ticker
+    // Template nodes use real progress — skip fake ticker
     if (nodeType !== 'template') {
       progressRef.current = setInterval(() => {
         setGenProgress(p => Math.min(p + 0.006 + Math.random() * 0.006, 0.9))
@@ -97,11 +103,11 @@ export function useNodePolling(
         let json: any
         try { json = JSON.parse(rawText) } catch { return }
 
-        // ── Batch: update real progress ──────────────────────────────────────
+        // ── Template: update real progress ──────────────────────────────────────
         if (nodeType === 'template' && json.status === 'running') {
-          const batchResult = json.result as BatchJobResult | undefined
-          const stage       = batchResult?.stage
-          const progress    = batchResult?.workflowProgress
+          const templateResult = json.result as TemplateJobResult | undefined
+          const stage       = templateResult?.stage
+          const progress    = templateResult?.workflowProgress
 
           if (progress && progress.total > 0) {
             setGenProgress(0.05 + (progress.current / progress.total) * 0.85)
@@ -110,17 +116,17 @@ export function useNodePolling(
           } else if (stage === 'seeds_ready') {
             setGenProgress(0.05)
             // ── Resume path (page refresh) ─────────────────────────────────
-            // batchResumeHandled is set by the editor when it owns this job.
+            // templateResumeHandled is set by the editor when it owns this job.
             // It is stripped from draft by sanitizeNodes, so after a refresh
             // it will be absent — meaning we should resume here.
-            const handledByEditor = dataRef.current?.batchResumeHandled === jobId
+            const handledByEditor = dataRef.current?.templateResumeHandled === jobId
             const alreadyResuming = resumeRef.current === jobId
             const orch            = orchestratorRef.current
-            const seeds           = batchResult?.seeds ?? []
+            const seeds           = templateResult?.seeds ?? []
 
             if (!handledByEditor && !alreadyResuming && orch && seeds.length > 0) {
               resumeRef.current = jobId
-              void runBatchSeedsResume(
+              void runTemplateSeedsResume(
                 jobId, nodeId, seeds, orch.addInstance,
                 setNodesRef, getNodesRef, getEdgesRef,
               )
@@ -136,123 +142,16 @@ export function useNodePolling(
 
           const result = json.result as Record<string, any>
 
-          // Batch: apply instanceResults
-          if (nodeType === 'template') {
-            const batchResult     = result as BatchJobResult
-            const instanceResults = (batchResult.instanceResults ?? {}) as Record<string, any>
-
-            setNodesRef.current(ns => ns.map(n => {
-              if (n.id === nodeId) {
-                return { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
-              }
-              const nodeResult = instanceResults[n.id]
-              if (!nodeResult) return n
-              if ('content' in nodeResult) {
-                return { ...n, data: { ...n.data, content: nodeResult.content, isGenerating: false } }
-              }
-              return n
-            }))
-            setTimeout(() => setGenProgress(0), 800)
-            return
+          // Dispatch to module-specific result handler
+          const mod = nodeType ? MODULE_BY_ID[nodeType] : undefined
+          const handler = mod?.resultHandler ?? defaultResultHandler
+          const handlerCtx: ResultHandlerContext = {
+            nodeId,
+            setNodes: setNodesRef.current,
+            getNodes: getNodesRef.current,
+            getEdges: getEdgesRef.current,
           }
-
-          // Image: decode b64 → MinIO → update dimensions
-          if (nodeType === 'image') {
-            const mime   = result.mime || 'image/png'
-            const binary = atob(result.b64)
-            const ab     = new ArrayBuffer(binary.length)
-            const ia     = new Uint8Array(ab)
-            for (let i = 0; i < binary.length; i++) ia[i] = binary.charCodeAt(i)
-            const blob = new Blob([ab], { type: mime })
-
-            let src: string
-            try {
-              const form = new FormData()
-              form.append(
-                'file',
-                new File([blob], `generated.${mime.split('/')[1] || 'png'}`, { type: mime }),
-              )
-              const upRes  = await fetch('/api/upload', { method: 'POST', body: form })
-              const upJson = await upRes.json()
-              if (!upRes.ok || !upJson.url) throw new Error('upload failed')
-              src = upJson.url as string
-            } catch {
-              src = URL.createObjectURL(blob)
-            }
-
-            const img = new window.Image()
-            img.src   = src
-            await new Promise<void>(resolve => { img.onload = () => resolve() })
-
-            const nw    = img.naturalWidth
-            const nh    = img.naturalHeight
-            const scale = 180 / Math.min(nw, nh)
-            const w     = Math.round(nw * scale)
-            const h     = Math.round(nh * scale)
-
-            setNodesRef.current(ns => ns.map(n => {
-              if (n.id !== nodeId) return n
-              return {
-                ...n,
-                style: { ...n.style, width: w, height: h },
-                data:  {
-                  ...n.data,
-                  src,
-                  naturalWidth:  nw,
-                  naturalHeight: nh,
-                  width:         w,
-                  height:        h,
-                  isGenerating:  false,
-                  activeJobId:   undefined,
-                },
-              }
-            }))
-          } else if (nodeType === 'filter') {
-            const filterResult = result.filterResult as {
-              passed:   Array<{ id: string; label?: string; type?: string }>
-              filtered: Array<{ id: string; label?: string; type?: string }>
-              reply?:   string
-            } | undefined
-
-            // Compute output content = joined content of passed nodes
-            // This is what downstream nodes see when they reference {{filterId}}
-            const currentNodes = getNodesRef.current()
-            const passedContent = (filterResult?.passed ?? [])
-              .map((item) => {
-                const n = currentNodes.find((node) => node.id === item.id)
-                if (!n) return ''
-                const d = n.data as any
-                return d?.content || d?.src || d?.videoSrc || ''
-              })
-              .filter(Boolean)
-              .join('\n\n')
-
-            setNodesRef.current(ns => ns.map(n =>
-              n.id !== nodeId ? n : {
-                ...n,
-                data: {
-                  ...n.data,
-                  content:      passedContent,
-                  filterResult,
-                  isGenerating: false,
-                  activeJobId:  undefined,
-                },
-              }
-            ))
-          } else {
-            // Text / seed / etc.
-            setNodesRef.current(ns => ns.map(n =>
-              n.id !== nodeId ? n : {
-                ...n,
-                data: {
-                  ...n.data,
-                  content:      result.content,
-                  isGenerating: false,
-                  activeJobId:  undefined,
-                },
-              }
-            ))
-          }
+          await handler(result, handlerCtx)
 
           setTimeout(() => setGenProgress(0), 800)
 
@@ -262,7 +161,12 @@ export function useNodePolling(
           setNodesRef.current(ns => ns.map(n =>
             n.id !== nodeId ? n : {
               ...n,
-              data: { ...n.data, isGenerating: false, activeJobId: undefined },
+              data: {
+                ...n.data,
+                isGenerating:    false,
+                activeJobId:     undefined,
+                generationError: json.error ?? 'Generation failed',
+              },
             }
           ))
         }
@@ -279,22 +183,22 @@ export function useNodePolling(
 }
 
 // ─────────────────────────────────────────────
-// runBatchSeedsResume
+// runTemplateSeedsResume
 //
 // Called by _polling when seeds_ready is detected after a page refresh.
-// Mirrors handleBatchGenerate steps 4+5 in node_editor_index.tsx.
+// Mirrors handleTemplateGenerate steps 4+5 in node_editor_index.tsx.
 // ─────────────────────────────────────────────
-async function runBatchSeedsResume(
+async function runTemplateSeedsResume(
   jobId:       string,
   nodeId:      string,
   seeds:       Array<{ content: string; description?: string }>,
-  addInstance: (loopId: string) => void,
+  addInstance: (templateId: string) => void,
   setNodesRef: React.MutableRefObject<(fn: (nodes: Node[]) => Node[]) => void>,
   getNodesRef: React.MutableRefObject<() => Node[]>,
   getEdgesRef: React.MutableRefObject<() => Edge[]>,
 ): Promise<void> {
   try {
-    // 1. Create instances (same as onLoopAddInstance loop in editor)
+    // 1. Create instances (same as onTemplateAddInstance in editor)
     for (let i = 0; i < seeds.length; i++) {
       addInstance(nodeId)
       await new Promise(r => setTimeout(r, 100))
@@ -304,8 +208,8 @@ async function runBatchSeedsResume(
     const snapNodes = getNodesRef.current()
     const snapEdges = getEdgesRef.current()
 
-    const batchNode  = snapNodes.find((n: Node) => n.id === nodeId)
-    const finalCount = batchNode?.data?.instanceCount ?? seeds.length
+    const templateNode  = snapNodes.find((n: Node) => n.id === nodeId)
+    const finalCount = templateNode?.data?.instanceCount ?? seeds.length
     const startIdx   = finalCount - seeds.length
 
     const instances: Array<{ instanceIdx: number; nodes: Node[]; edges: Edge[] }> = []
@@ -315,10 +219,11 @@ async function runBatchSeedsResume(
       const seed        = seeds[i]
 
       // Collect this instance's nodes/edges.
+      // Instance nodes are tagged with templateId (the template node's ID) and instanceIdx.
       // iEdges: include any edge whose TARGET is an internal node — this
       // captures external→internal connections, not just pure-internal ones.
       let iNodes   = snapNodes.filter((n: Node) =>
-        n.data?.loopId === nodeId && n.data?.instanceIdx === instanceIdx
+        n.data?.templateId === nodeId && n.data?.instanceIdx === instanceIdx
       )
       const iNodeIds = new Set(iNodes.map((n: Node) => n.id))
       const iEdges   = snapEdges.filter((e: Edge) => iNodeIds.has(e.target))
@@ -332,25 +237,25 @@ async function runBatchSeedsResume(
         .filter((n: Node) => externalSrcIds.has(n.id))
         .map((n: Node) => ({ ...n, data: { ...n.data, _preResolved: true } }))
 
-      // ── Fix: inject seed content directly into iNodes (no re-snapshot) ──
+      // Inject seed content directly into iNodes (no re-snapshot)
       iNodes = iNodes.map((n: Node) =>
-        n.data?.type === 'seed'
+        n.data?.type === 'seed' || n.data?.isSeed
           ? { ...n, data: { ...n.data, content: seed.content } }
           : n
       )
 
       // Also update canvas UI
-      const seedNode = iNodes.find((n: Node) => n.data?.type === 'seed')
+      const seedNode = iNodes.find((n: Node) => n.data?.type === 'seed' || n.data?.isSeed)
       if (seedNode) {
         setNodesRef.current(ns => ns.map((n: Node) =>
           n.id !== seedNode.id ? n : { ...n, data: { ...n.data, content: seed.content } }
         ))
       } else {
-        console.warn(`[batch resume] No seed node for instance ${instanceIdx}`)
+        console.warn(`[template resume] No seed node found for instance ${instanceIdx} (templateId=${nodeId})`)
       }
 
       // Translation of {{templateNodeId}} → {{instanceNodeId}} in prompts is
-      // handled upstream in handleLoopAddInstance (useLoopManager).
+      // handled upstream in handleTemplateAddInstance (useTemplateManager).
       // External nodes are appended so the backend DAG can resolve {{ref}}.
       instances.push({ instanceIdx, nodes: [...iNodes, ...externalNodes], edges: iEdges })
     }
@@ -366,10 +271,10 @@ async function runBatchSeedsResume(
       const err = await contRes.json()
       // 400 "wrong stage" means editor already handled it — not an error
       if (contRes.status !== 400) {
-        console.error('[batch resume] /continue failed:', err.error)
+        console.error('[template resume] /continue failed:', err.error)
       }
     }
   } catch (err) {
-    console.error('[batch resume] runBatchSeedsResume failed:', err)
+    console.error('[template resume] runTemplateSeedsResume failed:', err)
   }
 }

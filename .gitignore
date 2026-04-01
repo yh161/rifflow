@@ -42,7 +42,5 @@ next-env.d.ts
 
 /lib/generated/prisma
 
-# MinIO
-data/minio/
-# PostgreSQL
-data/postgres/
+# Local data (MinIO, PostgreSQL, backups)
+data/

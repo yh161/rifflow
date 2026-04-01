@@ -17,19 +17,23 @@ import { cn } from "@/lib/utils"
 import { MODULES } from "@/components/layout/modules/_registry"
 
 // ─────────────────────────────────────────────
-// Shared config — single source of truth for picker sections
-// Add new node types here and they appear everywhere.
+// Picker sections — built from module meta.category
+// Add a new module with `category: 'Assets'` and it appears here automatically.
 // ─────────────────────────────────────────────
-export const PICKER_SECTIONS = [
-  { id: "Assets", label: "Assets", moduleIds: ["text", "image", "video"] },
-  { id: "Logic",  label: "Logic",  moduleIds: ["filter", "template"] },
-]
-
-export const MODEL_BADGES: Record<string, string> = {
-  text:  "Gemini",
-  image: "FLUX",
-  video: "Wan",
+function buildPickerSections() {
+  const catMap = new Map<string, string[]>()
+  for (const mod of MODULES) {
+    const cat = mod.meta.category
+    if (!cat) continue
+    if (!catMap.has(cat)) catMap.set(cat, [])
+    catMap.get(cat)!.push(mod.meta.id)
+  }
+  return Array.from(catMap.entries()).map(([cat, ids]) => ({
+    id: cat, label: cat, moduleIds: ids,
+  }))
 }
+
+export const PICKER_SECTIONS = buildPickerSections()
 
 // ─────────────────────────────────────────────
 // NodePickerMenu
@@ -57,6 +61,9 @@ export interface NodePickerMenuProps {
   /** Whether to render the left-pointing arrow caret */
   showArrow?: boolean
 
+  /** When true, only show favorited nodes (no section headers) */
+  favoritesOnly?: boolean
+
   className?: string
 }
 
@@ -70,9 +77,11 @@ export function NodePickerMenu({
   top,
   transform,
   showArrow = true,
+  favoritesOnly = false,
   className,
 }: NodePickerMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
+
 
   // "outside" mode — close on mousedown outside the menu
   useEffect(() => {
@@ -89,8 +98,6 @@ export function NodePickerMenu({
   // Collect all modules for the picker
   const modById = Object.fromEntries(MODULES.map((m) => [m.meta.id, m]))
 
-  // Flatten all module ids across sections for easy lookup
-  const allSectionModIds = PICKER_SECTIONS.flatMap((s) => s.moduleIds)
   const pinnedMods = favorites
     .map((id) => modById[id])
     .filter(Boolean)
@@ -102,11 +109,11 @@ export function NodePickerMenu({
       className={cn("z-50", className)}
     >
       {showArrow && (
-        <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rotate-45 rounded-[2px] border-l border-b border-slate-200/60 shadow-sm" />
+        <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-white/50 rotate-45 rounded-[2px] border-l border-b border-slate-200/40 shadow-sm backdrop-blur-md" />
       )}
 
       <div
-        className="relative bg-white border border-slate-200/80 rounded-2xl p-2 min-w-[240px] shadow-xl shadow-black/[0.08]"
+        className="relative bg-white/50 border border-slate-200/50 rounded-2xl p-2 min-w-[240px] shadow-xl shadow-black/[0.08] backdrop-blur-md"
         style={{ animation: "pickerIn 180ms ease-out both" }}
       >
         <style>{`
@@ -116,50 +123,52 @@ export function NodePickerMenu({
           }
         `}</style>
 
-        {/* Pinned / Favorites section */}
-        {pinnedMods.length > 0 && (
-          <div className="mb-1">
-            <div className="px-3 pt-2 pb-1">
-              <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-300">
-                Pinned
-              </span>
+        {/* Sections or favorites-only */}
+        {favoritesOnly ? (
+          pinnedMods.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-1.5 py-5 px-4 text-center">
+              <Star size={16} className="text-slate-200" />
+              <p className="text-[11px] text-slate-300 leading-snug">
+                Pin nodes with ★ to see them here
+              </p>
             </div>
-            {pinnedMods.map((mod) => (
-              <PickerRow
-                key={mod.meta.id}
-                mod={mod}
-                isFavorite
-                onSelect={() => { onSelect(mod.meta.id); onDismiss?.() }}
-                onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(mod.meta.id) : undefined}
-              />
-            ))}
-            <div className="w-full h-px bg-slate-100 my-1.5" />
-          </div>
-        )}
-
-        {/* Regular sections */}
-        {PICKER_SECTIONS.map((section) => {
-          const sectionMods = section.moduleIds.map((id) => modById[id]).filter(Boolean)
-          if (!sectionMods.length) return null
-          return (
-            <div key={section.id} className="mb-1 last:mb-0">
-              <div className="px-3 pt-2 pb-1">
-                <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-300">
-                  {section.label}
-                </span>
-              </div>
-              {sectionMods.map((mod) => (
+          ) : (
+            <div className="transition-all duration-200">
+              {pinnedMods.map((mod) => (
                 <PickerRow
                   key={mod.meta.id}
                   mod={mod}
-                  isFavorite={favorites.includes(mod.meta.id)}
+                  isFavorite
                   onSelect={() => { onSelect(mod.meta.id); onDismiss?.() }}
                   onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(mod.meta.id) : undefined}
                 />
               ))}
             </div>
           )
-        })}
+        ) : (
+          PICKER_SECTIONS.map((section) => {
+            const sectionMods = section.moduleIds.map((id) => modById[id]).filter(Boolean)
+            if (!sectionMods.length) return null
+            return (
+              <div key={section.id} className="mb-1 last:mb-0">
+                <div className="px-3 pt-2 pb-1">
+                  <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-300">
+                    {section.label}
+                  </span>
+                </div>
+                {sectionMods.map((mod) => (
+                  <PickerRow
+                    key={mod.meta.id}
+                    mod={mod}
+                    isFavorite={favorites.includes(mod.meta.id)}
+                    onSelect={() => { onSelect(mod.meta.id); onDismiss?.() }}
+                    onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(mod.meta.id) : undefined}
+                  />
+                ))}
+              </div>
+            )
+          })
+        )}
       </div>
     </div>
   )
@@ -179,8 +188,7 @@ function PickerRow({
   onSelect: () => void
   onToggleFavorite?: () => void
 }) {
-  const Icon  = mod.meta.icon
-  const badge = MODEL_BADGES[mod.meta.id]
+  const Icon = mod.meta.icon
 
   return (
     <div className="flex items-center gap-1 group/row rounded-xl hover:bg-slate-50 transition-colors duration-150">
@@ -201,11 +209,6 @@ function PickerRow({
             <span className="text-[13px] font-medium text-slate-700 group-hover/item:text-slate-900 transition-colors whitespace-nowrap">
               {mod.meta.name}
             </span>
-            {badge && (
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-400 tracking-wide">
-                {badge}
-              </span>
-            )}
           </div>
           <span className={cn(
             "absolute bottom-0 left-0 text-[10px] text-slate-300 leading-tight truncate max-w-[140px]",

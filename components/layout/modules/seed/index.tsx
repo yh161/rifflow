@@ -6,14 +6,14 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { CustomNodeData } from './_types'
-import type { HandleDef } from './_handle'
-import { registerTextarea } from './_markdown_insert'
+import type { CustomNodeData } from '../_types'
+import type { HandleDef } from '../_handle'
+import { registerTextarea } from '../_markdown_insert'
 
 export const meta = {
   id:          'seed',
   name:        'Seed',
-  description: 'Dynamic seed content — generated fresh each loop iteration',
+  description: 'Dynamic seed content — generated fresh each template iteration',
   icon:        Sparkles,
   color:       'text-violet-500',
   bg:          'bg-violet-50',
@@ -242,3 +242,5 @@ export const ReactFlowNode = memo(({ data, selected }: NodeProps<CustomNodeData>
 ReactFlowNode.displayName = 'SeedNode'
 
 export function ModalContent() { return null }
+export { resultHandler } from './resultHandler'
+export { ActionBarContent } from './actionBar'

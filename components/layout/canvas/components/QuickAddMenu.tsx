@@ -33,6 +33,7 @@ export function QuickAddMenu({
       favorites={favorites}
       onToggleFavorite={onToggleFavorite}
       showArrow={!!sourceNodeId}
+      favoritesOnly
       left={menuLeft}
       top={menuTop}
     />

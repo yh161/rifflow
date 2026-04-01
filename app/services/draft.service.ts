@@ -32,6 +32,14 @@ function sanitizeNode(node: Prisma.JsonValue): Prisma.JsonValue {
 
 const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 }
 
+function parseFavorites(v: Prisma.JsonValue): string[] {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return []
+  const vp = v as Record<string, Prisma.JsonValue>
+  const raw = vp.favorites
+  if (!Array.isArray(raw)) return []
+  return raw.filter((x): x is string => typeof x === "string")
+}
+
 function parseViewport(v: Prisma.JsonValue): { x: number; y: number; zoom: number } {
   if (typeof v === "object" && v !== null && !Array.isArray(v)) {
     const vp = v as Record<string, Prisma.JsonValue>
@@ -46,6 +54,7 @@ export interface DraftData {
   nodes:    Prisma.JsonValue[]
   edges:    Prisma.JsonValue[]
   viewport: { x: number; y: number; zoom: number }
+  favorites: string[]
 }
 
 export interface DraftResult {
@@ -68,17 +77,18 @@ export class DraftService {
       if (!draft) {
         return {
           success: true,
-          data: { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT }
+          data: { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT, favorites: [] }
         }
       }
 
       const nodes    = Array.isArray(draft.nodesJson) ? draft.nodesJson : []
       const edges    = Array.isArray(draft.edgesJson) ? draft.edgesJson : []
       const viewport = parseViewport(draft.viewportJson)
+      const favorites = parseFavorites(draft.viewportJson)
 
       return {
         success: true,
-        data: { nodes, edges, viewport }
+        data: { nodes, edges, viewport, favorites }
       }
     } catch (error: unknown) {
       console.error("[DraftService] getDraftByUserId failed:", error)
@@ -94,6 +104,7 @@ export class DraftService {
     nodes:    Prisma.JsonValue[],
     edges:    Prisma.JsonValue[],
     viewport: { x: number; y: number; zoom: number },
+    favorites: string[],
   ): Promise<DraftResult> {
     try {
       if (!Array.isArray(nodes) || !Array.isArray(edges)) {
@@ -109,7 +120,7 @@ export class DraftService {
         user: { connect: { id: userId } },
         nodesJson:    cleanNodes as Prisma.InputJsonValue,
         edgesJson:    edges     as Prisma.InputJsonValue,
-        viewportJson: viewport  as unknown as Prisma.InputJsonValue,
+        viewportJson: { ...viewport, favorites } as unknown as Prisma.InputJsonValue,
       })
 
       return { success: true }
