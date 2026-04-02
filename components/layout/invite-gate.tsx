@@ -1,96 +1,87 @@
 "use client"
 
 import { useState } from "react"
-import { useSession } from "next-auth/react"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
+import { useSession, signOut } from "next-auth/react"
 import { Input } from "@/components/ui/input"
-import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 export default function InviteGate() {
   const { data: session, update } = useSession()
   const [inviteCode, setInviteCode] = useState("")
-  const [error, setError]           = useState("")
-  const [loading, setLoading]       = useState(false)
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
 
-  // Only show for authenticated but unverified users
-  if (!session || session.user.inviteVerified) return null
+  // Only show for new Google users that need invite verification
+  if (!session?.user?.needsInvite) return null
 
   const handleSubmit = async () => {
-    if (!inviteCode.trim()) return
+    if (!inviteCode.trim() || loading) return
     setLoading(true)
     setError("")
-
-    const res = await fetch("/api/auth/verify-invite", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ inviteCode: inviteCode.trim() }),
-    })
-
-    if (res.ok) {
-      // Trigger session refresh so inviteVerified becomes true
-      await update()
-    } else {
-      setError("Invalid invite code. DM the author on GitHub to get one.")
+    try {
+      const res = await fetch("/api/auth/verify-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inviteCode: inviteCode.trim() }),
+      })
+      if (res.ok) {
+        await update({ inviteValidated: true })
+      } else {
+        setError("Invalid invite code. DM the author on GitHub to get one.")
+      }
+    } catch {
+      setError("Network error, please try again")
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
-    <Dialog open>
-      <DialogContent className="p-0 border-none bg-transparent shadow-none max-w-[380px] w-full [&>button]:hidden">
-        <VisuallyHidden><DialogTitle>Invite code required</DialogTitle></VisuallyHidden>
-
-        <div className="w-full rounded-[28px] bg-white border border-slate-100 shadow-2xl shadow-black/[0.10] px-8 pt-10 pb-8 flex flex-col items-center gap-5">
-          <div className="text-center space-y-1.5">
-            <p
-              className="text-[38px] tracking-tight text-slate-800 leading-none mb-4"
-              style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontWeight: 400, fontStyle: "italic" }}
-            >
-              Hi, composer
-            </p>
-            <h1 className="text-[17px] font-semibold tracking-tight text-slate-800">Enter your invite code</h1>
-            <p className="text-[13px] text-slate-500">
-              Rifflow is currently in early access.{" "}
-              <a
-                href="https://github.com/yh161/rifflow"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline underline-offset-2 hover:text-slate-700"
-              >
-                DM me on GitHub
-              </a>{" "}
-              to get one.
-            </p>
-          </div>
-
-          <div className="w-full flex flex-col gap-3">
-            <Input
-              type="text"
-              placeholder="Invite code"
-              value={inviteCode}
-              onChange={(e) => { setInviteCode(e.target.value); setError("") }}
-              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-              className="h-11 rounded-xl border-slate-200 text-[13px] text-slate-700 placeholder:text-slate-300 focus-visible:ring-1 focus-visible:ring-slate-300"
-            />
-            {error && <p className="text-[11px] text-red-400 pl-1">{error}</p>}
-
-            <Button
-              onClick={handleSubmit}
-              disabled={!inviteCode.trim() || loading}
-              className={cn(
-                "w-full h-11 rounded-xl text-[13px] font-medium transition-all duration-200",
-                inviteCode.trim() && !loading
-                  ? "bg-slate-800 hover:bg-slate-700 text-white"
-                  : "bg-slate-100 text-slate-300 cursor-not-allowed pointer-events-none",
-              )}
-            >
-              {loading ? "Verifying…" : "Continue"}
-            </Button>
-          </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-[28px] px-8 py-10 w-full max-w-[360px] shadow-2xl shadow-black/10 border border-slate-100 flex flex-col gap-5">
+        <div className="text-center space-y-1.5">
+          <h1 className="text-[17px] font-semibold tracking-tight text-slate-800">Invite code required</h1>
+          <p className="text-[13px] text-slate-500">Enter an invite code to continue</p>
         </div>
-      </DialogContent>
-    </Dialog>
+
+        <div className="flex flex-col gap-3">
+          <Input
+            type="text"
+            placeholder="Enter invite code"
+            value={inviteCode}
+            onChange={(e) => { setInviteCode(e.target.value); setError("") }}
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            autoFocus
+            className={cn(
+              "h-11 rounded-xl border-slate-200 text-[13px] text-slate-700",
+              "placeholder:text-slate-300 focus-visible:ring-1 focus-visible:ring-slate-300",
+              error && "border-red-300 focus-visible:ring-red-200",
+            )}
+          />
+          {error && <p className="text-[11px] text-red-400 pl-1">{error}</p>}
+        </div>
+
+        <Button
+          onClick={handleSubmit}
+          disabled={!inviteCode.trim() || loading}
+          className={cn(
+            "w-full h-11 rounded-xl text-[13px] font-medium transition-all duration-200",
+            inviteCode.trim() && !loading
+              ? "bg-slate-800 hover:bg-slate-700 text-white"
+              : "bg-slate-100 text-slate-300 cursor-not-allowed pointer-events-none",
+          )}
+        >
+          {loading ? "Verifying…" : "Continue"}
+        </Button>
+
+        <button
+          onClick={() => signOut({ callbackUrl: "/" })}
+          className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors text-center"
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
   )
 }

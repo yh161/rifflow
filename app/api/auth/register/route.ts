@@ -12,13 +12,9 @@ export async function POST(req: NextRequest) {
   try {
     const { email, password, inviteCode } = await req.json()
 
-    // Validate invite code
+    // Validate invite code — must pass for new accounts
     const validCodes = getValidInviteCodes()
-    console.log("[register] Invite code received:", inviteCode)
-    console.log("[register] Valid codes configured:", validCodes)
-    console.log("[register] ENV INVITE_CODES:", process.env.INVITE_CODES)
-
-    if (!inviteCode || !validCodes.includes(inviteCode)) {
+    if (!inviteCode || !validCodes.includes(inviteCode.trim())) {
       return NextResponse.json({ error: "Invalid invite code" }, { status: 403 })
     }
 
@@ -37,11 +33,8 @@ export async function POST(req: NextRequest) {
       data: {
         email,
         passwordHash,
-        inviteVerified: true,
         wallet: {
-          create: {
-            points: 100,
-          },
+          create: { points: 100 },
         },
       },
     })

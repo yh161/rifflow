@@ -54,22 +54,37 @@ export const authOptions: NextAuthOptions = {
       if (new URL(url).origin === baseUrl) return url
       return baseUrl
     },
-    async jwt({ token, user, trigger }) {
+
+    async jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id
-        token.inviteVerified = user.inviteVerified ?? false
+        // New Google user: no passwordHash, created within the last 60s
+        const createdAt = (user as any).createdAt as Date | undefined
+        const isRecent = createdAt && (Date.now() - new Date(createdAt).getTime()) < 60_000
+        if (isRecent && !(user as any).passwordHash) {
+          token.needsInvite = true
+        }
       }
-      // Re-fetch on session update (after invite verification)
-      if (trigger === "update" && token.id) {
-        const fresh = await prisma.user.findUnique({ where: { id: token.id as string } })
-        if (fresh) token.inviteVerified = fresh.inviteVerified
+
+      // Legacy token fix: old Google OAuth tokens stored the Google sub (numeric) as id
+      if (!token.id && token.sub) token.id = token.sub
+      if (token.id && /^\d+$/.test(token.id as string) && token.email) {
+        const byEmail = await prisma.user.findUnique({ where: { email: token.email as string } })
+        if (byEmail) token.id = byEmail.id
       }
+
+      // Client called update({ inviteValidated: true }) after invite code accepted
+      if (trigger === "update" && (session as any)?.inviteValidated) {
+        token.needsInvite = false
+      }
+
       return token
     },
+
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string
-        session.user.inviteVerified = token.inviteVerified ?? false
+        session.user.needsInvite = (token.needsInvite as boolean) ?? false
       }
       return session
     },
@@ -77,11 +92,10 @@ export const authOptions: NextAuthOptions = {
 
   events: {
     async createUser({ user }) {
-      // New users start with 0 points — points are granted after invite code verification
       await prisma.wallet.create({
         data: {
           userId: user.id,
-          points: 0,
+          points: 100,
         },
       })
     },

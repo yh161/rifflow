@@ -27,8 +27,6 @@ function isValidEmail(email: string) {
 }
 
 // ─────────────────────────────────────────────
-// Shared Continue button
-// ─────────────────────────────────────────────
 function ContinueButton({ onClick, enabled, label = "Continue" }: {
   onClick: () => void
   enabled: boolean
@@ -55,67 +53,118 @@ interface LoginModalProps {
   onOpenChange: (open: boolean) => void
 }
 
+type View = "providers" | "email" | "invite"
+
 export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
-  const [view,         setView]         = useState<"providers" | "email">("providers")
+  const [view,         setView]         = useState<View>("providers")
   const [email,        setEmail]        = useState("")
   const [emailError,   setEmailError]   = useState("")
   const [password,     setPassword]     = useState("")
   const [showPassword, setShowPassword] = useState(false)
+  const [submitError,  setSubmitError]  = useState("")
+  const [loading,      setLoading]      = useState(false)
+
+  // Invite code view
   const [inviteCode,   setInviteCode]   = useState("")
+  const [inviteError,  setInviteError]  = useState("")
   const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const turnstileRef = useRef<any>(null)
 
   const handleOpenChange = (val: boolean) => {
     if (!val) {
       setView("providers"); setEmail(""); setPassword("")
-      setInviteCode(""); setEmailError(""); setCaptchaToken(null)
+      setEmailError(""); setSubmitError(""); setLoading(false)
+      setInviteCode(""); setInviteError(""); setCaptchaToken(null)
     }
     onOpenChange(val)
   }
 
+  // ── View 1 → View 2 ──────────────────────────
   const goEmail = () => {
     if (!isValidEmail(email)) { setEmailError("Please enter a valid email address"); return }
     setEmailError("")
+    setSubmitError("")
     setView("email")
   }
 
-  const [submitError, setSubmitError] = useState("")
-  const canSubmit = isValidEmail(email) && password.length >= 6 && !!captchaToken && inviteCode.trim().length > 0
-
-  const handleSubmit = async () => {
-    if (!canSubmit) return
+  // ── View 2: try login; if no account → go to invite view ──
+  const handlePasswordSubmit = async () => {
+    if (password.length < 6 || loading) return
+    setLoading(true)
     setSubmitError("")
+    try {
+      // Check if account exists
+      const res = await fetch("/api/auth/exists", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      })
+      const { exists } = await res.json()
 
-    // Try to register first (API returns exists: true if user already exists)
-    const reg = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, inviteCode: inviteCode.trim() }),
-    })
-    const regData = await reg.json()
-    if (!reg.ok && !regData.exists) {
-      if (reg.status === 403) {
-        setSubmitError("Invalid invite code. DM the author on GitHub to get one.")
+      if (exists) {
+        // Login directly
+        const result = await signIn("credentials", { email, password, redirect: false })
+        if (result?.error) {
+          setSubmitError("Wrong password")
+        } else {
+          handleOpenChange(false)
+        }
       } else {
-        setSubmitError("Registration failed, please try again")
+        // New user — go to invite code view
+        setView("invite")
       }
-      return
-    }
-
-    // Registration successful or user already exists, proceed to login
-    const result = await signIn("credentials", { email, password, redirect: false })
-    if (result?.error) {
-      setSubmitError("Invalid email or password")
-    } else {
-      handleOpenChange(false)
+    } catch {
+      setSubmitError("Network error, please try again")
+    } finally {
+      setLoading(false)
     }
   }
 
-  const isEmail = view === "email"
+  // ── View 3: register with invite code ─────────
+  const canRegister = inviteCode.trim().length > 0 && !!captchaToken && !loading
+  const handleRegister = async () => {
+    if (!canRegister) return
+    setLoading(true)
+    setInviteError("")
+    try {
+      const reg = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, inviteCode: inviteCode.trim() }),
+      })
+      const regData = await reg.json()
 
-  // View transition: both sit in the same CSS grid cell.
-  // Container auto-sizes to the VISIBLE child; invisible child is
-  // pointer-events:none so it doesn't intercept clicks.
+      if (!reg.ok) {
+        if (reg.status === 403) {
+          setInviteError("Invalid invite code. DM the author on GitHub to get one.")
+        } else {
+          setInviteError("Registration failed, please try again")
+        }
+        turnstileRef.current?.reset()
+        setCaptchaToken(null)
+        return
+      }
+
+      // Registered (or already exists) — sign in
+      const result = await signIn("credentials", { email, password, redirect: false })
+      if (result?.error) {
+        setInviteError("Signed up but login failed — please try signing in")
+      } else {
+        handleOpenChange(false)
+      }
+    } catch {
+      setInviteError("Network error, please try again")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ── Google ────────────────────────────────────
+  const handleGoogleSignIn = () => {
+    signIn("google", { callbackUrl: "/" })
+  }
+
+  // ── CSS helpers ───────────────────────────────
   const viewStyle = (active: boolean, goesLeft: boolean): React.CSSProperties => ({
     gridRow:       1,
     gridColumn:    1,
@@ -123,7 +172,6 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
     transform:     active ? "translateX(0)" : `translateX(${goesLeft ? "-20px" : "20px"})`,
     transition:    "opacity 0.25s ease, transform 0.25s cubic-bezier(0.16,1,0.3,1)",
     pointerEvents: active ? "auto" : "none",
-    // Keep invisible view out of tab order
     visibility:    active ? "visible" : "hidden",
   })
 
@@ -135,20 +183,12 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
         <VisuallyHidden><DialogTitle>Sign in</DialogTitle></VisuallyHidden>
 
         <div className="w-full rounded-[28px] bg-white border border-slate-100 shadow-2xl shadow-black/[0.10] overflow-hidden">
-          {/*
-            CSS grid: both children occupy [row 1 / col 1].
-            Container height = height of the current "in-flow" child
-            (the visible one, since invisible is visibility:hidden but
-            still participates in layout — giving us the natural height).
-            We force the inactive view to height:0 so it doesn't stretch the card.
-          */}
           <div style={{ display: "grid" }}>
 
             {/* ── View 1: providers ── */}
             <div style={{
-              ...viewStyle(!isEmail, true),
-              // Collapse inactive view so it doesn't add height
-              ...(!isEmail ? {} : { height: 0, overflow: "hidden" }),
+              ...viewStyle(view === "providers", true),
+              ...(view !== "providers" ? { height: 0, overflow: "hidden" } : {}),
             }}>
               <div className="relative px-8 pt-10 pb-8 flex flex-col items-center gap-5">
                 <button onClick={() => handleOpenChange(false)} className={cn(iconBtn, "right-4")}>
@@ -169,7 +209,7 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
                 <div className="w-full flex flex-col gap-4">
                   <Button
                     variant="outline"
-                    onClick={() => signIn("google", { callbackUrl: "/" })}
+                    onClick={handleGoogleSignIn}
                     className="w-full h-11 rounded-xl gap-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-[13px] font-medium text-slate-700 shadow-sm transition-all duration-150"
                   >
                     <GoogleLogo />
@@ -211,10 +251,10 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
               </div>
             </div>
 
-            {/* ── View 2: email + password ── */}
+            {/* ── View 2: password ── */}
             <div style={{
-              ...viewStyle(isEmail, false),
-              ...(!isEmail ? { height: 0, overflow: "hidden" } : {}),
+              ...viewStyle(view === "email", view === "providers"),
+              ...(view !== "email" ? { height: 0, overflow: "hidden" } : {}),
             }}>
               <div className="relative px-8 pt-10 pb-8 flex flex-col gap-5">
                 <button onClick={() => setView("providers")} className={cn(iconBtn, "left-4")}>
@@ -225,33 +265,19 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
                 </button>
 
                 <div className="text-center space-y-1.5">
-                  <h1 className="text-[17px] font-semibold tracking-tight text-slate-800">Email sign in</h1>
-                  <p className="text-[13px] text-slate-500">New users are registered automatically</p>
+                  <h1 className="text-[17px] font-semibold tracking-tight text-slate-800">Welcome back</h1>
+                  <p className="text-[13px] text-slate-500">{email}</p>
                 </div>
 
                 <div className="flex flex-col gap-3">
-                  <Input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="h-11 rounded-xl border-slate-200 text-[13px] text-slate-700 placeholder:text-slate-300 focus-visible:ring-1 focus-visible:ring-slate-300"
-                  />
-
-                  <Input
-                    type="text"
-                    placeholder="Invite code"
-                    value={inviteCode}
-                    onChange={(e) => setInviteCode(e.target.value)}
-                    className="h-11 rounded-xl border-slate-200 text-[13px] text-slate-700 placeholder:text-slate-300 focus-visible:ring-1 focus-visible:ring-slate-300"
-                  />
-
                   <div className="relative">
                     <Input
                       type={showPassword ? "text" : "password"}
-                      placeholder="Password (min. 6 characters)"
+                      placeholder="Password"
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                      onChange={(e) => { setPassword(e.target.value); setSubmitError("") }}
+                      onKeyDown={(e) => e.key === "Enter" && handlePasswordSubmit()}
+                      autoFocus
                       className="h-11 rounded-xl border-slate-200 text-[13px] text-slate-700 placeholder:text-slate-300 focus-visible:ring-1 focus-visible:ring-slate-300 pr-10"
                     />
                     <button
@@ -263,6 +289,50 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
                     </button>
                   </div>
 
+                  {submitError && <p className="text-[11px] text-red-400 text-center">{submitError}</p>}
+                </div>
+
+                <ContinueButton
+                  onClick={handlePasswordSubmit}
+                  enabled={password.length >= 6 && !loading}
+                  label={loading ? "Checking…" : "Continue"}
+                />
+              </div>
+            </div>
+
+            {/* ── View 3: invite code (new user only) ── */}
+            <div style={{
+              ...viewStyle(view === "invite", false),
+              ...(view !== "invite" ? { height: 0, overflow: "hidden" } : {}),
+            }}>
+              <div className="relative px-8 pt-10 pb-8 flex flex-col gap-5">
+                <button onClick={() => setView("email")} className={cn(iconBtn, "left-4")}>
+                  <ArrowLeft size={13} strokeWidth={2} />
+                </button>
+                <button onClick={() => handleOpenChange(false)} className={cn(iconBtn, "right-4")}>
+                  <X size={13} strokeWidth={2} />
+                </button>
+
+                <div className="text-center space-y-1.5">
+                  <h1 className="text-[17px] font-semibold tracking-tight text-slate-800">Invite code</h1>
+                  <p className="text-[13px] text-slate-500">New account required to access</p>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  <Input
+                    type="text"
+                    placeholder="Enter invite code"
+                    value={inviteCode}
+                    onChange={(e) => { setInviteCode(e.target.value); setInviteError("") }}
+                    onKeyDown={(e) => e.key === "Enter" && handleRegister()}
+                    autoFocus
+                    className={cn(
+                      "h-11 rounded-xl border-slate-200 text-[13px] text-slate-700",
+                      "placeholder:text-slate-300 focus-visible:ring-1 focus-visible:ring-slate-300",
+                      inviteError && "border-red-300 focus-visible:ring-red-200",
+                    )}
+                  />
+
                   <div className="flex justify-center">
                     <Turnstile
                       ref={turnstileRef}
@@ -272,12 +342,15 @@ export default function LoginModal({ open, onOpenChange }: LoginModalProps) {
                       options={{ theme: "light", size: "normal" }}
                     />
                   </div>
-                  {submitError && (
-                    <p className="text-[11px] text-red-400 text-center">{submitError}</p>
-                  )}
+
+                  {inviteError && <p className="text-[11px] text-red-400 text-center">{inviteError}</p>}
                 </div>
 
-                <ContinueButton onClick={handleSubmit} enabled={canSubmit} />
+                <ContinueButton
+                  onClick={handleRegister}
+                  enabled={canRegister}
+                  label={loading ? "Creating account…" : "Create account"}
+                />
               </div>
             </div>
 

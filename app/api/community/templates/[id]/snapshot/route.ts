@@ -21,7 +21,10 @@ export async function GET(
     if (!template) {
       return NextResponse.json({ error: "Not found" }, { status: 404 })
     }
-    if (template.creatorId !== session.user.id) {
+    // Published templates: any authenticated user can copy the snapshot
+    // Unpublished drafts: creator only
+    const isPublished = template.status === "published"
+    if (!isPublished && template.creatorId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 

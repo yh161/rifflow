@@ -17,7 +17,6 @@ model User {
   name          String?
   isCreator       Boolean    @default(false)
   creatorBio      String?
-  inviteVerified  Boolean    @default(false)
   accounts      Account[]
   jobs          Job[]
   workflowJobs  WorkflowJob[]
