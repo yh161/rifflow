@@ -116,6 +116,8 @@ export const NodeUI = ({
 
   const displayW = data.width  ?? 220
   const displayH = data.height ?? 300
+  const isSelected = !!selected
+  const isEditing = !!data.isEditing
   const previewDpi = clampDpi(data.pdfPreviewDpi ?? 220)
   const pageCount = data.pdfPageCount ?? 0
   const page = Math.min(Math.max(data.pdfCurrentPage ?? 1, 1), Math.max(pageCount, 1))
@@ -208,10 +210,19 @@ export const NodeUI = ({
       <div
         className={cn(
           'overflow-hidden bg-white/70 border h-full w-full',
-          data.mode === 'done' ? 'border-rose-400/70' : 'border-slate-300/60',
-          selected && 'ring-2 ring-rose-300 ring-offset-1 border-rose-200',
+          'transition-[box-shadow,border-color] duration-200',
         )}
-        style={{ borderRadius: data.isEditing ? '0px' : '12px' }}
+        style={{
+          borderRadius: data.isEditing ? '0px' : '12px',
+          borderColor: isSelected || isEditing
+            ? 'rgba(244,63,94,0.62)'
+            : data.mode === 'done'
+              ? 'rgba(244,63,94,0.52)'
+              : 'rgba(100,116,139,0.36)',
+          boxShadow: isSelected
+            ? '0 6px 16px rgba(15,23,42,0.10), 0 0 0 1px rgba(244,63,94,0.20), 0 0 10px rgba(251,113,133,0.14)'
+            : 'none',
+        }}
       >
         {imgSrc ? (
           // eslint-disable-next-line @next/next/no-img-element

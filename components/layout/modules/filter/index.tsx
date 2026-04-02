@@ -400,17 +400,29 @@ export const NodeUI = ({
 
   const hasResult    = !!data.filterResult
   const hasCondition = !!data.prompt?.trim()
+  const isSelected = !!selected
+  const isEditing = !!data.isEditing
 
   return (
     <div
       className={cn(
         'relative overflow-hidden',
-        'bg-white/80 border border-slate-200/80',
+        'bg-white/80 border',
         'transition-[box-shadow,border-color] duration-200',
-        selected ? 'border-amber-300/80' : 'shadow-[0_1px_4px_rgba(0,0,0,0.06)]',
-        data.isEditing && 'border-amber-400/70'
       )}
-      style={{ width: W, height: H, borderRadius: 14 }}
+      style={{
+        width: W,
+        height: H,
+        borderRadius: 14,
+        borderColor: isSelected || isEditing
+          ? 'rgba(245,158,11,0.62)'
+          : data.mode === 'done'
+            ? 'rgba(245,158,11,0.52)'
+            : 'rgba(100,116,139,0.36)',
+        boxShadow: isSelected
+          ? '0 6px 16px rgba(15,23,42,0.10), 0 0 0 1px rgba(245,158,11,0.20), 0 0 10px rgba(251,191,36,0.14)'
+          : 'none',
+      }}
     >
       <PortRail h={H} />
 

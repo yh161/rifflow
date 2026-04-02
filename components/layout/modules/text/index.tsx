@@ -300,11 +300,6 @@ const HybridEditor = memo(function HybridEditor({
     return segs
   }, [lines, activeIdx, editable])
 
-  // Exit line-edit mode when editor becomes non-editable (e.g. node deselected)
-  useEffect(() => {
-    if (!editable && activeIdx !== -1) setActiveIdx(-1)
-  }, [editable, activeIdx])
-
   return (
     <>
       {segments.map(seg => {
@@ -383,6 +378,8 @@ export const NodeUI = ({
   selected?: boolean
 }) => {
   const onChange = (content: string) => data.onDataChange?.({ content })
+  const isSelected = !!selected
+  const isEditing  = !!data.isEditing
 
   const containerRef  = useRef<HTMLDivElement>(null)
   const contentRef    = useRef<HTMLDivElement>(null)
@@ -566,17 +563,29 @@ export const NodeUI = ({
   const w = data.width  ?? 180
   const h = data.height ?? 180
 
+  const panelStyle: React.CSSProperties = {
+    width: w,
+    height: h,
+    borderRadius: 14,
+    borderColor: isSelected || isEditing
+      ? 'rgba(59,130,246,0.62)'
+      : data.mode === 'done'
+        ? 'rgba(59,130,246,0.52)'
+        : 'rgba(100,116,139,0.36)',
+    boxShadow: isSelected
+      ? '0 6px 16px rgba(15,23,42,0.10), 0 0 0 1px rgba(59,130,246,0.20), 0 0 10px rgba(56,189,248,0.14)'
+      : 'none',
+    transition: 'box-shadow 180ms ease, border-color 180ms ease',
+  }
+
   return (
     <div
       className={cn(
-        "rounded-xl",
+        "rounded-[14px]",
         "bg-white/70 border",
-        data.mode === 'done' ? "border-blue-400/70" : "border-slate-400/60",
         "p-3 flex flex-col overflow-hidden",
-        selected && "ring-2 ring-blue-300 ring-offset-1 border-blue-200",
-        data.isEditing && "ring-2 ring-blue-200 ring-offset-1 border-blue-200",
       )}
-      style={{ width: w, height: h }}
+      style={panelStyle}
     >
       <div className="flex-1 overflow-hidden text-xs text-slate-600 leading-relaxed min-h-0">
         {(data.isEditing || data.content) ? (

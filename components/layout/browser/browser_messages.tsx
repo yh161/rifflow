@@ -47,6 +47,36 @@ export function MessagesPage({ onBack, initialContactId, onOpenProfile, onRead }
   const [strangersOpen, setStrangersOpen] = useState(false)
   const [strangerLimitReached, setStrangerLimitReached] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const activeContactRef = useRef<Contact | null>(null)
+  const activeMutualRef = useRef(true)
+
+  useEffect(() => {
+    activeContactRef.current = activeContact
+  }, [activeContact])
+
+  useEffect(() => {
+    activeMutualRef.current = activeMutual
+  }, [activeMutual])
+
+  const fetchChatMessages = async (contactId: string, mutual: boolean) => {
+    const res = await fetch(`/api/messages/${contactId}`)
+    const data = await res.json()
+    const nextMessages: Message[] = data.messages ?? []
+    setMessages((prev) => {
+      const prevLastId = prev[prev.length - 1]?.id
+      const nextLastId = nextMessages[nextMessages.length - 1]?.id
+      if (prev.length === nextMessages.length && prevLastId === nextLastId) {
+        return prev
+      }
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
+      return nextMessages
+    })
+
+    if (!mutual) {
+      const sentByMe = nextMessages.filter((m: Message) => m.isMe).length
+      setStrangerLimitReached(sentByMe >= 1)
+    }
+  }
 
   // Load conversation list
   useEffect(() => {
@@ -81,24 +111,44 @@ export function MessagesPage({ onBack, initialContactId, onOpenProfile, onRead }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Keep conversation list fresh (new conversations / unread changes / latest preview)
+  useEffect(() => {
+    const refreshConversations = () => {
+      fetch("/api/messages")
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (data?.conversations) {
+            setConversations(data.conversations)
+          }
+        })
+        .catch(() => {})
+    }
+
+    const id = setInterval(refreshConversations, 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Keep current chat auto-updated while opened
+  useEffect(() => {
+    if (!activeContact) return
+
+    const refreshCurrentChat = () => {
+      const contact = activeContactRef.current
+      const mutual = activeMutualRef.current
+      if (!contact) return
+      fetchChatMessages(contact.id, mutual).catch(() => {})
+    }
+
+    const id = setInterval(refreshCurrentChat, 3000)
+    return () => clearInterval(id)
+  }, [activeContact])
+
   const openChat = (contact: Contact, mutual: boolean) => {
-    // Skip re-fetch if already viewing this conversation
-    if (activeContact?.id === contact.id) return
     setActiveContact(contact)
     setActiveMutual(mutual)
     setStrangerLimitReached(false)
     setMessages([])
-    fetch(`/api/messages/${contact.id}`)
-      .then((r) => r.json())
-      .then((data) => {
-        setMessages(data.messages ?? [])
-        // If stranger, check if we've already sent 1 message
-        if (!mutual) {
-          const sentByMe = (data.messages ?? []).filter((m: Message) => m.isMe).length
-          if (sentByMe >= 1) setStrangerLimitReached(true)
-        }
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
-      })
+    fetchChatMessages(contact.id, mutual).catch(() => {})
   }
 
   const handleSend = async () => {

@@ -130,8 +130,11 @@ export function GeneratingOverlay({
 }) {
   // useId gives a stable, unique ID per component instance so multiple
   // concurrent overlays each get their own SVG <filter> without clashing.
-  const uid      = useId()
-  const filterId = `og-${uid.replace(/:/g, '')}`
+  const uid        = useId()
+  const safeUid    = uid.replace(/:/g, '')
+  const filterId   = `og-${safeUid}`
+  const gradTopId  = `og-grad-top-${safeUid}`
+  const gradBotId  = `og-grad-bot-${safeUid}`
 
   const r  = borderRadius
   const w  = cssW
@@ -179,8 +182,18 @@ export function GeneratingOverlay({
         produce blur when the ReactFlow viewport is scaled up.
       */}
       <defs>
+        <linearGradient id={gradTopId} x1="0" y1="0" x2={String(w)} y2="0" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#22d3ee" />
+          <stop offset="55%" stopColor="#3b82f6" />
+          <stop offset="100%" stopColor="#2563eb" />
+        </linearGradient>
+        <linearGradient id={gradBotId} x1="0" y1={String(h)} x2={String(w)} y2={String(h)} gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#22d3ee" />
+          <stop offset="55%" stopColor="#3b82f6" />
+          <stop offset="100%" stopColor="#2563eb" />
+        </linearGradient>
         <filter id={filterId} x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur in="SourceGraphic" stdDeviation="1" result="blur" />
+          <feGaussianBlur in="SourceGraphic" stdDeviation="0.9" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />
             <feMergeNode in="SourceGraphic" />
@@ -189,20 +202,32 @@ export function GeneratingOverlay({
       </defs>
 
       {/* Faint track */}
-      <path d={topPath}    fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth={3} />
-      <path d={bottomPath} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth={3} />
+      <path d={topPath}    fill="none" stroke="rgba(59,130,246,0.17)" strokeWidth={1.6} />
+      <path d={bottomPath} fill="none" stroke="rgba(59,130,246,0.17)" strokeWidth={1.6} />
 
       {/* Glowing progress — glow via SVG filter*/}
       <path
-        d={topPath} fill="none" stroke="#4ade80" strokeWidth={3} strokeLinecap="round"
+        d={topPath} fill="none" stroke={`url(#${gradTopId})`} strokeWidth={3.2} strokeLinecap="round" opacity={0.22}
         strokeDasharray={pathLen} strokeDashoffset={offset}
         filter={`url(#${filterId})`}
         style={{ transition: "stroke-dashoffset 60ms linear" }}
       />
       <path
-        d={bottomPath} fill="none" stroke="#4ade80" strokeWidth={3} strokeLinecap="round"
+        d={bottomPath} fill="none" stroke={`url(#${gradBotId})`} strokeWidth={3.2} strokeLinecap="round" opacity={0.22}
         strokeDasharray={pathLen} strokeDashoffset={offset}
         filter={`url(#${filterId})`}
+        style={{ transition: "stroke-dashoffset 60ms linear" }}
+      />
+
+      {/* Core stroke */}
+      <path
+        d={topPath} fill="none" stroke={`url(#${gradTopId})`} strokeWidth={1.9} strokeLinecap="round"
+        strokeDasharray={pathLen} strokeDashoffset={offset}
+        style={{ transition: "stroke-dashoffset 60ms linear" }}
+      />
+      <path
+        d={bottomPath} fill="none" stroke={`url(#${gradBotId})`} strokeWidth={1.9} strokeLinecap="round"
+        strokeDasharray={pathLen} strokeDashoffset={offset}
         style={{ transition: "stroke-dashoffset 60ms linear" }}
       />
     </svg>

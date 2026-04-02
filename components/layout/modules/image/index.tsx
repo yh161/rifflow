@@ -161,6 +161,8 @@ export const NodeUI = ({
   const rotation = data.rotation ?? 0
   const normalizedRotation = ((rotation % 360) + 360) % 360
   const isQuarterTurn = normalizedRotation === 90 || normalizedRotation === 270
+  const isSelected = !!selected
+  const isEditing = !!data.isEditing
 
   // Scale-from-bottom-center animation when dimensions change
   const prevSizeRef = useRef({ w: displayW, h: displayH })
@@ -182,13 +184,20 @@ export const NodeUI = ({
         className={cn(
           'overflow-hidden',
           'bg-white/70 border',
-          data.mode === 'done' ? 'border-blue-400/70' : 'border-slate-300/60',
-          selected && 'ring-2 ring-blue-300 ring-offset-1 border-blue-200',
+          'transition-[box-shadow,border-color] duration-200',
         )}
         style={{
           width: '100%',
           height: '100%',
           borderRadius: data.isEditing ? '0px' : '12px',
+          borderColor: isSelected || isEditing
+            ? 'rgba(59,130,246,0.62)'
+            : data.mode === 'done'
+              ? 'rgba(59,130,246,0.52)'
+              : 'rgba(100,116,139,0.36)',
+          boxShadow: isSelected
+            ? '0 6px 16px rgba(15,23,42,0.10), 0 0 0 1px rgba(59,130,246,0.20), 0 0 10px rgba(56,189,248,0.14)'
+            : 'none',
           transform: initialScale
             ? `scaleX(${initialScale.sx}) scaleY(${initialScale.sy})`
             : 'scale(1)',

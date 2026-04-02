@@ -6,6 +6,17 @@ import { NextResponse } from "next/server"
 
 const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 }
 
+function emptyDraftPayload() {
+  return {
+    nodesJson:    [],
+    edgesJson:    [],
+    viewportJson: DEFAULT_VIEWPORT,
+    favorites:    [],
+    undoCount:    0,
+    redoCount:    0,
+  }
+}
+
 // ─────────────────────────────────────────────
 // GET /api/draft  — 加载当前用户的草稿
 // ─────────────────────────────────────────────
@@ -19,18 +30,26 @@ export async function GET() {
   const result = await draftService.getDraftByUserId(session.user.id)
 
   if (!result.success) {
-    return NextResponse.json(
-      { error: result.error || "Failed to load draft" },
-      { status: 500 }
-    )
+    // Do not hard-fail canvas bootstrap on draft read issues.
+    // Return an empty draft so editor can still open.
+    console.error("[api/draft][GET] load failed, fallback to empty draft:", result.error)
+    return NextResponse.json(emptyDraftPayload())
   }
 
   const data = result.data ?? { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT }
-  const snapshotRepo = new RiffDraftSnapshotRepository()
-  const [undoCount, redoCount] = await Promise.all([
-    snapshotRepo.count(session.user.id),
-    snapshotRepo.countRedo(session.user.id),
-  ])
+  let undoCount = 0
+  let redoCount = 0
+  try {
+    const snapshotRepo = new RiffDraftSnapshotRepository()
+    ;[undoCount, redoCount] = await Promise.all([
+      snapshotRepo.count(session.user.id),
+      snapshotRepo.countRedo(session.user.id),
+    ])
+  } catch (error) {
+    // Snapshot table may be unavailable/migration-lagged; non-fatal for canvas.
+    console.error("[api/draft][GET] snapshot count failed, fallback to 0:", error)
+  }
+
   return NextResponse.json({
     nodesJson:    data.nodes,
     edgesJson:    data.edges,

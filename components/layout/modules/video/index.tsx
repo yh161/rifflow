@@ -190,6 +190,8 @@ export const NodeUI = ({
   const { tx, ty, zoom, nx, ny } = portalState
   const w = data.width  ?? 180
   const h = data.height ?? 180
+  const isSelected = !!selected
+  const isEditing = !!data.isEditing
   const screenX = nx * zoom + tx
   const screenY = ny * zoom + ty
 
@@ -202,15 +204,24 @@ export const NodeUI = ({
         className={cn(
           'overflow-hidden',
           'bg-white/70 border',
-          data.mode === 'done' ? 'border-violet-400/70' : 'border-slate-300/60',
-          selected && 'ring-2 ring-violet-300 ring-offset-1 border-violet-200',
+          'transition-[box-shadow,border-color] duration-200',
         )}
         style={{
           width: '100%', height: '100%',
           borderRadius: data.isEditing ? '0px' : '12px',
+          borderColor: isSelected || isEditing
+            ? 'rgba(139,92,246,0.62)'
+            : data.mode === 'done'
+              ? 'rgba(139,92,246,0.52)'
+              : 'rgba(100,116,139,0.36)',
+          boxShadow: isSelected
+            ? '0 6px 16px rgba(15,23,42,0.10), 0 0 0 1px rgba(139,92,246,0.20), 0 0 10px rgba(167,139,250,0.14)'
+            : 'none',
           transform: initialScale ? `scaleX(${initialScale.sx}) scaleY(${initialScale.sy})` : 'scale(1)',
           transformOrigin: 'bottom center',
-          transition: initialScale ? 'none' : 'transform 300ms cubic-bezier(0.4,0,0.2,1)',
+          transition: initialScale
+            ? 'none'
+            : 'transform 300ms cubic-bezier(0.4,0,0.2,1), box-shadow 180ms ease, border-color 180ms ease',
         }}
       >
       {data.videoSrc ? (
@@ -238,6 +249,8 @@ export const NodeUI = ({
                 transformOrigin: '0 0',
                 borderRadius:    data.isEditing ? 0 : 12,
                 overflow:        'hidden',
+                boxSizing:       'border-box',
+                padding:         1,
                 pointerEvents:   'none',
                 userSelect:      'none',
               }}
