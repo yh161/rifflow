@@ -19,6 +19,7 @@ export const meta = {
   panelTitle:  'Template',
   opensEditor: true,
   category:    'Logic',
+  doneColor:   'rgba(99, 102, 241, 0.55)',
 }
 
 export const defaultData: Partial<CustomNodeData> = {
@@ -87,11 +88,12 @@ export const NodeUI = ({
 
       {/* Instance badge — shows when in instance view */}
       {!isTemplate && instanceCount > 0 && (
-        <div className="absolute top-2 right-3 flex items-center gap-1 pointer-events-none">
-          <div className="px-2 py-0.5 rounded-full bg-indigo-100/80 border border-indigo-200/60">
-            <span className="text-[10px] font-semibold text-indigo-500 tabular-nums">
-              {currentInstance + 1}
-              <span className="text-indigo-300"> / {instanceCount}</span>
+        <div className="absolute right-3 z-[200] pointer-events-none" style={{ top: 6 }}>
+          <div className="h-5 px-2 rounded-full bg-indigo-100/85 border border-indigo-200/70 inline-flex items-center leading-none">
+            <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-indigo-500 tabular-nums leading-none">
+              <span>{currentInstance + 1}</span>
+              <span className="text-indigo-300">/</span>
+              <span className="text-indigo-300">{instanceCount}</span>
             </span>
           </div>
         </div>

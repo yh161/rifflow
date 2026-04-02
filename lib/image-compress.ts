@@ -99,3 +99,20 @@ export function getTypeColor(type: string): string {
   }
   return colors[type] || "#94a3b8"
 }
+
+/**
+ * Node theme color used by editor chips (matches module theme, not source type color)
+ */
+export function getNodeThemeColor(type: string): string {
+  const colors: Record<string, string> = {
+    text: "#3b82f6",     // blue-500
+    image: "#60a5fa",    // blue-400
+    video: "#8b5cf6",    // violet-500
+    pdf: "#f43f5e",      // rose-500
+    filter: "#f59e0b",   // amber-500
+    template: "#6366f1", // indigo-500
+    seed: "#a78bfa",     // violet-400
+    lasso: "#94a3b8",    // slate-400
+  }
+  return colors[type] || "#94a3b8"
+}

@@ -1,9 +1,9 @@
 "use client"
 
-import React, { useMemo, useState, useEffect, useCallback } from "react"
+import React, { useMemo, useState, useEffect } from "react"
 import { useReactFlow, type Node, type Edge } from "reactflow"
 import { cn } from "@/lib/utils"
-import { getThumbnail, getTypeColor } from "@/lib/image-compress"
+import { getThumbnail, getNodeThemeColor } from "@/lib/image-compress"
 import type { CustomNodeData } from "../modules/_types"
 import { MODULE_BY_ID } from "../modules/_registry"
 
@@ -171,7 +171,7 @@ export function UpstreamReference({
         Ref
       </span>
       {upstreamNodes.map((node) => {
-        const typeColor = getTypeColor(node.type)
+        const typeColor = getNodeThemeColor(node.type)
         const Icon = MODULE_BY_ID[node.type]?.meta.icon
         const displayLabel = node.label || node.id.slice(-6)
         return (
@@ -185,9 +185,13 @@ export function UpstreamReference({
               "border border-slate-200 bg-white text-slate-600",
               "text-[9px] font-medium",
               "transition-all duration-150",
-              "hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700",
               "active:scale-95",
             )}
+            style={{
+              borderColor: `${typeColor}55`,
+              backgroundColor: `${typeColor}10`,
+              color: typeColor,
+            }}
           >
             {node.thumbnail ? (
               // eslint-disable-next-line @next/next/no-img-element

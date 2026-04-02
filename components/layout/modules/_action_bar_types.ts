@@ -23,6 +23,7 @@ export interface ActionBarProps {
   onTemplateDeleteInstance?: () => void
   onTemplateGoTo?: (idx: number) => void
   templateInstanceCount?: number
+  onTemplateRerunWorkflow?: () => void
 
   // lasso
   onLassoRelease?: () => void

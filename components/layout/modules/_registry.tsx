@@ -364,7 +364,7 @@ function NodeWrapper({
     ))
   }, [nodeId, setNodes])
 
-  const { genProgress } = useNodePolling(nodeId, data)
+  const { genProgress, genStatusText } = useNodePolling(nodeId, data)
   const normalizedRotation = (((data?.rotation as number | undefined) ?? 0) % 360 + 360) % 360
   const isQuarterTurn = normalizedRotation === 90 || normalizedRotation === 270
   const imageNaturalAspect =
@@ -383,6 +383,15 @@ function NodeWrapper({
       : (data?.type === 'video' && data?.naturalWidth && data?.naturalHeight
           ? data.naturalWidth / data.naturalHeight
           : undefined)
+
+  const baseCornerRadius =
+    data?.type === 'template' || data?.type === 'lasso'
+      ? 16
+      : data?.type === 'text' || data?.type === 'filter' || data?.type === 'seed'
+        ? 14
+        : 12
+  const squareWhenEditing = data?.type === 'image' || data?.type === 'video' || data?.type === 'pdf'
+  const cornerRadius = (squareWhenEditing && data?.isEditing) ? 0 : baseCornerRadius
 
   return (
     <div
@@ -417,15 +426,18 @@ function NodeWrapper({
           nodeId={nodeId}
           isHovered={isHovered}
           aspectRatio={resizeAspectRatio}
+          cornerRadius={cornerRadius}
         />
       )}
 
       {/* Generating overlay — lives here so it persists when editor closes */}
-      {data?.isGenerating && wrapperSize.width > 0 && wrapperSize.height > 0 && (
+      {(data?.isGenerating || genProgress > 0 || !!genStatusText) && wrapperSize.width > 0 && wrapperSize.height > 0 && (
         <GeneratingOverlay
           cssW={wrapperSize.width}
           cssH={wrapperSize.height}
+          borderRadius={cornerRadius}
           progress={genProgress}
+          statusText={genStatusText}
         />
       )}
 

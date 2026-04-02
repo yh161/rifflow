@@ -81,6 +81,7 @@ export const meta = {
   opensEditor: true,
   panelTitle: 'PDF Document',
   category: 'Assets',
+  doneColor: 'rgba(244, 63, 94, 0.55)',
 }
 
 export const defaultData: Partial<CustomNodeData> = {
@@ -210,7 +211,7 @@ export const NodeUI = ({
       <div
         className={cn(
           'overflow-hidden bg-white/70 border h-full w-full',
-          'transition-[box-shadow,border-color] duration-200',
+          'transition-[box-shadow,border-color,border-radius] duration-200',
         )}
         style={{
           borderRadius: data.isEditing ? '0px' : '12px',
@@ -222,6 +223,7 @@ export const NodeUI = ({
           boxShadow: isSelected
             ? '0 6px 16px rgba(15,23,42,0.10), 0 0 0 1px rgba(244,63,94,0.20), 0 0 10px rgba(251,113,133,0.14)'
             : 'none',
+          transition: 'box-shadow 180ms ease, border-color 180ms ease, border-radius 240ms cubic-bezier(0.4,0,0.2,1)',
         }}
       >
         {imgSrc ? (

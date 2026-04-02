@@ -22,7 +22,7 @@ import type { CustomNodeData, NodeMode } from "../modules/_types"
 import { UpstreamReference } from "./_upstream_reference"
 import { getRefChipIconDataUri } from "./_ref_chip_icon"
 import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, type ModelDef } from "@/lib/models"
-import { getTypeColor, getThumbnail } from "@/lib/image-compress"
+import { getNodeThemeColor, getThumbnail } from "@/lib/image-compress"
 import { MODULE_BY_ID } from "../modules/_registry"
 
 // Re-export for any existing consumers
@@ -78,7 +78,7 @@ const RefChipNode = TiptapNode.create({
     const type = String(HTMLAttributes.type || 'text')
     const label = String(HTMLAttributes.label || nodeId.slice(-6))
     const thumb = HTMLAttributes.thumb ? String(HTMLAttributes.thumb) : null
-    const color = getTypeColor(type)
+    const color = getNodeThemeColor(type)
 
     const iconContent: DOMOutputSpec = thumb
       ? ['img', { src: thumb, style: 'width:16px;height:16px;object-fit:cover;display:block;border-radius:4px;' }]
@@ -158,7 +158,7 @@ const RefChipNode = TiptapNode.create({
         const type = String(attrs.type || 'text')
         const label = String(attrs.label || nodeId.slice(-6))
         const thumb = attrs.thumb ? String(attrs.thumb) : null
-        const color = getTypeColor(type)
+        const color = getNodeThemeColor(type)
 
         chip.setAttribute('data-ref', nodeId)
         iconWrap.style.backgroundColor = thumb ? 'transparent' : `${color}20`

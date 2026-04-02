@@ -108,6 +108,8 @@ export interface CustomNodeData {
   mode?:         "auto" | "manual" | "done"
   params?:       Record<string, string>  // generation params (duration, fps, style, etc.)
   isGenerating?: boolean
+  generationProgress?: number
+  generationStatusText?: string
   generationError?: string
   // filter
   filterInputMode?: 'label' | 'content'

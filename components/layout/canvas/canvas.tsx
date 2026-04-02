@@ -393,7 +393,11 @@ function CanvasLogic({
   // Template — wraps selected nodes in a Template container
   // ─────────────────────────────────────────────
   const commitTemplate = useCallback((selectedNodes: Node[]) => {
-    const PAD = 24, SEED_W = 180, SEED_H = 180, SEED_GAP = 32
+    const PAD_X = 24
+    const PAD_TOP = 40    // previous top reserve -5
+    const PAD_BOTTOM = 59 // previous bottom reserve +5
+    const SEED_W = 180, SEED_H = 180, SEED_GAP = 32
+    const SEED_Y_OFFSET = -8
 
     const selectedIds = new Set(selectedNodes.map(n => n.id))
     const topLevel = selectedNodes.filter(n =>
@@ -414,11 +418,11 @@ function CanvasLogic({
     const encH = maxY - minY
 
     const templateId = `template-${Date.now()}`
-    const templateX  = minX - PAD - SEED_W - SEED_GAP
-    const templateY  = minY - PAD
-    const templateW  = PAD + SEED_W + SEED_GAP + encW + PAD
-    const templateH  = Math.max(encH, SEED_H) + PAD * 2
-    const seedY   = (templateH - SEED_H) / 2
+    const templateX  = minX - PAD_X - SEED_W - SEED_GAP
+    const templateY  = minY - PAD_TOP
+    const templateW  = PAD_X + SEED_W + SEED_GAP + encW + PAD_X
+    const templateH  = Math.max(encH, SEED_H) + PAD_TOP + PAD_BOTTOM
+    const seedY   = (templateH - SEED_H) / 2 + SEED_Y_OFFSET
 
     const templateNode: Node = {
       id:       templateId,
@@ -433,15 +437,15 @@ function CanvasLogic({
       type:       "CustomNode",
       parentNode: templateId,
       extent:     "parent",
-      position:   { x: PAD, y: seedY },
+      position:   { x: PAD_X, y: seedY },
       data:       { type: "seed", label: "Seed", isSeed: true, isLocked: true, content: "", width: SEED_W, height: SEED_H },
       style:      { width: SEED_W, height: SEED_H },
       zIndex:     0,
     }
 
     const topLevelIds  = new Set(topLevel.map(n => n.id))
-    const childOffsetX = PAD + SEED_W + SEED_GAP - minX
-    const childOffsetY = PAD - minY
+    const childOffsetX = PAD_X + SEED_W + SEED_GAP - minX
+    const childOffsetY = PAD_TOP - minY
 
     setNodes((prev) => {
       const updated = prev.map(n => {
@@ -751,6 +755,7 @@ function CanvasLogic({
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={EDGE_TYPES}
+        proOptions={{ hideAttribution: true }}
         connectionMode={ConnectionMode.Loose}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}

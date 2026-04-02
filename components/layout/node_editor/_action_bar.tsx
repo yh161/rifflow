@@ -130,6 +130,7 @@ export function NodeActionBar({
   onTemplateDeleteInstance,
   onTemplateGoTo,
   templateInstanceCount,
+  onTemplateRerunWorkflow,
   onLassoRelease,
   onExecute,
   isExecuting,
@@ -153,6 +154,7 @@ export function NodeActionBar({
   onTemplateDeleteInstance?: () => void
   onTemplateGoTo?: (idx: number) => void
   templateInstanceCount?: number
+  onTemplateRerunWorkflow?: () => void
   onLassoRelease?: () => void
   onExecute?: () => void
   isExecuting?: boolean
@@ -184,6 +186,7 @@ export function NodeActionBar({
           onTemplateDeleteInstance={onTemplateDeleteInstance}
           onTemplateGoTo={onTemplateGoTo}
           templateInstanceCount={templateInstanceCount}
+          onTemplateRerunWorkflow={onTemplateRerunWorkflow}
           onLassoRelease={onLassoRelease}
           onExecute={onExecute}
           isExecuting={isExecuting}

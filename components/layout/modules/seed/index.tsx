@@ -2,13 +2,11 @@
 
 import React, { memo, useRef, useEffect, useCallback } from 'react'
 import { NodeProps } from 'reactflow'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { CustomNodeData } from '../_types'
 import type { HandleDef } from '../_handle'
-import { registerTextarea } from '../_markdown_insert'
+import { HybridEditor, mdClasses } from '../text'
 
 export const meta = {
   id:          'seed',
@@ -46,10 +44,6 @@ export const NodeUI = ({
   data: CustomNodeData
   selected?: boolean
 }) => {
-  const textareaRef   = useRef<HTMLTextAreaElement>(null)
-  const onChangeRef   = useRef(data.onDataChange)
-  onChangeRef.current = data.onDataChange
-
   // ── Transform-based scroll (avoids compositor-layer blur) ──────────────
   const containerRef = useRef<HTMLDivElement>(null)
   const contentRef   = useRef<HTMLDivElement>(null)
@@ -132,17 +126,7 @@ export const NodeUI = ({
     scheduleHide()
   }, [syncThumb, showTrack, scheduleHide])
 
-  // Focus textarea when entering edit mode
-  useEffect(() => {
-    if (data.isEditing && textareaRef.current) {
-      textareaRef.current.focus()
-      const len = textareaRef.current.value.length
-      textareaRef.current.setSelectionRange(len, len)
-    }
-  }, [data.isEditing])
-
-  const handleFocus = useCallback(() => { registerTextarea(textareaRef.current) }, [])
-  const handleBlur  = useCallback(() => { registerTextarea(null) }, [])
+  const onChange = (content: string) => data.onDataChange?.({ content })
 
   const w = data.width  ?? 180
   const h = data.height ?? 180
@@ -150,33 +134,16 @@ export const NodeUI = ({
   return (
     <div
       className={cn(
-        'relative flex flex-col overflow-hidden transition-[box-shadow,border-color] duration-150',
+        'relative flex flex-col overflow-hidden transition-[box-shadow,border-color] duration-150 rounded-[14px]',
         'bg-violet-50/80 border border-violet-200/60',
         selected       && 'border-violet-400/70 bg-violet-50/90',
-        data.isEditing && '!border-violet-500 !rounded-none',
+        data.isEditing && '!border-violet-500',
       )}
-      style={{ width: w, height: h, borderRadius: data.isEditing ? 0 : 12 }}
+      style={{ width: w, height: h, borderRadius: 14 }}
     >
       {/* Content */}
       <div className="flex-1 px-2.5 py-2 min-h-0 overflow-hidden">
-        {data.isEditing ? (
-          <textarea
-            ref={textareaRef}
-            className={cn(
-              "nodrag nopan nowheel",
-              "w-full h-full resize-none outline-none bg-transparent",
-              "text-[11px] text-violet-700 leading-relaxed font-mono",
-              "placeholder:text-violet-300/60",
-            )}
-            placeholder="Describe what varies each iteration…"
-            defaultValue={data.content ?? ''}
-            onFocus={handleFocus}
-            onBlur={handleBlur}
-            onInput={(e) => {
-              onChangeRef.current?.({ content: (e.currentTarget as HTMLTextAreaElement).value })
-            }}
-          />
-        ) : data.content ? (
+        {(data.isEditing || data.content) ? (
           <div
             ref={containerRef}
             className={cn("h-full overflow-hidden relative", selected && "nowheel")}
@@ -206,24 +173,16 @@ export const NodeUI = ({
             <div
               ref={contentRef}
               className={cn(
-                "text-[11px] text-violet-700/80 leading-relaxed",
-                "[&_h1]:text-xs [&_h1]:font-bold [&_h1]:mt-0 [&_h1]:mb-1 [&_h1]:text-violet-800",
-                "[&_h2]:text-[11px] [&_h2]:font-semibold [&_h2]:mt-0.5 [&_h2]:mb-0.5 [&_h2]:text-violet-800",
-                "[&_h3]:text-[11px] [&_h3]:font-medium [&_h3]:mt-0.5 [&_h3]:mb-0 [&_h3]:text-violet-700",
-                "[&_p]:my-0.5 [&_p]:leading-relaxed",
-                "[&_ul]:my-0.5 [&_ul]:pl-4 [&_ul]:list-disc [&_li]:my-0",
-                "[&_ol]:my-0.5 [&_ol]:pl-4 [&_ol]:list-decimal",
-                "[&_blockquote]:border-l-2 [&_blockquote]:border-violet-300 [&_blockquote]:pl-2 [&_blockquote]:text-violet-500 [&_blockquote]:my-0.5 [&_blockquote]:italic",
-                "[&_code]:bg-violet-100 [&_code]:px-1 [&_code]:rounded [&_code]:text-[10px] [&_code]:font-mono [&_code]:text-violet-600",
-                "[&_pre]:bg-violet-100 [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto [&_pre]:my-0.5 [&_pre_code]:bg-transparent [&_pre_code]:px-0",
-                "[&_strong]:font-semibold [&_em]:italic",
-                "[&_a]:text-violet-500 [&_a]:underline",
-                "[&_hr]:border-violet-200 [&_hr]:my-1",
+                mdClasses,
+                "pr-2",
+                data.isEditing && "nodrag nopan",
               )}
             >
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {data.content}
-              </ReactMarkdown>
+              <HybridEditor
+                initialContent={data.content ?? ''}
+                onChange={onChange}
+                editable={!!data.isEditing && !!selected}
+              />
             </div>
           </div>
         ) : (

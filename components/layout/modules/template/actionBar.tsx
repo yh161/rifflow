@@ -2,7 +2,7 @@
 
 import React from "react"
 import {
-  Plus, Trash2, Play, LayoutTemplate,
+  Plus, Trash2, Play, RefreshCw, LayoutTemplate,
   ChevronLeft, ChevronRight,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -44,6 +44,7 @@ export function ActionBarContent({
   onTemplateDeleteInstance,
   onTemplateGoTo,
   templateInstanceCount,
+  onTemplateRerunWorkflow,
   isExecuting,
   onDelete,
 }: ActionBarProps) {
@@ -143,6 +144,14 @@ export function ActionBarContent({
       <div className="w-px h-4 bg-slate-200 mx-0.5 flex-shrink-0" />
 
       <ActionButton icon={Plus} label="Add instance" onClick={onTemplateAddInstance} />
+
+      {!isTemplate && (
+        <ActionButton
+          icon={RefreshCw}
+          label="Rerun workflow"
+          onClick={onTemplateRerunWorkflow}
+        />
+      )}
 
       {isTemplate ? (
         <ActionButton icon={Trash2} label={releaseLabel} onClick={onTemplateRelease ?? onDelete} danger />

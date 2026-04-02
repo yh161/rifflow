@@ -211,12 +211,10 @@ export function MagneticZone({
   const centerRef     = useRef({ x: 0, y: 0, zoom: 1 })
   const wasCloseRef   = useRef(false)
   const storeApi      = useStoreApi()
-  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null)
+  const portalRoot = typeof document !== 'undefined'
+    ? document.getElementById('handle-portal-root')
+    : null
   const { side, offsetPercent = 50 } = def
-
-  useEffect(() => {
-    setPortalRoot(document.getElementById('handle-portal-root'))
-  }, [])
 
   // Sync portal element screen-space position whenever pan/zoom/node changes.
   // Uses raw Zustand subscribe → DOM writes only, no React re-renders.
@@ -400,15 +398,41 @@ export function ResizeHandle({
   nodeId,
   isHovered,
   aspectRatio,
+  cornerRadius = 12,
 }: {
   nodeId:       string
   isHovered:    () => boolean
   aspectRatio?: number
+  cornerRadius?: number
 }) {
   const zoneRef  = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
 
   const { setNodes, getZoom } = useReactFlow()
+  const [animatedCornerRadius, setAnimatedCornerRadius] = useState(cornerRadius)
+  const cornerRadiusRef = useRef(cornerRadius)
+
+  useEffect(() => {
+    const from = cornerRadiusRef.current
+    const to = cornerRadius
+    if (Math.abs(from - to) < 0.01) return
+
+    const duration = 220
+    const start = performance.now()
+    let rafId = 0
+
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / duration)
+      const eased = 1 - Math.pow(1 - t, 3)
+      const next = from + (to - from) * eased
+      cornerRadiusRef.current = next
+      setAnimatedCornerRadius(next)
+      if (t < 1) rafId = requestAnimationFrame(step)
+    }
+
+    rafId = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(rafId)
+  }, [cornerRadius])
 
   useEffect(() => {
     ensureResizeListeners()
@@ -440,7 +464,7 @@ export function ResizeHandle({
     }
     document.body.style.userSelect = 'none'
     document.body.style.cursor     = 'nwse-resize'
-  }, [nodeId, setNodes, aspectRatio])
+  }, [nodeId, setNodes, aspectRatio, getZoom])
 
   return (
     <div
@@ -477,6 +501,15 @@ export function ResizeHandle({
             stroke="rgba(148,163,184,0.85)"
             strokeWidth="2.5"
             strokeLinecap="round"
+            style={{ opacity: Math.max(0, Math.min(animatedCornerRadius / 12, 1)), transition: 'opacity 140ms ease' }}
+          />
+          <path
+            d="M 2 18 L 18 18 L 18 2"
+            stroke="rgba(148,163,184,0.9)"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ opacity: Math.max(0, Math.min(1 - (animatedCornerRadius / 12), 1)), transition: 'opacity 140ms ease' }}
           />
         </svg>
       </div>

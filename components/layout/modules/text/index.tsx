@@ -56,7 +56,7 @@ const MemoMarkdown = memo(function MemoMarkdown({ text }: { text: string }) {
 })
 
 // ── Shared markdown prose classes ──────────────────────────────────────────────
-const mdClasses = cn(
+export const mdClasses = cn(
   "text-xs text-slate-600 leading-relaxed",
   "[&_h1]:text-sm [&_h1]:font-bold [&_h1]:mt-0 [&_h1]:mb-1 [&_h1]:text-slate-800",
   "[&_h2]:text-xs [&_h2]:font-semibold [&_h2]:mt-0.5 [&_h2]:mb-0.5 [&_h2]:text-slate-800",
@@ -80,7 +80,7 @@ interface Line { id: number; text: string }
 // One component for both display and editing — no separate "view mode".
 // editable=false: all lines rendered as markdown, no interaction.
 // editable=true:  active line is a textarea, others rendered as markdown.
-const HybridEditor = memo(function HybridEditor({
+export const HybridEditor = memo(function HybridEditor({
   initialContent,
   onChange,
   onActiveElement,

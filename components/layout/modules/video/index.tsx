@@ -204,7 +204,7 @@ export const NodeUI = ({
         className={cn(
           'overflow-hidden',
           'bg-white/70 border',
-          'transition-[box-shadow,border-color] duration-200',
+          'transition-[box-shadow,border-color,border-radius] duration-200',
         )}
         style={{
           width: '100%', height: '100%',
@@ -221,7 +221,7 @@ export const NodeUI = ({
           transformOrigin: 'bottom center',
           transition: initialScale
             ? 'none'
-            : 'transform 300ms cubic-bezier(0.4,0,0.2,1), box-shadow 180ms ease, border-color 180ms ease',
+            : 'transform 300ms cubic-bezier(0.4,0,0.2,1), box-shadow 180ms ease, border-color 180ms ease, border-radius 240ms cubic-bezier(0.4,0,0.2,1)',
         }}
       >
       {data.videoSrc ? (
@@ -248,6 +248,7 @@ export const NodeUI = ({
                 transform:       `scale(${zoom})`,
                 transformOrigin: '0 0',
                 borderRadius:    data.isEditing ? 0 : 12,
+                transition:      'border-radius 240ms cubic-bezier(0.4,0,0.2,1)',
                 overflow:        'hidden',
                 boxSizing:       'border-box',
                 padding:         1,

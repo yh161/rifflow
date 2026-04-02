@@ -21,7 +21,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react"
 import { useStore, useNodes, useReactFlow, type Node, type Edge } from "reactflow"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { CustomNodeData } from "../modules/_types"
+import type { AnyNodeData, CustomNodeData } from "../modules/_types"
 import { useUpstreamData } from "@/hooks/useUpstreamData"
 import type { UpstreamNodeData } from "@/hooks/useUpstreamData"
 import { resolvePromptToMultimodal } from "@/lib/prompt-resolver"
@@ -134,7 +134,17 @@ export function NodeEditor({
     async (prompt: string, model: string, params: Record<string, string>) => {
       // Signal generating immediately so the overlay appears
       setNodes((ns) => ns.map((n) =>
-        n.id !== nodeId ? n : { ...n, data: { ...n.data, isEditing: false, isGenerating: true } }
+        n.id !== nodeId ? n : {
+          ...n,
+          data: {
+            ...n.data,
+            isEditing: false,
+            isGenerating: true,
+            generationProgress: 0,
+            generationStatusText: 'Queueing job…',
+            generationError: undefined,
+          },
+        }
       ))
 
       try {
@@ -167,7 +177,17 @@ export function NodeEditor({
         console.error("[generate]", err)
         const msg = err instanceof Error ? err.message : 'Generation failed'
         setNodes((ns) => ns.map((n) =>
-          n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined, generationError: msg } }
+          n.id !== nodeId ? n : {
+            ...n,
+            data: {
+              ...n.data,
+              isGenerating: false,
+              activeJobId: undefined,
+              generationProgress: 0,
+              generationStatusText: '',
+              generationError: msg,
+            },
+          }
         ))
       }
     },
@@ -176,7 +196,16 @@ export function NodeEditor({
 
   const handleStopGenerate = useCallback(() => {
     setNodes((ns) => ns.map((n) =>
-      n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+      n.id !== nodeId ? n : {
+        ...n,
+        data: {
+          ...n.data,
+          isGenerating: false,
+          activeJobId: undefined,
+          generationProgress: 0,
+          generationStatusText: '',
+        },
+      }
     ))
   }, [nodeId, setNodes])
 
@@ -200,7 +229,17 @@ export function NodeEditor({
 
       // Signal generating immediately
       setNodes((ns) => ns.map((n) =>
-        n.id !== nodeId ? n : { ...n, data: { ...n.data, isEditing: false, isGenerating: true } }
+        n.id !== nodeId ? n : {
+          ...n,
+          data: {
+            ...n.data,
+            isEditing: false,
+            isGenerating: true,
+            generationProgress: 0,
+            generationStatusText: 'Queueing job…',
+            generationError: undefined,
+          },
+        }
       ))
 
       try {
@@ -299,7 +338,17 @@ export function NodeEditor({
         console.error('[filter generate]', err)
         const msg = err instanceof Error ? err.message : 'Generation failed'
         setNodes((ns) => ns.map((n) =>
-          n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined, generationError: msg } }
+          n.id !== nodeId ? n : {
+            ...n,
+            data: {
+              ...n.data,
+              isGenerating: false,
+              activeJobId: undefined,
+              generationProgress: 0,
+              generationStatusText: '',
+              generationError: msg,
+            },
+          }
         ))
       }
     },
@@ -648,6 +697,61 @@ export function NodeEditor({
     }, POLL_INTERVAL_MS)
   }, [stopWorkflowPolling, setNodes])
 
+  const handleTemplateRerunWorkflow = useCallback(async () => {
+    if (!node || data?.type !== "template") return
+    const currentInstance = data.currentInstance ?? -1
+    if (currentInstance < 0) return
+
+    const allNodes = getNodesRef.current()
+    const allEdges = getEdgesRef.current()
+
+    const instanceNodes = allNodes.filter((n) =>
+      n.data?.templateId === nodeId && n.data?.instanceIdx === currentInstance
+    )
+    if (instanceNodes.length === 0) return
+
+    const instanceNodeIds = new Set(instanceNodes.map((n) => n.id))
+    const instanceEdges = allEdges.filter((e: Edge) => {
+      const edgeMeta = e.data as { templateId?: string; instanceIdx?: number } | undefined
+      return edgeMeta?.templateId === nodeId && edgeMeta?.instanceIdx === currentInstance
+    })
+
+    const externalSourceIds = new Set<string>()
+    for (const edge of instanceEdges) {
+      if (!instanceNodeIds.has(edge.source)) externalSourceIds.add(edge.source)
+    }
+
+    const externalNodes = allNodes
+      .filter((n) => externalSourceIds.has(n.id))
+      .map((n) => ({ ...n, data: { ...n.data, _preResolved: true } }))
+
+    const workflowNodes = [...instanceNodes, ...externalNodes]
+
+    setIsExecutingWorkflow(true)
+    try {
+      const res = await fetch("/api/execute/workflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lassoNodeId: nodeId,
+          nodes: workflowNodes,
+          edges: instanceEdges,
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || `Server error ${res.status}`)
+      }
+
+      const { workflowJobId } = await res.json()
+      startWorkflowPolling(workflowJobId)
+    } catch (err) {
+      console.error("[template] rerun workflow failed:", err)
+      setIsExecutingWorkflow(false)
+    }
+  }, [node, data?.type, data?.currentInstance, nodeId, startWorkflowPolling])
+
   // Helper to handle async image result from workflow
   const handleWorkflowImageResult = useCallback(async (targetNodeId: string, b64: string, mime: string) => {
     const byteString = atob(b64)
@@ -773,7 +877,16 @@ export function NodeEditor({
 
     // ── 1. Signal generating immediately ────────────────────────────────────
     setNodes(ns => ns.map(n =>
-      n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: true } }
+      n.id !== nodeId ? n : {
+        ...n,
+        data: {
+          ...n.data,
+          isGenerating: true,
+          generationProgress: 0,
+          generationStatusText: 'Queueing job…',
+          generationError: undefined,
+        },
+      }
     ))
 
     try {
@@ -842,7 +955,16 @@ export function NodeEditor({
     } catch (err) {
       console.error("[template] generate failed:", err)
       setNodes(ns => ns.map(n =>
-        n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+        n.id !== nodeId ? n : {
+          ...n,
+          data: {
+            ...n.data,
+            isGenerating: false,
+            activeJobId: undefined,
+            generationProgress: 0,
+            generationStatusText: '',
+          },
+        }
       ))
     }
   }, [node, data?.type, nodeId, upstreamData, orchestrator, setNodes])
@@ -896,7 +1018,16 @@ export function NodeEditor({
       templateSeedPollRef.current = null
     }
     setNodes(ns => ns.map(n =>
-      n.id !== nodeId ? n : { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
+      n.id !== nodeId ? n : {
+        ...n,
+        data: {
+          ...n.data,
+          isGenerating: false,
+          activeJobId: undefined,
+          generationProgress: 0,
+          generationStatusText: '',
+        },
+      }
     ))
   }, [nodeId, setNodes])
 
@@ -912,7 +1043,7 @@ export function NodeEditor({
 
   // ── Screen coordinates ────────────────────────
   // Read dimensions from: style > data > default
-  const absPos  = (node as any).positionAbsolute ?? node.position
+  const absPos  = (node as Node<CustomNodeData> & { positionAbsolute?: { x: number; y: number } }).positionAbsolute ?? node.position
   const actualW = (node.style?.width  as number | undefined) ?? data?.width  ?? DEFAULT_NODE_W
   const actualH = (node.style?.height as number | undefined) ?? data?.height ?? DEFAULT_NODE_H
   const screenX = absPos.x * zoom + tx
@@ -968,6 +1099,7 @@ export function NodeEditor({
         className="absolute z-[500] pointer-events-auto"
         style={{
           left: centerX, top: actionBarBottom,
+          width: "max-content",
           transform: "translate(-50%, -100%)",
           pointerEvents: isGenerating ? "none" : "auto",
           opacity:       isGenerating ? 0.35 : 1,
@@ -995,9 +1127,10 @@ export function NodeEditor({
           onTemplateAddInstance={handleTemplateAddInstance}
           onTemplateDeleteInstance={handleTemplateDeleteInstance}
           onTemplateGoTo={handleTemplateGoTo}
+          onTemplateRerunWorkflow={handleTemplateRerunWorkflow}
           templateInstanceCount={templateInstanceCount}
           onExecute={handleExecuteWorkflow}
-          isExecuting={data?.type === 'template' ? isGenerating : isExecutingWorkflow}
+          isExecuting={data?.type === 'template' ? (isGenerating || isExecutingWorkflow) : isExecutingWorkflow}
           onLassoRelease={onLassoRelease ? () => onLassoRelease(nodeId) : undefined}
           onToggleInlinePreview={() => handleUpdate({ showPromptInline: !data.showPromptInline })}
           inlinePreviewEnabled={!!data.showPromptInline}
@@ -1043,7 +1176,7 @@ export function NodeEditor({
       </div>
 
       {/* ModeToggle + Panel */}
-      {!isTemplateInstanceView && data.type !== 'lasso' && (<>
+      {!isTemplateInstanceView && data.type !== 'lasso' && data.type !== 'seed' && (<>
       <div
         className="absolute z-[500] pointer-events-auto"
         style={{
@@ -1101,7 +1234,7 @@ export function NodeEditor({
             <mod.ModalContent
               key={nodeId}
               nodeId={nodeId}
-              data={data as any}
+              data={data as AnyNodeData}
               onUpdate={handleUpdate}
               onClose={onClose}
               onDelete={() => handleDeleteNode()}
