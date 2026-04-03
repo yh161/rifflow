@@ -9,6 +9,7 @@ interface CreateDraftInput {
   name: string
   nodes: Node[]
   edges: Edge[]
+  favorites?: string[]
   thumbnail?: string
   publish?: boolean
 }
@@ -18,6 +19,8 @@ interface UseCanvasLifecycleParams {
   canvasState: CanvasState
   setViewportRef: MutableRefObject<(viewport: { x: number; y: number; zoom: number }) => void>
   fitViewRef: MutableRefObject<(options?: { padding?: number; duration?: number }) => void>
+  favoritesRef: MutableRefObject<string[]>
+  onFavoritesRestore: (favorites: string[]) => void
   saveCurrentCanvas: (opts?: { existingDraftId?: string | null; fallbackNamePrefix?: string }) => Promise<unknown>
   createDraft: (input: CreateDraftInput) => Promise<string | undefined | null>
   makeUntitledName: (prefix: string) => string
@@ -33,6 +36,8 @@ export function useCanvasLifecycle({
   canvasState,
   setViewportRef,
   fitViewRef,
+  favoritesRef,
+  onFavoritesRestore,
   saveCurrentCanvas,
   createDraft,
   makeUntitledName,
@@ -42,7 +47,10 @@ export function useCanvasLifecycle({
   useEffect(() => {
     const handler = async (e: Event) => {
       const detail = (e as CustomEvent).detail
-      const { nodes: loadedNodes, edges: loadedEdges, saveBefore, draftName, thumbnail } = detail
+      const { nodes: loadedNodes, edges: loadedEdges, favorites, saveBefore, draftName, thumbnail } = detail
+      const loadedFavorites = Array.isArray(favorites)
+        ? favorites.filter((x: unknown): x is string => typeof x === "string")
+        : []
 
       if (saveBefore && status === "authenticated") {
         const existingId = localStorage.getItem("currentEditingDraftId")
@@ -51,6 +59,7 @@ export function useCanvasLifecycle({
 
       if (Array.isArray(loadedNodes)) setNodes(loadedNodes as Parameters<typeof setNodes>[0])
       if (Array.isArray(loadedEdges)) setEdges(loadedEdges as Parameters<typeof setEdges>[0])
+      onFavoritesRestore(loadedFavorites)
 
       if (draftName && status === "authenticated") {
         try {
@@ -59,6 +68,7 @@ export function useCanvasLifecycle({
             thumbnail: thumbnail ?? undefined,
             nodes: loadedNodes ?? [],
             edges: loadedEdges ?? [],
+            favorites: loadedFavorites,
             publish: false,
           })
           if (draftId) {
@@ -72,7 +82,7 @@ export function useCanvasLifecycle({
 
     window.addEventListener("canvas:load", handler)
     return () => window.removeEventListener("canvas:load", handler)
-  }, [status, setNodes, setEdges, saveCurrentCanvas, createDraft, fitViewRef])
+  }, [status, setNodes, setEdges, onFavoritesRestore, saveCurrentCanvas, createDraft, fitViewRef])
 
   useEffect(() => {
     const handler = async (e: Event) => {
@@ -88,7 +98,12 @@ export function useCanvasLifecycle({
           await fetch("/api/draft", {
             method:  "POST",
             headers: { "Content-Type": "application/json" },
-            body:    JSON.stringify({ nodes: currentNodes, edges: currentEdges, viewport: currentViewport }),
+            body:    JSON.stringify({
+              nodes: currentNodes,
+              edges: currentEdges,
+              viewport: currentViewport,
+              favorites: favoritesRef.current,
+            }),
           })
         } catch { /* silent */ }
 
@@ -99,11 +114,12 @@ export function useCanvasLifecycle({
             name: makeUntitledName("未命名工作流"),
             nodes: [],
             edges: [],
+            favorites: [],
             publish: false,
           })
           if (draftId) {
             window.dispatchEvent(new CustomEvent("canvas:load", {
-              detail: { nodes: [], edges: [], draftId, keepPanelOpen }
+              detail: { nodes: [], edges: [], favorites: [], draftId, keepPanelOpen }
             }))
           }
         } catch { /* silent */ }
@@ -118,5 +134,5 @@ export function useCanvasLifecycle({
 
     window.addEventListener("canvas:new", handler)
     return () => window.removeEventListener("canvas:new", handler)
-  }, [status, canvasState, setNodes, setEdges, setViewportRef, saveCurrentCanvas, createDraft, makeUntitledName])
+  }, [status, canvasState, setNodes, setEdges, setViewportRef, favoritesRef, saveCurrentCanvas, createDraft, makeUntitledName])
 }

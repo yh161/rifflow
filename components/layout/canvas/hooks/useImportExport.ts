@@ -317,7 +317,7 @@ export function useImportExport(canvasState: CanvasState) {
     file: File,
     _onFavoritesImport: (favorites: string[]) => void,
     fitView: (options?: { padding?: number; duration?: number }) => void
-  ): Promise<{ nodes: Node[]; edges: Edge[] } | null> => {
+  ): Promise<{ nodes: Node[]; edges: Edge[]; favorites: string[] } | null> => {
     try {
       const zip = await JSZip.loadAsync(file)
 
@@ -467,10 +467,10 @@ export function useImportExport(canvasState: CanvasState) {
 
         // Update canvas with MinIO URLs so autosave works correctly
         setNodes(serverNodes)
-        return { nodes: serverNodes, edges }
+        return { nodes: serverNodes, edges, favorites }
       }
 
-      return { nodes, edges }
+      return { nodes, edges, favorites }
     } catch (err) {
       console.error("[import] Failed:", err)
       alert("导入失败，文件格式可能不正确")

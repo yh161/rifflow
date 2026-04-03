@@ -28,10 +28,14 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
-    const snapshot = template.canvasSnapshot as { nodes?: unknown[]; edges?: unknown[] } | null
+    const snapshot = template.canvasSnapshot as { nodes?: unknown[]; edges?: unknown[]; favorites?: unknown } | null
+    const favorites = Array.isArray(snapshot?.favorites)
+      ? snapshot.favorites.filter((x: unknown): x is string => typeof x === "string")
+      : []
     return NextResponse.json({
       nodes: snapshot?.nodes ?? [],
       edges: snapshot?.edges ?? [],
+      favorites,
     })
   } catch (error) {
     console.error("[community/templates/[id]/snapshot GET]", error)

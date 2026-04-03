@@ -36,6 +36,9 @@ model User {
   following           Follow[]              @relation("Followers")
   sentMessages        DirectMessage[]        @relation("SentMessages")
   receivedMessages    DirectMessage[]        @relation("ReceivedMessages")
+  // Chat rooms
+  chatMemberships     ChatMember[]
+  chatMessages        ChatMessage[]
 }
 
 model Account {
@@ -302,12 +305,56 @@ model Follow {
   @@index([followingId])
 }
 
+// ─────────────────────────────────────────────
+// Chat Rooms (group-capable, replaces DM-only model)
+// ─────────────────────────────────────────────
+
+model ChatRoom {
+  id        String        @id @default(cuid())
+  name      String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  members   ChatMember[]
+  messages  ChatMessage[]
+}
+
+model ChatMember {
+  id         String   @id @default(cuid())
+  roomId     String
+  userId     String
+  role       String   @default("member") // "admin" | "member"
+  joinedAt   DateTime @default(now())
+  lastReadAt DateTime @default(now())
+  room       ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([userId])
+}
+
+model ChatMessage {
+  id        String    @id @default(cuid())
+  roomId    String
+  senderId  String?   // null = AI-generated
+  content   String
+  isAI      Boolean   @default(false)
+  aiModel   String?
+  createdAt DateTime  @default(now())
+  room      ChatRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender    User?     @relation(fields: [senderId], references: [id], onDelete: SetNull)
+
+  @@index([roomId, createdAt])
+}
+
+// Legacy 1-on-1 direct messages (kept for data safety, no longer used by new UI)
 model DirectMessage {
   id         String   @id @default(cuid())
   senderId   String
   receiverId String
   content    String
   read       Boolean  @default(false)
+  isAI       Boolean  @default(false)
+  aiModel    String?
   createdAt  DateTime @default(now())
 
   sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)

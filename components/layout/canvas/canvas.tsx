@@ -149,6 +149,10 @@ function CanvasLogic({
 }: CanvasProps) {
   const { screenToFlowPosition, fitView, setViewport, getNodes, getViewport } = useReactFlow()
   const { status } = useSession()
+  const favoritesRef = useRef(favorites)
+  useEffect(() => {
+    favoritesRef.current = favorites
+  }, [favorites])
 
   // ── Stable refs for unstable ReactFlow functions ──
   // useReactFlow() returns NEW function objects on every render, so these
@@ -184,6 +188,7 @@ function CanvasLogic({
     status,
     nodesRef: canvasState.nodesRef,
     edgesRef: canvasState.edgesRef,
+    favoritesRef,
   })
 
   const { handleNodeDrag, handleNodeDragStop } = useCanvasInteractions({
@@ -310,6 +315,8 @@ function CanvasLogic({
     canvasState,
     setViewportRef,
     fitViewRef,
+    favoritesRef,
+    onFavoritesRestore: onFavoritesImport,
     saveCurrentCanvas,
     createDraft,
     makeUntitledName,
@@ -605,6 +612,7 @@ function CanvasLogic({
           name: makeUntitledName("导入工作流"),
           nodes: imported.nodes,
           edges: imported.edges,
+          favorites: imported.favorites,
           publish: false,
         })
         if (draftId) {

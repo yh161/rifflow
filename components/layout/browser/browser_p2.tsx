@@ -32,7 +32,7 @@ export function P2() {
     try {
       const snapRes = await fetch(`/api/community/templates/${id}/snapshot`)
       if (!snapRes.ok) return
-      const { nodes, edges } = await snapRes.json()
+      const { nodes, edges, favorites } = await snapRes.json()
       const tmpl = templates.find(t => t.id === id)
       await fetch("/api/community/templates", {
         method: "POST",
@@ -40,7 +40,7 @@ export function P2() {
         body: JSON.stringify({
           name:           tmpl?.name ? `${tmpl.name} Copy` : "Untitled Workflow",
           thumbnail:      tmpl?.thumbnail ?? undefined,
-          canvasSnapshot: { nodes, edges },
+          canvasSnapshot: { nodes, edges, favorites: Array.isArray(favorites) ? favorites : [] },
           publish:        false,
         }),
       })
@@ -54,13 +54,14 @@ export function P2() {
     try {
       const snapRes = await fetch(`/api/community/templates/${id}/snapshot`)
       if (!snapRes.ok) return
-      const { nodes, edges } = await snapRes.json()
+      const { nodes, edges, favorites } = await snapRes.json()
       const tmpl = templates.find(t => t.id === id)
       // Load community canvas with Copy suffix and save current content before loading
       window.dispatchEvent(new CustomEvent("canvas:load", {
         detail: {
           nodes,
           edges,
+          favorites: Array.isArray(favorites) ? favorites : [],
           draftName: tmpl?.name ? `${tmpl.name} Copy` : "Untitled Workflow Copy",
           thumbnail: tmpl?.thumbnail ?? null,
           saveBefore: true

@@ -7,12 +7,14 @@ interface UseDraftPersistenceParams {
   status: "loading" | "authenticated" | "unauthenticated"
   nodesRef: MutableRefObject<Node[]>
   edgesRef: MutableRefObject<Edge[]>
+  favoritesRef: MutableRefObject<string[]>
 }
 
 interface CreateDraftParams {
   name: string
   nodes: Node[]
   edges: Edge[]
+  favorites?: string[]
   thumbnail?: string
   publish?: boolean
 }
@@ -25,7 +27,7 @@ interface CreateDraftParams {
  * - Keep naming strategy consistent
  * - Centralize event dispatch for draft list refresh
  */
-export function useDraftPersistence({ status, nodesRef, edgesRef }: UseDraftPersistenceParams) {
+export function useDraftPersistence({ status, nodesRef, edgesRef, favoritesRef }: UseDraftPersistenceParams) {
   const canPersist = status === "authenticated"
 
   const timeLabel = () =>
@@ -38,16 +40,16 @@ export function useDraftPersistence({ status, nodesRef, edgesRef }: UseDraftPers
 
   const makeUntitledName = (prefix: string) => `${prefix} ${timeLabel()}`
 
-  const patchDraftSnapshot = async (draftId: string, nodes: Node[], edges: Edge[]) => {
+  const patchDraftSnapshot = async (draftId: string, nodes: Node[], edges: Edge[], favorites: string[]) => {
     const res = await fetch(`/api/community/templates/${draftId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ canvasSnapshot: { nodes, edges } }),
+      body: JSON.stringify({ canvasSnapshot: { nodes, edges, favorites } }),
     })
     return res.ok
   }
 
-  const createDraft = async ({ name, nodes, edges, thumbnail, publish = false }: CreateDraftParams) => {
+  const createDraft = async ({ name, nodes, edges, favorites, thumbnail, publish = false }: CreateDraftParams) => {
     if (!canPersist) return null
 
     const res = await fetch("/api/community/templates", {
@@ -56,7 +58,7 @@ export function useDraftPersistence({ status, nodesRef, edgesRef }: UseDraftPers
       body: JSON.stringify({
         name,
         thumbnail,
-        canvasSnapshot: { nodes, edges },
+        canvasSnapshot: { nodes, edges, favorites: Array.isArray(favorites) ? favorites : favoritesRef.current },
         publish,
       }),
     })
@@ -72,13 +74,14 @@ export function useDraftPersistence({ status, nodesRef, edgesRef }: UseDraftPers
 
     const nodes = nodesRef.current
     const edges = edgesRef.current
+    const favorites = favoritesRef.current
     if (nodes.length === 0) return null
 
     const existingDraftId = opts?.existingDraftId ?? null
     const fallbackNamePrefix = opts?.fallbackNamePrefix ?? "未命名工作流"
 
     if (existingDraftId) {
-      const patched = await patchDraftSnapshot(existingDraftId, nodes, edges)
+      const patched = await patchDraftSnapshot(existingDraftId, nodes, edges, favorites)
       if (patched) {
         window.dispatchEvent(new CustomEvent("template:saved"))
         return existingDraftId
@@ -90,6 +93,7 @@ export function useDraftPersistence({ status, nodesRef, edgesRef }: UseDraftPers
       name: makeUntitledName(fallbackNamePrefix),
       nodes,
       edges,
+      favorites,
       publish: false,
     })
   }

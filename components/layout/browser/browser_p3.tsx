@@ -139,8 +139,15 @@ export function P3({ currentEditingDraftId, importRef }: P3Props) {
     try {
       const res = await fetch(`/api/community/templates/${id}/snapshot`)
       if (!res.ok) return
-      const { nodes, edges } = await res.json()
-      window.dispatchEvent(new CustomEvent("canvas:load", { detail: { nodes, edges, draftId: id } }))
+      const { nodes, edges, favorites } = await res.json()
+      window.dispatchEvent(new CustomEvent("canvas:load", {
+        detail: {
+          nodes,
+          edges,
+          favorites: Array.isArray(favorites) ? favorites : [],
+          draftId: id,
+        }
+      }))
 
       // Sync cover to toolbar
       const tmpl = [...published, ...drafts, ...unpublished].find(t => t.id === id)

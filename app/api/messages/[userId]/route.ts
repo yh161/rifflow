@@ -32,6 +32,8 @@ export async function GET(
         senderId: true,
         content: true,
         read: true,
+        isAI: true,
+        aiModel: true,
         createdAt: true,
       },
     })
@@ -50,7 +52,11 @@ export async function GET(
 
     return NextResponse.json({
       contact,
-      messages: messages.map((m) => ({ ...m, isMe: m.senderId === meId })),
+      messages: messages.map((m) => ({
+        ...m,
+        // AI messages are never "mine" — they belong to the AI
+        isMe: !m.isAI && m.senderId === meId,
+      })),
     })
   } catch (error) {
     console.error("[messages/userId GET]", error)

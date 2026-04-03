@@ -16,7 +16,6 @@ import {
 import {
   PanelLeftOpen,
   Zap,
-  MessageCircle,
   User,
   Search,
   PlayCircle,
@@ -24,7 +23,6 @@ import {
   GitBranch,
   Clock,
   Users,
-  Layers,
   HardDrive,
   Workflow,
   Star,
@@ -40,7 +38,6 @@ import { AccountPage } from "./browser_account"
 import { PricingPage } from "./browser_pricing"
 import { WorkflowDetailPage } from "./browser_detail"
 import { ProfilePage } from "./browser_profile"
-import { MessagesPage } from "./browser_messages"
 import type { TemplateSummary } from "./community.types"
 
 
@@ -56,31 +53,11 @@ interface PanelProps {
 
 export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChange, isRunning = false, importRef, exportRef, currentEditingDraftId }: PanelProps) {
   const setIsOpen = (val: boolean) => onOpenChange?.(val)
-  const [activePage, setActivePage] = useState<"watch" | "browse" | "create" | "library" | "favorites" | "account" | "pricing" | "detail" | "profile" | "messages">("watch")
+  const [activePage, setActivePage] = useState<"watch" | "browse" | "create" | "library" | "favorites" | "account" | "pricing" | "detail" | "profile">("watch")
   const [libraryTab, setLibraryTab] = useState<"recent" | "assets" | "creators">("recent")
   const [prevPage, setPrevPage]     = useState<typeof activePage>("watch")
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateSummary | null>(null)
   const [profileUserId, setProfileUserId] = useState<string | null>(null)
-  const [chatContactId, setChatContactId] = useState<string | null>(null)
-  const [unreadCount, setUnreadCount] = useState(0)
-
-  // Poll unread message count every 30s
-  React.useEffect(() => {
-    const fetchUnread = () => {
-      fetch("/api/messages")
-        .then(r => r.ok ? r.json() : null)
-        .then(data => {
-          if (data?.conversations) {
-            const total = data.conversations.reduce((sum: number, c: { unreadCount: number }) => sum + c.unreadCount, 0)
-            setUnreadCount(total)
-          }
-        })
-        .catch(() => {})
-    }
-    fetchUnread()
-    const id = setInterval(fetchUnread, 30000)
-    return () => clearInterval(id)
-  }, [])
 
   const navigate = (page: typeof activePage) => {
     setPrevPage(activePage)
@@ -95,11 +72,6 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
   const handleOpenProfile = (userId: string) => {
     setProfileUserId(userId)
     navigate("profile")
-  }
-
-  const handleOpenChat = (contactId: string) => {
-    setChatContactId(contactId)
-    navigate("messages")
   }
 
   // Avatar click → open panel + profile page (my profile)
@@ -134,7 +106,7 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
   }, [activePage])
 
   // Fullscreen pages (no sidebar)
-  const isFullscreen = activePage === "account" || activePage === "pricing" || activePage === "messages"
+  const isFullscreen = activePage === "account" || activePage === "pricing"
 
   // Completely hidden during run mode — no edge, no interaction
   if (isRunning) {
@@ -191,17 +163,6 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
             <MenubarTrigger onClick={() => navigate("account")}>
               <User className="h-3.5 w-3.5 mr-1" />
               Account
-            </MenubarTrigger>
-          </MenubarMenu>
-          <MenubarMenu>
-            <MenubarTrigger onClick={() => { setChatContactId(null); navigate("messages") }}>
-              <MessageCircle className="h-3.5 w-3.5 mr-1" />
-              Messages
-              {unreadCount > 0 && (
-                <span className="ml-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-[9px] font-semibold text-white">
-                  {unreadCount > 99 ? "99+" : unreadCount}
-                </span>
-              )}
             </MenubarTrigger>
           </MenubarMenu>
           <MenubarMenu>
@@ -333,7 +294,7 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
               "flex-1 flex flex-col min-h-0",
               !isFullscreen && "lg:col-span-4"
             )}>
-              <div className={cn("flex-1 overflow-y-auto min-h-0", !["detail", "profile", "messages"].includes(activePage) && "px-4 py-6 lg:px-8")}>
+              <div className={cn("flex-1 overflow-y-auto min-h-0", !["detail", "profile"].includes(activePage) && "px-4 py-6 lg:px-8")}>
                 {activePage === "watch"     && <P1 onOpenDetail={handleOpenDetail} />}
                 {activePage === "browse"    && <P2 />}
                 {activePage === "create"    && <P3 currentEditingDraftId={currentEditingDraftId} importRef={importRef} />}
@@ -353,16 +314,11 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
                     userId={profileUserId}
                     onBack={() => setActivePage(prevPage)}
                     onOpenDetail={handleOpenDetail}
-                    onOpenChat={(id) => { setChatContactId(id === "__inbox__" ? null : id); navigate("messages") }}
-                    unreadCount={unreadCount}
-                  />
-                )}
-                {activePage === "messages" && (
-                  <MessagesPage
-                    onBack={() => setActivePage(prevPage)}
-                    initialContactId={chatContactId}
-                    onOpenProfile={handleOpenProfile}
-                    onRead={() => setUnreadCount(0)}
+                    onOpenChat={(id) => {
+                      // Route chat to the sidebar instead of browser panel
+                      window.dispatchEvent(new CustomEvent("sidebar:openChat", { detail: { contactId: id } }))
+                    }}
+                    unreadCount={0}
                   />
                 )}
               </div>

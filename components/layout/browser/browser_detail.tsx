@@ -36,14 +36,14 @@ export function WorkflowDetailPage({ template, onBack, onOpenProfile }: Workflow
     try {
       const snapRes = await fetch(`/api/community/templates/${template.id}/snapshot`)
       if (!snapRes.ok) return
-      const { nodes, edges } = await snapRes.json()
+      const { nodes, edges, favorites } = await snapRes.json()
       await fetch("/api/community/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: `${template.name} Copy`,
           thumbnail: template.thumbnail ?? undefined,
-          canvasSnapshot: { nodes, edges },
+          canvasSnapshot: { nodes, edges, favorites: Array.isArray(favorites) ? favorites : [] },
           publish: false,
         }),
       })
@@ -57,11 +57,12 @@ export function WorkflowDetailPage({ template, onBack, onOpenProfile }: Workflow
     try {
       const snapRes = await fetch(`/api/community/templates/${template.id}/snapshot`)
       if (!snapRes.ok) return
-      const { nodes, edges } = await snapRes.json()
+      const { nodes, edges, favorites } = await snapRes.json()
       window.dispatchEvent(new CustomEvent("canvas:load", {
         detail: {
           nodes,
           edges,
+          favorites: Array.isArray(favorites) ? favorites : [],
           draftName: `${template.name} Copy`,
           thumbnail: template.thumbnail ?? null,
           saveBefore: true,
