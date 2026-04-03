@@ -12,8 +12,8 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-// Use postgres package that ships with Prisma
-const postgres = require("./node_modules/postgres/cjs/src/index.js");
+// Use postgres package (in /app/node_modules/postgres, Node resolves up the tree)
+const postgres = require("postgres");
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
