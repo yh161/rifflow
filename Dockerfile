@@ -26,12 +26,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 # Prisma CLI + migrations (for prisma migrate deploy at startup)
-COPY --from=builder /app/node_modules/.bin/prisma           ./node_modules/.bin/prisma
-COPY --from=builder /app/node_modules/prisma                ./node_modules/prisma
-COPY --from=builder /app/node_modules/@prisma               ./node_modules/@prisma
-COPY --from=builder /app/prisma                             ./prisma
-# Note: prisma.config.ts is intentionally NOT copied — defaults match our config
-# and loading .ts at runtime requires jiti/tsx which aren't in the slim image
+COPY --from=builder /app/node_modules/.bin/prisma                                  ./node_modules/.bin/prisma
+COPY --from=builder /app/node_modules/prisma/build/prisma_schema_build_bg.wasm    ./node_modules/.bin/prisma_schema_build_bg.wasm
+COPY --from=builder /app/node_modules/prisma/build/schema_engine_bg.wasm          ./node_modules/.bin/schema_engine_bg.wasm
+COPY --from=builder /app/node_modules/prisma                                       ./node_modules/prisma
+COPY --from=builder /app/node_modules/@prisma                                      ./node_modules/@prisma
+COPY --from=builder /app/prisma                                                    ./prisma
 
 # Startup script
 COPY --chown=nextjs:nodejs start.sh ./
