@@ -207,7 +207,7 @@ export function useNodeOperations(canvasState: CanvasState) {
 
     clearQuickAddMenu()
 
-    if (MODULE_BY_ID[type]?.meta.opensEditor) setEditorNodeId(id)
+    // New nodes no longer auto-open editor; user can double-click to open.
   }, [centerPosition, removeGhost, nodesRef, setNodes, setEdges, clearQuickAddMenu, setEditorNodeId])
 
   // ─────────────────────────────────────────────
@@ -334,13 +334,12 @@ export function useNodeOperations(canvasState: CanvasState) {
         ...((type === "template" || type === "lasso") && { style: { width: mod?.defaultData?.width ?? 520, height: mod?.defaultData?.height ?? 400 }, zIndex: -1 }),
         data: { ...mod?.defaultData, type: type as AnyNodeData['type'] },
       }))
-      setEditorNodeId(id)
       return
     }
 
     setPendingPos({ ...centeredPos, type })
     setDraftData({ ...mod?.defaultData, type: type as AnyNodeData['type'] })
-  }, [centerPosition, setNodes, setEditorNodeId, setPendingPos, setDraftData])
+  }, [centerPosition, setNodes, setPendingPos, setDraftData])
 
   const handleConfirmNode = useCallback((pendingPos: { x: number; y: number; type: string } | null, draftData: Partial<AnyNodeData>) => {
     if (!pendingPos) return

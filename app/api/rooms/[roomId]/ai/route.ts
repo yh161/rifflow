@@ -4,20 +4,22 @@ import { authOptions } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { TEXT_MODELS } from "@/lib/models"
 import { runReplicate } from "@/app/services/replicate"
+import { calculateCreditCost } from "@/lib/credits"
 
 type Params = Promise<{ roomId: string }>
 
 // Convert chat messages array → single prompt string for Replicate models
-// (Replicate expects a prompt string, not an OpenAI messages array)
 function messagesToPrompt(messages: { role: string; content: string }[]): string {
-  return messages
-    .map(m => (m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`))
-    .join("\n") + "\nAssistant:"
+  return (
+    messages
+      .map((m) => (m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`))
+      .join("\n") + "\nAssistant:"
+  )
 }
 
 // POST /api/rooms/[roomId]/ai
-// Triggered by a member who has agent mode on.
-// Routes to Replicate or OpenRouter depending on model backend.
+// Triggered when a user sends a message with @model-id.
+// Deducts credits from the triggering user.
 // Saves the AI reply to DB — all members see it on next poll.
 export async function POST(req: Request, { params }: { params: Params }) {
   try {
@@ -27,7 +29,7 @@ export async function POST(req: Request, { params }: { params: Params }) {
     }
     const meId = session.user.id
     const { roomId } = await params
-    const { model, messages } = await req.json()
+    const { model, messages, modelParams } = await req.json()
 
     if (!model || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: "model and messages required" }, { status: 400 })
@@ -40,14 +42,33 @@ export async function POST(req: Request, { params }: { params: Params }) {
       return NextResponse.json({ error: "Not a member" }, { status: 403 })
     }
 
-    // Look up model definition
-    const modelDef = TEXT_MODELS.find(m => m.id === model)
+    // ── Credit check ─────────────────────────────────────────────────────────
+    const creditCost = calculateCreditCost(model, modelParams as Record<string, string> | undefined)
+    const user = await prisma.user.findUnique({
+      where: { id: meId },
+      include: { wallet: true },
+    })
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 })
+    }
+    if (!user.wallet || user.wallet.points < creditCost) {
+      return NextResponse.json(
+        { error: "Insufficient credits", required: creditCost, available: user.wallet?.points ?? 0 },
+        { status: 402 }
+      )
+    }
+
+    // ── Look up model definition ──────────────────────────────────────────────
+    const modelDef = TEXT_MODELS.find((m) => m.id === model)
     const backend = modelDef?.backend ?? "openrouter"
+
+    // Merge stored modelParams
+    const storedParams = (modelParams as Record<string, string> | undefined) ?? {}
+    const temperature = storedParams.temperature ? parseFloat(storedParams.temperature) : 0.7
 
     let content = ""
 
     if (backend === "replicate") {
-      // ── Replicate path ─────────────────────────────────────────
       if (!process.env.REPLICATE_API_TOKEN) {
         return NextResponse.json({ error: "Replicate not configured" }, { status: 503 })
       }
@@ -58,17 +79,24 @@ export async function POST(req: Request, { params }: { params: Params }) {
 
       const input: Record<string, unknown> = {
         prompt,
-        [tokenParam]: 2048,
+        [tokenParam]: storedParams[tokenParam] ? Number(storedParams[tokenParam]) : 2048,
       }
 
-      // Only add temperature if model supports it
       if (!modelDef?.replicateNoTemperature) {
-        input.temperature = 0.7
+        input.temperature = temperature
+      }
+
+      // Apply any extra params stored by user
+      if (modelDef?.params) {
+        for (const p of modelDef.params) {
+          if (storedParams[p.key] !== undefined && p.key !== tokenParam && p.key !== "temperature") {
+            const v = storedParams[p.key]
+            input[p.key] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v
+          }
+        }
       }
 
       const output = await runReplicate(modelPath, input)
-
-      // Replicate returns string or string[]
       if (Array.isArray(output)) {
         content = output.join("")
       } else if (typeof output === "string") {
@@ -77,7 +105,7 @@ export async function POST(req: Request, { params }: { params: Params }) {
         content = String(output ?? "")
       }
     } else {
-      // ── OpenRouter path ────────────────────────────────────────
+      // ── OpenRouter path ──────────────────────────────────────────────────────
       const apiKey = process.env.OPENROUTER_API_KEY
       if (!apiKey) {
         return NextResponse.json({ error: "OpenRouter not configured" }, { status: 503 })
@@ -93,7 +121,12 @@ export async function POST(req: Request, { params }: { params: Params }) {
           "HTTP-Referer": process.env.NEXTAUTH_URL ?? "http://localhost:3000",
           "X-Title": "Rifflow Chat",
         },
-        body: JSON.stringify({ model: orModel, messages, max_tokens: 2048 }),
+        body: JSON.stringify({
+          model: orModel,
+          messages,
+          max_tokens: 2048,
+          temperature,
+        }),
       })
 
       if (!aiRes.ok) {
@@ -107,11 +140,10 @@ export async function POST(req: Request, { params }: { params: Params }) {
     }
 
     if (!content.trim()) {
-      console.error("[rooms/ai] Empty AI response for model:", model)
       return NextResponse.json({ error: "Empty AI response" }, { status: 502 })
     }
 
-    // Persist to DB — senderId null marks AI
+    // ── Save message + deduct credits atomically ─────────────────────────────
     const [saved] = await prisma.$transaction([
       prisma.chatMessage.create({
         data: { roomId, senderId: null, content: content.trim(), isAI: true, aiModel: model },
@@ -119,6 +151,20 @@ export async function POST(req: Request, { params }: { params: Params }) {
       prisma.chatRoom.update({
         where: { id: roomId },
         data: { updatedAt: new Date() },
+      }),
+      prisma.wallet.update({
+        where: { userId: meId },
+        data: { points: { decrement: creditCost } },
+      }),
+      prisma.executionLog.create({
+        data: {
+          userId: meId,
+          nodeType: "chat_ai",
+          inputTokens: 0,
+          outputTokens: 0,
+          creditCost,
+          status: "SUCCESS",
+        },
       }),
     ])
 
@@ -134,6 +180,7 @@ export async function POST(req: Request, { params }: { params: Params }) {
         senderName: null,
         senderImage: null,
       },
+      creditsUsed: creditCost,
     })
   } catch (error) {
     console.error("[POST /api/rooms/[roomId]/ai]", error)

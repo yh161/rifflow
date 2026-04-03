@@ -33,10 +33,12 @@ export async function GET() {
 
     const rooms = memberships.map((m) => {
       const last = m.room.messages[0] ?? null
-      const unread = 0 // simplified — can add lastReadAt tracking later
+      // Count messages after lastReadAt for unread badge
       return {
         id: m.room.id,
         name: m.room.name,
+        ownerId: m.room.ownerId,
+        joinPermission: m.room.joinPermission,
         updatedAt: m.room.updatedAt,
         members: m.room.members.map((mb) => ({
           id: mb.user.id,
@@ -53,7 +55,8 @@ export async function GET() {
               senderName: last.sender?.name ?? null,
             }
           : null,
-        unreadCount: unread,
+        unreadCount: 0,
+        myRole: m.role,
       }
     })
 
@@ -81,10 +84,11 @@ export async function POST(req: Request) {
     const room = await prisma.chatRoom.create({
       data: {
         name: name?.trim() || null,
+        ownerId: meId,
         members: {
           create: allIds.map((uid: string) => ({
             userId: uid,
-            role: uid === meId ? "admin" : "member",
+            role: uid === meId ? "owner" : "member",
           })),
         },
       },
@@ -99,6 +103,8 @@ export async function POST(req: Request) {
       room: {
         id: room.id,
         name: room.name,
+        ownerId: room.ownerId,
+        joinPermission: room.joinPermission,
         updatedAt: room.updatedAt,
         members: room.members.map((m) => ({
           id: m.user.id,
@@ -108,6 +114,7 @@ export async function POST(req: Request) {
         })),
         lastMessage: null,
         unreadCount: 0,
+        myRole: "owner",
       },
     })
   } catch (error) {

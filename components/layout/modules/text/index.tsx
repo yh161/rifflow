@@ -1,7 +1,7 @@
 "use client"
 
 import React, { memo, useRef, useState, useEffect, useCallback, useMemo } from 'react'
-import { NodeProps } from 'reactflow'
+import { NodeProps, useReactFlow } from 'reactflow'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -97,6 +97,15 @@ export const HybridEditor = memo(function HybridEditor({
   })
   // No line active initially — user clicks to choose where to edit
   const [activeIdx, setActiveIdx] = useState(-1)
+
+  // For blank nodes: entering edit mode should immediately focus the first line.
+  useEffect(() => {
+    if (!editable) return
+    if (activeIdx >= 0) return
+    if (lines.length === 1 && lines[0].text === '') {
+      setActiveIdx(0)
+    }
+  }, [editable, activeIdx, lines])
 
   const linesRef = useRef(lines)
   useEffect(() => {
@@ -371,13 +380,27 @@ export const HybridEditor = memo(function HybridEditor({
 
 // ── Node UI ────────────────────────────────────────────────────────────────────
 export const NodeUI = ({
+  nodeId,
   data,
   selected,
 }: {
+  nodeId?: string
   data: CustomNodeData
   selected?: boolean
 }) => {
-  const onChange = (content: string) => data.onDataChange?.({ content })
+  const { setNodes } = useReactFlow()
+  const onChange = useCallback((content: string) => {
+    // Prefer editor-injected callback, but fall back to direct node update.
+    // This prevents first-input loss when onDataChange injection is not yet ready.
+    if (data.onDataChange) {
+      data.onDataChange({ content })
+      return
+    }
+    if (!nodeId) return
+    setNodes((ns) => ns.map((n) =>
+      n.id !== nodeId ? n : { ...n, data: { ...n.data, content } }
+    ))
+  }, [data, nodeId, setNodes])
   const isSelected = !!selected
   const isEditing  = !!data.isEditing
 
@@ -640,6 +663,10 @@ export const NodeUI = ({
               />
             </div>
           </div>
+        ) : data.onDataChange ? (
+          <span className="italic text-slate-300 text-[11px]">
+            Click the Edit button above to edit.
+          </span>
         ) : (
           <span className="italic text-slate-300 text-[11px]">
             Double-click to edit…
@@ -650,8 +677,8 @@ export const NodeUI = ({
   )
 }
 
-export const ReactFlowNode = memo(({ data, selected }: NodeProps<CustomNodeData>) => (
-  <NodeUI data={data} selected={selected} />
+export const ReactFlowNode = memo(({ id, data, selected }: NodeProps<CustomNodeData>) => (
+  <NodeUI nodeId={id} data={data} selected={selected} />
 ))
 ReactFlowNode.displayName = 'TextNode'
 
