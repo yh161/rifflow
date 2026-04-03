@@ -53,6 +53,7 @@ export interface FilterResult {
 }
 
 export interface CustomNodeData {
+  [key: string]: unknown
   label?: string
   type: 'text' | 'image' | 'video' | 'pdf' | 'filter' | 'template' | 'seed' | 'lasso'
   width?: number
