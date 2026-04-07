@@ -2,7 +2,7 @@
 
 import React from "react"
 import Image from "next/image"
-import { useState } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import { cn } from "@/lib/utils"
 
 import { Button } from "@/components/ui/button"
@@ -26,6 +26,7 @@ import {
   HardDrive,
   Workflow,
   Star,
+  X,
 } from "lucide-react"
 
 // Sub-page components
@@ -38,11 +39,13 @@ import { AccountPage } from "./browser_account"
 import { PricingPage } from "./browser_pricing"
 import { WorkflowDetailPage } from "./browser_detail"
 import { ProfilePage } from "./browser_profile"
+import { SearchResultsPage } from "./browser_search"
 import type { TemplateSummary } from "./community.types"
 
 
 interface PanelProps {
   isSidebarOpen?: boolean
+  sidebarWidth?: number
   isOpen?: boolean
   onOpenChange?: (open: boolean) => void
   isRunning?: boolean
@@ -51,13 +54,50 @@ interface PanelProps {
   currentEditingDraftId?: string | null
 }
 
-export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChange, isRunning = false, importRef, exportRef, currentEditingDraftId }: PanelProps) {
+export default function Panel({ isSidebarOpen = true, sidebarWidth = 320, isOpen = true, onOpenChange, isRunning = false, importRef, exportRef, currentEditingDraftId }: PanelProps) {
   const setIsOpen = (val: boolean) => onOpenChange?.(val)
-  const [activePage, setActivePage] = useState<"watch" | "browse" | "create" | "library" | "favorites" | "account" | "pricing" | "detail" | "profile">("watch")
+  const [activePage, setActivePage] = useState<"watch" | "browse" | "create" | "library" | "favorites" | "account" | "pricing" | "detail" | "profile" | "search">("watch")
   const [libraryTab, setLibraryTab] = useState<"recent" | "assets" | "creators">("recent")
   const [prevPage, setPrevPage]     = useState<typeof activePage>("watch")
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateSummary | null>(null)
   const [profileUserId, setProfileUserId] = useState<string | null>(null)
+
+  // ── Search state ──────────────────────────────────────────────────────────
+  const [searchInput, setSearchInput]   = useState("")
+  const [committedQuery, setCommittedQuery] = useState("")
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /** Commit a query and switch to search page */
+  const commitSearch = useCallback((q: string) => {
+    setCommittedQuery(q)
+    if (q.trim()) {
+      setPrevPage(activePage === "search" ? prevPage : activePage)
+      setActivePage("search")
+    } else {
+      // Cleared — go back to previous page
+      setActivePage(prevPage === "search" ? "watch" : prevPage)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, prevPage])
+
+  /** Debounced handler for the search input */
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchInput(value)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => commitSearch(value), 400)
+  }, [commitSearch])
+
+  /** Clear search and go back */
+  const clearSearch = useCallback(() => {
+    setSearchInput("")
+    setCommittedQuery("")
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    setActivePage(prevPage === "search" ? "watch" : prevPage)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prevPage])
+
+  // Cleanup debounce on unmount
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current) }, [])
 
   const navigate = (page: typeof activePage) => {
     setPrevPage(activePage)
@@ -143,7 +183,7 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
         )}
         onClick={() => !isOpen && setIsOpen(true)}
         style={{
-          left: isSidebarOpen ? 406 : 80,
+          left: isSidebarOpen ? sidebarWidth + 86 : 80,
           right: 16,
           transform: isOpen ? 'translateX(0)' : 'translateX(calc(100% - 6px))',
           transition: 'left 500ms cubic-bezier(0.16,1,0.3,1), right 500ms cubic-bezier(0.16,1,0.3,1), transform 500ms cubic-bezier(0.3, 1.15, 0.3, 1)',
@@ -191,11 +231,29 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
               <aside className="hidden lg:flex flex-col h-full border-r">
                 <div className="px-6 py-4">
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                     <Input
-                      placeholder="Search..."
-                      className="pl-9 rounded-lg bg-slate-100/50 dark:bg-slate-900/50 border-none h-9 focus-visible:ring-1 focus-visible:ring-blue-500"
+                      placeholder="Search workflows & people…"
+                      value={searchInput}
+                      onChange={(e) => handleSearchChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          if (debounceRef.current) clearTimeout(debounceRef.current)
+                          commitSearch(searchInput)
+                        }
+                        if (e.key === "Escape") clearSearch()
+                      }}
+                      className="pl-9 pr-8 rounded-lg bg-slate-100/50 dark:bg-slate-900/50 border-none h-9 focus-visible:ring-1 focus-visible:ring-blue-500"
                     />
+                    {searchInput && (
+                      <button
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={clearSearch}
+                        tabIndex={-1}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -302,6 +360,13 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
                 {activePage === "favorites" && <FavoritesPage />}
                 {activePage === "account"   && <AccountPage onPricing={() => navigate("pricing")} />}
                 {activePage === "pricing"   && <PricingPage />}
+                {activePage === "search"    && (
+                  <SearchResultsPage
+                    query={committedQuery}
+                    onOpenDetail={handleOpenDetail}
+                    onOpenProfile={handleOpenProfile}
+                  />
+                )}
                 {activePage === "detail" && selectedTemplate && (
                   <WorkflowDetailPage
                     template={selectedTemplate}
@@ -314,6 +379,7 @@ export default function Panel({ isSidebarOpen = true, isOpen = true, onOpenChang
                     userId={profileUserId}
                     onBack={() => setActivePage(prevPage)}
                     onOpenDetail={handleOpenDetail}
+                    onOpenProfile={handleOpenProfile}
                     onOpenChat={(id) => {
                       // Route chat to the sidebar instead of browser panel
                       window.dispatchEvent(new CustomEvent("sidebar:openChat", { detail: { contactId: id } }))

@@ -1,12 +1,14 @@
 import type { ResultHandlerContext } from '../_registry'
+import type { CustomNodeData } from '../_types'
 
 /**
  * Filter result handler:
- * Computes output content = joined content of passed nodes.
- * This is what downstream nodes see when they reference {{filterId}}.
+ * Output content = joined content of union(manual selected nodes, AI passed nodes).
+ * Manual selections (filterSelectedIds) are always preserved.
+ * AI result (filterResult) replaces the previous AI result only.
  */
 export async function resultHandler(
-  result: Record<string, any>,
+  result: Record<string, unknown>,
   ctx: ResultHandlerContext,
 ): Promise<void> {
   const filterResult = result.filterResult as {
@@ -15,28 +17,49 @@ export async function resultHandler(
     reply?:   string
   } | undefined
 
-  // Compute output content from passed nodes
   const currentNodes = ctx.getNodes()
-  const passedContent = (filterResult?.passed ?? [])
-    .map((item) => {
-      const n = currentNodes.find((node) => node.id === item.id)
-      if (!n) return ''
-      const d = n.data as any
-      return d?.content || d?.src || d?.videoSrc || ''
+  const node = currentNodes.find((n) => n.id === ctx.nodeId)
+  const data = node?.data as (CustomNodeData & Record<string, unknown>) | undefined
+
+  // Manual selections — already resolved from filterOutputRules by NodeUI useEffect
+  const manualIds = new Set<string>(
+    Array.isArray(data?.filterSelectedIds)
+      ? (data.filterSelectedIds as string[])
+      : [],
+  )
+
+  // AI passed IDs
+  const aiPassedIds = new Set<string>((filterResult?.passed ?? []).map((i) => i.id))
+
+  // Union: manual always included; AI is the complement
+  const allPassedIds = new Set([...manualIds, ...aiPassedIds])
+
+  // Compute output content from the union
+  const passedContent = currentNodes
+    .filter((n) => allPassedIds.has(n.id))
+    .map((n) => {
+      const d = n.data as Record<string, unknown>
+      const value = d?.content ?? d?.src ?? d?.videoSrc
+      return typeof value === 'string' ? value : ''
     })
     .filter(Boolean)
     .join('\n\n')
 
-  ctx.setNodes(ns => ns.map(n =>
-    n.id !== ctx.nodeId ? n : {
-      ...n,
-      data: {
-        ...n.data,
-        content:      passedContent,
-        filterResult,
-        isGenerating: false,
-        activeJobId:  undefined,
-      },
-    }
-  ))
+  ctx.setNodes((ns) =>
+    ns.map((n) =>
+      n.id !== ctx.nodeId
+        ? n
+        : {
+            ...n,
+            data: {
+              ...n.data,
+              content:      passedContent,
+              filterResult,              // stores AI result only; manual stays in filterOutputRules
+              done:         true,
+              isGenerating: false,
+              activeJobId:  undefined,
+            },
+          },
+    ),
+  )
 }

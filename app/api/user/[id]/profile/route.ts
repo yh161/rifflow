@@ -35,13 +35,22 @@ export async function GET(
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    // Check if current user follows this user
-    let isFollowing = false
+    // Check follow relationships between current user and profile user
+    let isFollowing = false // current user → profile user
+    let followsMe = false   // profile user → current user
+    let isMutual = false    // both follow each other
     if (currentUserId && currentUserId !== id) {
-      const follow = await prisma.follow.findUnique({
-        where: { followerId_followingId: { followerId: currentUserId, followingId: id } },
-      })
+      const [follow, reverseFollow] = await Promise.all([
+        prisma.follow.findUnique({
+          where: { followerId_followingId: { followerId: currentUserId, followingId: id } },
+        }),
+        prisma.follow.findUnique({
+          where: { followerId_followingId: { followerId: id, followingId: currentUserId } },
+        }),
+      ])
       isFollowing = !!follow
+      followsMe = !!reverseFollow
+      isMutual = isFollowing && followsMe
     }
 
     // Get published templates
@@ -96,6 +105,8 @@ export async function GET(
         followingCount: user._count.following,
         publishedCount: user._count.createdTemplates,
         isFollowing,
+        followsMe,
+        isMutual,
         isMe: currentUserId === id,
       },
       templates: templateSummaries,

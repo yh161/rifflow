@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useContext } from 'react'
 import { useReactFlow } from 'reactflow'
 import type { Node, Edge } from 'reactflow'
 import type { TemplateJobResult } from '@/app/services/job.service'
+import { MODEL_PROGRESS_PROFILE, type ProgressProfile } from '@/lib/models'
 import type { AnyNodeData } from './_types'
 import { MODULE_BY_ID } from './_registry'
 import type { ResultHandlerContext } from './_registry'
@@ -11,41 +12,41 @@ import { resultHandler as defaultResultHandler } from './text/resultHandler'
 
 const POLL_MS = 1500
 
-type ProgressProfile = {
-  /** asymptotic cap before backend confirms done */
-  max: number
-  /** base easing rate per tick (higher = faster) */
-  ease: number
-}
-
-// Model-specific pacing (easy for you to tune later)
-const MODEL_PROGRESS_PROFILE: Record<string, ProgressProfile> = {
-  "gemini-2.5-flash": { max: 0.95, ease: 0.028 },
-  "gemini-3.1-pro":   { max: 0.94, ease: 0.022 },
-  "claude-opus-4.6":  { max: 0.93, ease: 0.02 },
-  "gpt-5.2":          { max: 0.93, ease: 0.02 },
-  "deepseek-v3":      { max: 0.94, ease: 0.024 },
-  "qwen3-32b":        { max: 0.94, ease: 0.023 },
-  "llama-3.3-70b":    { max: 0.92, ease: 0.018 },
-  "llama-3.1-8b":     { max: 0.94, ease: 0.022 },
-
-  "nano-banana":      { max: 0.92, ease: 0.06 },
-  "nano-banana-pro":  { max: 0.9,  ease: 0.05 },
-  "grok-video":       { max: 0.88, ease: 0.032 },
-}
-
 const NODETYPE_DEFAULT_PROFILE: Record<string, ProgressProfile> = {
-  text:   { max: 0.94, ease: 0.024 },
-  image:  { max: 0.91, ease: 0.018 },
-  video:  { max: 0.88, ease: 0.012 },
-  pdf:    { max: 0.93, ease: 0.022 },
-  filter: { max: 0.94, ease: 0.024 },
+  text:   { max: 0.94, ease: 0.32, p50Ms: 6000,  p90Ms: 12000 },
+  image:  { max: 0.95, ease: 0.23, p50Ms: 9000,  p90Ms: 17000 },
+  video:  { max: 0.96, ease: 0.18, p50Ms: 16000, p90Ms: 28000 },
+  pdf:    { max: 0.93, ease: 0.28, p50Ms: 7500,  p90Ms: 14000 },
+  filter: { max: 0.94, ease: 0.3,  p50Ms: 6500,  p90Ms: 12500 },
 }
 
 function getProgressProfile(nodeType?: string, modelId?: string): ProgressProfile {
   if (modelId && MODEL_PROGRESS_PROFILE[modelId]) return MODEL_PROGRESS_PROFILE[modelId]
   if (nodeType && NODETYPE_DEFAULT_PROFILE[nodeType]) return NODETYPE_DEFAULT_PROFILE[nodeType]
-  return { max: 0.93, ease: 0.022 }
+  return { max: 0.94, ease: 0.3, p50Ms: 6500, p90Ms: 12500 }
+}
+
+function getAnchoredTargetProgress(elapsedMs: number, profile: ProgressProfile): number {
+  const cap = profile.max
+  const p50 = Math.max(profile.p50Ms ?? 6000, 1000)
+  const p90 = Math.max(profile.p90Ms ?? 12000, p50 + 1000)
+
+  const midTarget = Math.min(0.68, cap)
+  const slowTarget = Math.min(0.9, cap)
+
+  if (elapsedMs <= p50) {
+    const t = elapsedMs / p50
+    return midTarget * t
+  }
+
+  if (elapsedMs <= p90) {
+    const t = (elapsedMs - p50) / (p90 - p50)
+    return midTarget + (slowTarget - midTarget) * t
+  }
+
+  const tailTau = Math.max((p90 - p50) * 0.8, 2500)
+  const tail = 1 - Math.exp(-(elapsedMs - p90) / tailTau)
+  return Math.min(slowTarget + (cap - slowTarget) * tail, cap)
 }
 
 function getJobStatusText(nodeType: string | undefined, status: string | undefined, result: unknown): string {
@@ -60,9 +61,24 @@ function getJobStatusText(nodeType: string | undefined, status: string | undefin
     if (stage === 'generating_seeds') return 'Generating template seeds…'
     if (stage === 'seeds_ready') return 'Applying seeds to instances…'
     if (stage === 'executing_workflows') {
+      const workflowSummary = (resultObj?.workflowSummary && typeof resultObj.workflowSummary === 'object')
+        ? (resultObj.workflowSummary as Record<string, unknown>)
+        : undefined
       const workflowProgress = (resultObj?.workflowProgress && typeof resultObj.workflowProgress === 'object')
         ? (resultObj.workflowProgress as Record<string, unknown>)
         : undefined
+
+      const queued = typeof workflowSummary?.queued === 'number' ? workflowSummary.queued : 0
+      const running = typeof workflowSummary?.running === 'number' ? workflowSummary.running : 0
+      const completed = typeof workflowSummary?.completed === 'number' ? workflowSummary.completed : 0
+      const failed = typeof workflowSummary?.failed === 'number' ? workflowSummary.failed : 0
+      const totalFromSummary = typeof workflowSummary?.total === 'number' ? workflowSummary.total : 0
+
+      if (totalFromSummary > 0) {
+        const current = completed + failed
+        return `Executing workflows ${Math.min(current, totalFromSummary)}/${totalFromSummary}… (${running} running, ${queued} queued)`
+      }
+
       const current = typeof workflowProgress?.current === 'number' ? workflowProgress.current : 0
       const total = typeof workflowProgress?.total === 'number' ? workflowProgress.total : 0
       return total > 0
@@ -122,11 +138,15 @@ export function useNodePolling(
 
   const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null)
   const progressRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+  const syncRef      = useRef<ReturnType<typeof setInterval> | null>(null)
+  const finishRef    = useRef<ReturnType<typeof setInterval> | null>(null)
   const doneResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hideProgressRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activeJobRef = useRef<string | null>(null)
   // Tracks the jobId currently being resumed by this hook (prevents double-trigger)
   const resumeRef    = useRef<string | null>(null)
+  // Tracks last applied template running snapshot to avoid redundant writes.
+  const templateRunningApplyRef = useRef<string>('')
 
   // Stable refs so async callbacks always see the latest values
   const setNodesRef      = useRef(setNodes)
@@ -136,6 +156,7 @@ export function useNodePolling(
   const orchestratorRef  = useRef(orchestrator)
   const statusTextRef    = useRef(genStatusText)
   const progressValueRef = useRef(genProgress)
+  const progressStartAtRef = useRef<number>(0)
 
   useEffect(() => {
     setNodesRef.current = setNodes
@@ -161,13 +182,59 @@ export function useNodePolling(
   const clearIntervals = () => {
     if (pollRef.current)     { clearInterval(pollRef.current);     pollRef.current     = null }
     if (progressRef.current) { clearInterval(progressRef.current); progressRef.current = null }
+    if (syncRef.current)     { clearInterval(syncRef.current);     syncRef.current     = null }
+    if (finishRef.current)   { clearInterval(finishRef.current);   finishRef.current   = null }
     activeJobRef.current = null
+  }
+
+  const syncNodeProgress = (nextProgress: number, nextStatusText: string) => {
+    setNodesRef.current(ns => ns.map(n => {
+      if (n.id !== nodeId) return n
+      const prevProgress = typeof n.data?.generationProgress === 'number' ? n.data.generationProgress : 0
+      const prevStatus = typeof n.data?.generationStatusText === 'string' ? n.data.generationStatusText : ''
+      if (Math.abs(prevProgress - nextProgress) < 0.001 && prevStatus === nextStatusText) return n
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          generationProgress: nextProgress,
+          generationStatusText: nextStatusText,
+        },
+      }
+    }))
+  }
+
+  const animateProgressToOne = (durationMs = 240): Promise<void> => {
+    if (finishRef.current) {
+      clearInterval(finishRef.current)
+      finishRef.current = null
+    }
+    const start = progressValueRef.current
+    const startTs = Date.now()
+    return new Promise(resolve => {
+      finishRef.current = setInterval(() => {
+        const t = Math.min((Date.now() - startTs) / durationMs, 1)
+        const eased = 1 - Math.pow(1 - t, 3)
+        const next = start + (1 - start) * eased
+        progressValueRef.current = next
+        setGenProgress(next)
+        syncNodeProgress(next, statusTextRef.current || 'Finishing…')
+        if (t >= 1) {
+          if (finishRef.current) {
+            clearInterval(finishRef.current)
+            finishRef.current = null
+          }
+          resolve()
+        }
+      }, 16)
+    })
   }
 
   useEffect(() => {
     const jobId      = data?.activeJobId  as string  | undefined
     const generating = data?.isGenerating as boolean | undefined
     const nodeType   = data?.type         as string  | undefined
+    const isWorkflowSyntheticJob = typeof jobId === 'string' && jobId.startsWith('wf:')
 
     if (!generating) {
       clearIntervals()
@@ -195,31 +262,52 @@ export function useNodePolling(
     // New job — start fresh
     clearIntervals()
     activeJobRef.current = jobId
+    templateRunningApplyRef.current = ''
     const initialProgress = typeof data?.generationProgress === 'number' ? data.generationProgress : 0
     const initialStatus = typeof data?.generationStatusText === 'string' && data.generationStatusText
       ? data.generationStatusText
       : 'Queueing job…'
+    progressStartAtRef.current = Date.now()
     progressValueRef.current = initialProgress
+    statusTextRef.current = initialStatus
     queueMicrotask(() => {
       setGenProgress(initialProgress)
       setGenStatusText(initialStatus)
     })
+
+    // Workflow synthetic jobs are driven by workflow polling in node_editor.
+    // Do not poll /api/jobs for these IDs.
+    if (isWorkflowSyntheticJob) {
+      return
+    }
 
     // Template nodes use real progress — skip fake ticker
     if (nodeType !== 'template') {
       const modelId = data?.model as string | undefined
       const profile = getProgressProfile(nodeType, modelId)
       progressRef.current = setInterval(() => {
-        // Rabbit–tortoise style asymptotic movement:
-        // progress += (max - progress) * ease
+        const elapsedMs = Date.now() - progressStartAtRef.current
+        const target = getAnchoredTargetProgress(elapsedMs, profile)
         const p = progressValueRef.current
-        const remaining = Math.max(profile.max - p, 0)
-        const next = p + remaining * profile.ease
-        const finalProgress = Math.min(next, profile.max)
+        const remainingToTarget = Math.max(target - p, 0)
+        const rawDelta = remainingToTarget * profile.ease
+        const minDelta = 0.0008
+        const maxDelta = 0.02
+        const delta = remainingToTarget > 0
+          ? Math.min(Math.max(rawDelta, minDelta), maxDelta)
+          : 0
+        const next = p + delta
+        const finalProgress = Math.min(next, target, profile.max)
         progressValueRef.current = finalProgress
         setGenProgress(finalProgress)
       }, 50)
     }
+
+    // UI sync ticker: continuously writes progress/status to node.data.
+    // Backend polling remains low-frequency and only confirms state transitions.
+    syncRef.current = setInterval(() => {
+      syncNodeProgress(progressValueRef.current, statusTextRef.current)
+    }, 50)
 
     pollRef.current = setInterval(async () => {
       if (activeJobRef.current !== jobId) return
@@ -232,69 +320,38 @@ export function useNodePolling(
         if (!json) return
 
         const nextStatusText = getJobStatusText(nodeType, json.status, json.result)
+        statusTextRef.current = nextStatusText
         setGenStatusText(nextStatusText)
-        setNodesRef.current(ns => ns.map(n => {
-          if (n.id !== nodeId) return n
-          const prevProgress = typeof n.data?.generationProgress === 'number' ? n.data.generationProgress : 0
-          const prevStatus = typeof n.data?.generationStatusText === 'string' ? n.data.generationStatusText : ''
-          const nextProgress = progressValueRef.current
-          if (Math.abs(prevProgress - nextProgress) < 0.015 && prevStatus === nextStatusText) return n
-          return {
-            ...n,
-            data: {
-              ...n.data,
-              generationProgress: nextProgress,
-              generationStatusText: nextStatusText,
-            },
-          }
-        }))
 
         // ── Template: update real progress ──────────────────────────────────────
         if (nodeType === 'template' && json.status === 'running') {
           const templateResult = json.result as TemplateJobResult | undefined
           const stage       = templateResult?.stage
           const progress    = templateResult?.workflowProgress
+          const summary     = templateResult?.workflowSummary
+          const nodeStatuses = templateResult?.workflowNodeStatuses
+          const seeds       = templateResult?.seeds ?? []
 
           if (progress && progress.total > 0) {
             const nextProgress = 0.05 + (progress.current / progress.total) * 0.85
             progressValueRef.current = nextProgress
             setGenProgress(nextProgress)
-            setNodesRef.current(ns => ns.map(n =>
-              n.id !== nodeId ? n : {
-                ...n,
-                data: {
-                  ...n.data,
-                  generationProgress: nextProgress,
-                  generationStatusText: nextStatusText,
-                },
-              }
-            ))
+          } else if (summary && summary.total > 0) {
+            const current = (summary.completed ?? 0) + (summary.failed ?? 0)
+            const nextProgress = 0.05 + (current / summary.total) * 0.85
+            progressValueRef.current = nextProgress
+            setGenProgress(nextProgress)
           } else if (stage === 'generating_seeds') {
             progressValueRef.current = 0.03
             setGenProgress(0.03)
-            setNodesRef.current(ns => ns.map(n =>
-              n.id !== nodeId ? n : {
-                ...n,
-                data: {
-                  ...n.data,
-                  generationProgress: 0.03,
-                  generationStatusText: nextStatusText,
-                },
-              }
-            ))
           } else if (stage === 'seeds_ready') {
             progressValueRef.current = 0.05
             setGenProgress(0.05)
-            setNodesRef.current(ns => ns.map(n =>
-              n.id !== nodeId ? n : {
-                ...n,
-                data: {
-                  ...n.data,
-                  generationProgress: 0.05,
-                  generationStatusText: nextStatusText,
-                },
-              }
-            ))
+            if (Array.isArray(seeds) && seeds.length > 0) {
+              setNodesRef.current(ns => ns.map(n =>
+                n.id !== nodeId ? n : { ...n, data: { ...n.data, templateResolvedInstanceCount: seeds.length } }
+              ))
+            }
             // ── Resume path (page refresh) ─────────────────────────────────
             // templateResumeHandled is set by the editor when it owns this job.
             // It is stripped from draft by sanitizeNodes, so after a refresh
@@ -302,7 +359,6 @@ export function useNodePolling(
             const handledByEditor = dataRef.current?.templateResumeHandled === jobId
             const alreadyResuming = resumeRef.current === jobId
             const orch            = orchestratorRef.current
-            const seeds           = templateResult?.seeds ?? []
 
             if (!handledByEditor && !alreadyResuming && orch && seeds.length > 0) {
               resumeRef.current = jobId
@@ -312,14 +368,121 @@ export function useNodePolling(
               )
             }
           }
+
+          // Keep template instance node statuses aligned with lasso workflow semantics.
+          if (nodeStatuses && typeof nodeStatuses === 'object' && Object.keys(nodeStatuses).length > 0) {
+            setNodesRef.current(ns => ns.map(n => {
+              const statusEntry = nodeStatuses[n.id]
+              if (!statusEntry) return n
+
+              const status = statusEntry.status ?? 'queueing_in_workflow'
+              const jobIdFromStatus = statusEntry.jobId
+              const nextData: Record<string, unknown> = { ...n.data }
+
+              if (status === 'queueing_in_workflow') {
+                nextData.isGenerating = true
+                nextData.generationProgress = 0
+                nextData.generationStatusText = 'Queueing in workflow…'
+                nextData.activeJobId = undefined
+                if (nextData.done !== true) nextData.done = false
+                if (!nextData.generationError) nextData.generationError = undefined
+                return { ...n, data: nextData }
+              }
+
+              if (status === 'waiting_upstream') {
+                nextData.isGenerating = true
+                nextData.generationProgress = 0
+                nextData.generationStatusText = 'Waiting for upstream…'
+                nextData.activeJobId = undefined
+                if (nextData.done !== true) nextData.done = false
+                if (!nextData.generationError) nextData.generationError = undefined
+                return { ...n, data: nextData }
+              }
+
+              if (status === 'queueing_job' || status === 'pending' || status === 'running') {
+                nextData.isGenerating = true
+                if (typeof jobIdFromStatus === 'string' && jobIdFromStatus.length > 0) {
+                  nextData.activeJobId = jobIdFromStatus
+                  if (typeof nextData.generationStatusText !== 'string' || nextData.generationStatusText.length === 0) {
+                    nextData.generationStatusText = status === 'running' ? 'Running job…' : 'Queueing job…'
+                  }
+                } else {
+                  nextData.generationStatusText = status === 'running' ? 'Running job…' : 'Queueing job…'
+                }
+                if (nextData.done !== true) nextData.done = false
+                if (!nextData.generationError) nextData.generationError = undefined
+                return { ...n, data: nextData }
+              }
+
+              if (status === 'done') {
+                if (typeof jobIdFromStatus === 'string' && jobIdFromStatus.length > 0) {
+                  nextData.activeJobId = jobIdFromStatus
+                }
+                return { ...n, data: nextData }
+              }
+
+              if (status === 'failed') {
+                nextData.isGenerating = false
+                nextData.generationProgress = 0
+                nextData.generationStatusText = ''
+                nextData.activeJobId = undefined
+                nextData.done = false
+                nextData.generationError = statusEntry.error ?? 'Generation failed'
+                return { ...n, data: nextData }
+              }
+
+              nextData.isGenerating = true
+              nextData.generationProgress = 0
+              nextData.generationStatusText = 'Queueing in workflow…'
+              nextData.activeJobId = undefined
+              nextData.done = false
+              if (!nextData.generationError) nextData.generationError = undefined
+              return { ...n, data: nextData }
+            }))
+          }
+
+          // Apply template instance results incrementally during executing_workflows,
+          // so rendering behavior matches lasso's running-time updates.
+          if (stage === 'executing_workflows') {
+            const resultObj = (templateResult?.instanceResults ?? {}) as Record<string, unknown>
+            const resultCount = Object.keys(resultObj).length
+            if (resultCount > 0) {
+              const applyKey = [
+                stage,
+                progress?.current ?? -1,
+                summary?.completed ?? -1,
+                summary?.failed ?? -1,
+                resultCount,
+              ].join(':')
+
+              if (templateRunningApplyRef.current !== applyKey) {
+                templateRunningApplyRef.current = applyKey
+                const mod = MODULE_BY_ID.template
+                const handler = mod?.resultHandler ?? defaultResultHandler
+                const handlerCtx: ResultHandlerContext = {
+                  nodeId,
+                  setNodes: setNodesRef.current,
+                  getNodes: getNodesRef.current,
+                  getEdges: getEdgesRef.current,
+                }
+                await handler(templateResult as unknown as Record<string, unknown>, handlerCtx)
+              }
+            }
+          }
+
           return
         }
 
         // ── Job done ─────────────────────────────────────────────────────────
         if (json.status === 'done') {
           clearIntervals()
+          statusTextRef.current = 'Finishing…'
+          setGenStatusText('Finishing…')
+          await animateProgressToOne(240)
           progressValueRef.current = 1
           setGenProgress(1)
+          syncNodeProgress(1, 'Completed!')
+          statusTextRef.current = 'Completed!'
           setGenStatusText('Completed!')
 
           const result = (json.result && typeof json.result === 'object')
@@ -350,6 +513,7 @@ export function useNodePolling(
         } else if (json.status === 'failed') {
           clearIntervals()
           progressValueRef.current = 0
+          statusTextRef.current = 'Generation failed'
           setGenProgress(0)
           setGenStatusText('Generation failed')
           setNodesRef.current(ns => ns.map(n =>
@@ -381,12 +545,14 @@ export function useNodePolling(
 
   const persistedProgress = typeof data?.generationProgress === 'number' ? data.generationProgress : undefined
   const persistedStatus = typeof data?.generationStatusText === 'string' ? data.generationStatusText : undefined
+  const isWorkflowSyntheticJob =
+    typeof data?.activeJobId === 'string' && data.activeJobId.startsWith('wf:')
 
-  const effectiveProgress = data?.isGenerating && persistedProgress !== undefined
-    ? persistedProgress
+  const effectiveProgress = isWorkflowSyntheticJob
+    ? (persistedProgress ?? genProgress)
     : genProgress
   const effectiveStatusText = data?.isGenerating
-    ? (persistedStatus || genStatusText || 'Queueing job…')
+    ? (persistedStatus || genStatusText || (isWorkflowSyntheticJob ? 'Queueing in workflow…' : 'Queueing job…'))
     : genStatusText
 
   return { genProgress: effectiveProgress, genStatusText: effectiveStatusText }

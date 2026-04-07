@@ -12,6 +12,7 @@ function emptyDraftPayload() {
     edgesJson:    [],
     viewportJson: DEFAULT_VIEWPORT,
     favorites:    [],
+    consoleOpen:  false,
     undoCount:    0,
     redoCount:    0,
   }
@@ -55,6 +56,7 @@ export async function GET() {
     edgesJson:    data.edges,
     viewportJson: data.viewport,
     favorites:    (data as { favorites?: unknown[] }).favorites ?? [],
+    consoleOpen:  (data as { consoleOpen?: boolean }).consoleOpen === true,
     undoCount,
     redoCount,
   })
@@ -70,7 +72,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  let body: { nodes: unknown; edges: unknown; viewport: unknown; favorites?: unknown }
+  let body: { nodes: unknown; edges: unknown; viewport: unknown; favorites?: unknown; consoleOpen?: unknown }
   try {
     body = await req.json()
   } catch {
@@ -82,6 +84,7 @@ export async function POST(req: Request) {
   const favorites = Array.isArray(body.favorites)
     ? body.favorites.filter((x): x is string => typeof x === "string")
     : []
+  const consoleOpen = body.consoleOpen === true
 
   // Validate viewport shape; fall back to default if malformed
   const vp = body.viewport as Record<string, unknown> | null
@@ -91,7 +94,7 @@ export async function POST(req: Request) {
       : DEFAULT_VIEWPORT
 
   const draftService = new DraftService()
-  const result = await draftService.saveDraft(session.user.id, nodes, edges, viewport, favorites)
+  const result = await draftService.saveDraft(session.user.id, nodes, edges, viewport, favorites, consoleOpen)
 
   if (!result.success) {
     return NextResponse.json(

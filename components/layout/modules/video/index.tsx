@@ -211,7 +211,7 @@ export const NodeUI = ({
           borderRadius: data.isEditing ? '0px' : '12px',
           borderColor: isSelected || isEditing
             ? 'rgba(139,92,246,0.62)'
-            : data.mode === 'done'
+            : (data.done === true || data.mode === 'note')
               ? 'rgba(139,92,246,0.52)'
               : 'rgba(100,116,139,0.36)',
           boxShadow: isSelected

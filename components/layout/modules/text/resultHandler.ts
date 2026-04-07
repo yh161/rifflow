@@ -5,7 +5,7 @@ import type { ResultHandlerContext } from '../_registry'
  * Also used as the default fallback for modules without a custom handler.
  */
 export async function resultHandler(
-  result: Record<string, any>,
+  result: Record<string, unknown>,
   ctx: ResultHandlerContext,
 ): Promise<void> {
   ctx.setNodes(ns => ns.map(n =>
@@ -14,6 +14,7 @@ export async function resultHandler(
       data: {
         ...n.data,
         content:         result.content,
+        done:            true,
         isGenerating:    false,
         activeJobId:     undefined,
         generationCount: (n.data.generationCount ?? 0) + 1,

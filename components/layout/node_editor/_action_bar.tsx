@@ -125,15 +125,21 @@ export function NodeActionBar({
   onDownload,
   onDelete,
   onFilterModeChange,
+  onFilterReverseToggle,
   onTemplateRelease,
   onTemplateAddInstance,
   onTemplateDeleteInstance,
   onTemplateGoTo,
   templateInstanceCount,
   onTemplateRerunWorkflow,
+  onLassoDelete,
   onLassoRelease,
   onExecute,
+  onLassoPause,
+  onLassoResume,
+  onLassoStop,
   isExecuting,
+  workflowStatus,
   onRotate,
   onPdfPrevPage,
   onPdfNextPage,
@@ -149,15 +155,21 @@ export function NodeActionBar({
   onDownload: () => void
   onDelete: () => void
   onFilterModeChange?: (mode: 'label' | 'content') => void
+  onFilterReverseToggle?: () => void
   onTemplateRelease?: () => void
   onTemplateAddInstance?: () => void
   onTemplateDeleteInstance?: () => void
   onTemplateGoTo?: (idx: number) => void
   templateInstanceCount?: number
   onTemplateRerunWorkflow?: () => void
+  onLassoDelete?: () => void
   onLassoRelease?: () => void
   onExecute?: () => void
+  onLassoPause?: () => void
+  onLassoResume?: () => void
+  onLassoStop?: () => void
   isExecuting?: boolean
+  workflowStatus?: "idle" | "running" | "paused"
   onRotate?: () => void
   onPdfPrevPage?: () => void
   onPdfNextPage?: () => void
@@ -181,15 +193,21 @@ export function NodeActionBar({
           isTextEditing={isTextEditing}
           onToggleTextEdit={onToggleTextEdit}
           onFilterModeChange={onFilterModeChange}
+          onFilterReverseToggle={onFilterReverseToggle}
           onTemplateRelease={onTemplateRelease}
           onTemplateAddInstance={onTemplateAddInstance}
           onTemplateDeleteInstance={onTemplateDeleteInstance}
           onTemplateGoTo={onTemplateGoTo}
           templateInstanceCount={templateInstanceCount}
           onTemplateRerunWorkflow={onTemplateRerunWorkflow}
+          onLassoDelete={onLassoDelete}
           onLassoRelease={onLassoRelease}
           onExecute={onExecute}
+          onLassoPause={onLassoPause}
+          onLassoResume={onLassoResume}
+          onLassoStop={onLassoStop}
           isExecuting={isExecuting}
+          workflowStatus={workflowStatus}
           onRotate={onRotate}
           onPdfPrevPage={onPdfPrevPage}
           onPdfNextPage={onPdfNextPage}

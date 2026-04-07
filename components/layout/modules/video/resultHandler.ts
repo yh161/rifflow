@@ -6,10 +6,11 @@ import type { ResultHandlerContext } from '../_registry'
  * 2. Background: fetches video → uploads to MinIO → replaces with permanent URL
  */
 export async function resultHandler(
-  result: Record<string, any>,
+  result: Record<string, unknown>,
   ctx: ResultHandlerContext,
 ): Promise<void> {
-  const replicateUrl = result.videoSrc as string
+  const replicateUrl = typeof result.videoSrc === 'string' ? result.videoSrc : ''
+  if (!replicateUrl) return
 
   // 1. Set Replicate URL immediately
   ctx.setNodes(ns => ns.map(n =>
@@ -18,6 +19,7 @@ export async function resultHandler(
       data: {
         ...n.data,
         videoSrc:     replicateUrl,
+        done:         true,
         isGenerating: false,
         activeJobId:  undefined,
       },

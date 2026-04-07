@@ -38,6 +38,21 @@ export interface TemplateJobResult {
   templateParams?: TemplateParams
   seeds?: Array<{ content: string; description?: string }>
   workflowProgress?: { current: number; total: number }
+  workflowJobIds?: string[]
+  workflowNodeStatuses?: Record<string, {
+    nodeId: string
+    nodeType?: string
+    status?: string
+    jobId?: string
+    error?: string | null
+  }>
+  workflowSummary?: {
+    queued: number
+    running: number
+    completed: number
+    failed: number
+    total: number
+  }
   instanceResults?: Record<string, unknown>
 }
 

@@ -7,12 +7,17 @@ import { runReplicate } from "@/app/services/replicate"
 import { calculateCreditCost } from "@/lib/credits"
 
 type Params = Promise<{ roomId: string }>
+const RIFY_IDENTITY_SYSTEM_PROMPT =
+  "You are Rify, the AI assistant of Rifflow. Always identify yourself as Rify (a Rifflow agent) when asked about your identity, and answer helpfully in that role."
 
 // Convert chat messages array → single prompt string for Replicate models
 function messagesToPrompt(messages: { role: string; content: string }[]): string {
   return (
     messages
-      .map((m) => (m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`))
+      .map((m) => {
+        if (m.role === "system") return `System: ${m.content}`
+        return m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`
+      })
       .join("\n") + "\nAssistant:"
   )
 }
@@ -34,6 +39,11 @@ export async function POST(req: Request, { params }: { params: Params }) {
     if (!model || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: "model and messages required" }, { status: 400 })
     }
+
+    const aiMessages = [
+      { role: "system", content: RIFY_IDENTITY_SYSTEM_PROMPT },
+      ...messages,
+    ]
 
     const membership = await prisma.chatMember.findUnique({
       where: { roomId_userId: { roomId, userId: meId } },
@@ -75,7 +85,7 @@ export async function POST(req: Request, { params }: { params: Params }) {
 
       const modelPath = modelDef!.orModel
       const tokenParam = modelDef?.replicateTokenParam ?? "max_tokens"
-      const prompt = messagesToPrompt(messages)
+      const prompt = messagesToPrompt(aiMessages)
 
       const input: Record<string, unknown> = {
         prompt,
@@ -123,7 +133,7 @@ export async function POST(req: Request, { params }: { params: Params }) {
         },
         body: JSON.stringify({
           model: orModel,
-          messages,
+          messages: aiMessages,
           max_tokens: 2048,
           temperature,
         }),

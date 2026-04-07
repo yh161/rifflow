@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef, useLayoutEffect, useCallback, useEffect, useImperativeHandle, useMemo } from "react"
-import { creditLabel, calculateCreditCost } from "@/lib/credits"
+import { creditLabel, calculateCreditCost, estimateNodeCost } from "@/lib/credits"
 import { useReactFlow, useNodes } from "reactflow"
 import { EditorContent, useEditor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
@@ -516,7 +516,7 @@ export function ModeToggle({
   const OPTIONS: { id: NodeMode; icon: React.ComponentType<any>; label: string }[] = [
     { id: "auto",   icon: Bot,        label: "Auto"   },
     { id: "manual", icon: Hand,       label: "Manual" },
-    { id: "done",   icon: StickyNote, label: "Note"   },
+    { id: "note",   icon: StickyNote, label: "Note"   },
   ]
 
   return (
@@ -557,7 +557,7 @@ export function ModeToggle({
       <p className="text-[10px] text-slate-400 text-center leading-relaxed">
         {mode === "auto"
           ? "Prompt is locked — node runs automatically in the workflow"
-          : mode === "done"
+          : mode === "note"
             ? "Note mode — no generation, just a label for this node"
             : "Edit the prompt and trigger generation manually"}
       </p>
@@ -749,7 +749,7 @@ export function GenerateTextPanel({
   }
 
   const isAuto      = mode === "auto"
-  const isNote      = mode === "done"
+  const isNote      = mode === "note"
   const canSubmit   = prompt.trim().length > 0
   const buttonLabel = "Generate"
 
@@ -902,7 +902,7 @@ export function GenerateImagePanel({
   }
 
   const isAuto      = mode === "auto"
-  const isNote      = mode === "done"
+  const isNote      = mode === "note"
   const canSubmit   = prompt.trim().length > 0
   const ActionIcon  = hasSrc ? RefreshCw : Zap
   const buttonLabel = hasSrc ? "Regenerate" : "Generate"
@@ -1065,7 +1065,7 @@ export function GenerateVideoPanel({
   }
 
   const isAuto      = mode === "auto"
-  const isNote      = mode === "done"
+  const isNote      = mode === "note"
   const canSubmit   = prompt.trim().length > 0
   const buttonLabel = hasSrc ? "Regenerate" : "Generate"
 
@@ -1284,6 +1284,7 @@ export function TemplatePanel({
   // instanceCount (the actual number of cloned instances managed by useTemplateManager).
   const [maxInstances, setMaxInstancesLocal] = useState(data.templateCount ?? data.templateCountLegacy ?? 3)
   const editorRef = useRef<RefPromptEditorHandle>(null)
+  const { getNodes } = useReactFlow()
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
@@ -1313,13 +1314,33 @@ export function TemplatePanel({
   }, [])
 
   const isAuto      = mode === "auto"
-  const isNote      = mode === "done"
+  const isNote      = mode === "note"
   const canSubmit   = prompt.trim().length > 0
   const buttonLabel = "Run Template"
 
-  // Template's own cost is 1 credit (text generation returning JSON).
-  // Instance execution costs are additional, tracked by the workflow budget.
+  // Template budget:
+  // - pre-stage fixed 1 credit (seed generation)
+  // - instance stage = per-instance workflow cost × instance count
   const templateCost = 1
+  const perInstanceCost = React.useMemo(() => {
+    if (!nodeId) return 0
+    const all = getNodes()
+    const blueprintChildren = all.filter((n) => {
+      const d = n.data as CustomNodeData
+      if (d.templateId !== nodeId) return false
+      return d.instanceIdx === undefined || d.instanceIdx === null
+    })
+    return blueprintChildren.reduce(
+      (sum, n) => sum + estimateNodeCost({ id: n.id, type: n.type, data: n.data as Record<string, unknown> }),
+      0,
+    )
+  }, [getNodes, nodeId, data.templateCount, data.instanceCount])
+
+  const actualInstanceCount = Number(data.instanceCount ?? 0)
+  const showExact = actualInstanceCount > 0
+  const templateBudgetText = showExact
+    ? `${templateCost + perInstanceCost * actualInstanceCount} credits`
+    : `${templateCost + perInstanceCost} ~ ${templateCost + perInstanceCost * Math.max(1, maxInstances)} credits`
 
   const handleGenerate = () => {
     onGenerate(prompt, model, {
@@ -1398,7 +1419,7 @@ export function TemplatePanel({
         ) : (
           <>
             <span className="ml-auto text-xs font-medium text-slate-500 select-none">
-              {templateCost} credit + instances
+              {templateBudgetText}
             </span>
             <button
               disabled={!canSubmit}

@@ -55,6 +55,7 @@ export interface DraftData {
   edges:    Prisma.JsonValue[]
   viewport: { x: number; y: number; zoom: number }
   favorites: string[]
+  consoleOpen: boolean
 }
 
 export interface DraftResult {
@@ -77,7 +78,7 @@ export class DraftService {
       if (!draft) {
         return {
           success: true,
-          data: { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT, favorites: [] }
+          data: { nodes: [], edges: [], viewport: DEFAULT_VIEWPORT, favorites: [], consoleOpen: false }
         }
       }
 
@@ -85,10 +86,17 @@ export class DraftService {
       const edges    = Array.isArray(draft.edgesJson) ? draft.edgesJson : []
       const viewport = parseViewport(draft.viewportJson)
       const favorites = parseFavorites(draft.viewportJson)
+      const consoleOpen =
+        typeof draft.viewportJson === "object" &&
+        draft.viewportJson !== null &&
+        !Array.isArray(draft.viewportJson) &&
+        typeof (draft.viewportJson as Record<string, Prisma.JsonValue>).consoleOpen === "boolean"
+          ? (draft.viewportJson as Record<string, Prisma.JsonValue>).consoleOpen as boolean
+          : false
 
       return {
         success: true,
-        data: { nodes, edges, viewport, favorites }
+        data: { nodes, edges, viewport, favorites, consoleOpen }
       }
     } catch (error: unknown) {
       console.error("[DraftService] getDraftByUserId failed:", error)
@@ -105,6 +113,7 @@ export class DraftService {
     edges:    Prisma.JsonValue[],
     viewport: { x: number; y: number; zoom: number },
     favorites: string[],
+    consoleOpen: boolean,
   ): Promise<DraftResult> {
     try {
       if (!Array.isArray(nodes) || !Array.isArray(edges)) {
@@ -120,7 +129,7 @@ export class DraftService {
         user: { connect: { id: userId } },
         nodesJson:    cleanNodes as Prisma.InputJsonValue,
         edgesJson:    edges     as Prisma.InputJsonValue,
-        viewportJson: { ...viewport, favorites } as unknown as Prisma.InputJsonValue,
+        viewportJson: { ...viewport, favorites, consoleOpen } as unknown as Prisma.InputJsonValue,
       })
 
       return { success: true }

@@ -6,6 +6,8 @@
  * Run: node scripts/migrate.js
  */
 
+/* eslint-disable @typescript-eslint/no-require-imports */
+
 "use strict";
 
 const fs = require("fs");
@@ -21,12 +23,54 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
-const MIGRATIONS_DIR = path.join(__dirname, "prisma", "migrations");
+function decodeMaybe(v) {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+}
+
+/**
+ * Supports Cloud SQL unix-socket style URLs like:
+ * postgresql://user:pass@/db?host=/cloudsql/<project:region:instance>
+ */
+function buildPostgresConnection(dsn) {
+  const cloudSqlSocketMatch = dsn.match(/^postgres(?:ql)?:\/\/([^:]+):([^@]+)@\/([^?]+)\?(.+)$/i);
+  if (cloudSqlSocketMatch) {
+    const [, rawUser, rawPass, rawDb, rawQuery] = cloudSqlSocketMatch;
+    const params = new URLSearchParams(rawQuery);
+    const host = params.get("host");
+    if (!host) {
+      throw new Error("Invalid Cloud SQL DATABASE_URL: missing host query param");
+    }
+
+    return postgres({
+      host,
+      database: decodeMaybe(rawDb),
+      username: decodeMaybe(rawUser),
+      password: decodeMaybe(rawPass),
+      max: 1,
+      connect_timeout: 10,
+      ssl: false,
+    });
+  }
+
+  return postgres(dsn, { max: 1, connect_timeout: 10 });
+}
+
+// In container runtime: __dirname = /app/scripts
+// Migrations are copied to /app/prisma/migrations
+const MIGRATIONS_DIR = path.join(__dirname, "..", "prisma", "migrations");
 
 async function main() {
-  const sql = postgres(DATABASE_URL, { max: 1, ssl: false, connect_timeout: 10 });
+  const sql = buildPostgresConnection(DATABASE_URL);
 
   try {
+    if (!fs.existsSync(MIGRATIONS_DIR)) {
+      throw new Error(`Migrations directory not found: ${MIGRATIONS_DIR}`);
+    }
+
     // Ensure _prisma_migrations table exists (Prisma-compatible)
     await sql`
       CREATE TABLE IF NOT EXISTS "_prisma_migrations" (

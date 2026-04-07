@@ -24,6 +24,8 @@ for (const m of TEXT_MODELS) {
 }
 
 const FALLBACK_MODEL = "deepseek/deepseek-chat"
+const RIFY_IDENTITY_SYSTEM_PROMPT =
+  "You are Rify, the AI assistant of Rifflow. Always identify yourself as Rify (a Rifflow agent) when asked about your identity, and answer helpfully in that role."
 
 // POST /api/chat/ai
 // Body: { model: string, messages: { role: "user"|"assistant", content: string }[], systemPrompt?: string }
@@ -48,9 +50,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "AI service not configured" }, { status: 503 })
     }
 
-    const systemMessages = systemPrompt
-      ? [{ role: "system", content: systemPrompt }]
-      : []
+    const systemMessages = [
+      { role: "system", content: RIFY_IDENTITY_SYSTEM_PROMPT },
+      ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
+    ]
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",

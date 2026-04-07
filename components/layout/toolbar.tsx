@@ -6,7 +6,7 @@ import { MessageSquare, Play, Pause, Square } from "lucide-react"
 
 import { MODULES } from "@/components/layout/modules/_registry"
 import { NodePickerMenu } from "@/components/layout/node_picker"
-import RunDetail from "@/components/layout/run-detail/run-detail"
+import ConsoleIndex from "@/components/layout/console/console-index"
 
 // ─────────────────────────────────────────────
 // Clean plus icon — single path, no intersection seam
@@ -211,11 +211,15 @@ export default function Toolbar({
   onToggleFavorite,
 }: ToolbarProps) {
   const [isPickerOpen, setIsPickerOpen] = useState(false)
+  const [isConsoleCollapsed, setIsConsoleCollapsed] = useState(false)
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const plusBtnRef = useRef<HTMLButtonElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const toolbarContentRef = useRef<HTMLDivElement>(null)
+  const collapsedContentRef = useRef<HTMLDivElement>(null)
   const [toolbarNaturalHeight, setToolbarNaturalHeight] = useState(0)
+  const [collapsedNaturalWidth, setCollapsedNaturalWidth] = useState(74)
+  const [collapsedNaturalHeight, setCollapsedNaturalHeight] = useState(56)
 
   useEffect(() => {
     if (!toolbarContentRef.current) return
@@ -228,6 +232,26 @@ export default function Toolbar({
     ro.observe(toolbarContentRef.current)
     return () => ro.disconnect()
   }, [])
+
+  useEffect(() => {
+    const el = collapsedContentRef.current
+    if (!el) return
+
+    const measure = () => {
+      setCollapsedNaturalWidth(Math.ceil(el.offsetWidth))
+      setCollapsedNaturalHeight(Math.ceil(el.offsetHeight) + 10)
+    }
+
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [isRunning, isConsoleCollapsed])
+
+  const handleRunWithConsoleReset = useCallback(() => {
+    setIsConsoleCollapsed(false)
+    onRun()
+  }, [onRun])
 
   const clearClose = () => {
     if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null }
@@ -277,8 +301,8 @@ export default function Toolbar({
               ],
         )}
         style={{
-          width:  isRunning ? 300 : undefined,
-          height: isRunning ? 650 : (toolbarNaturalHeight || undefined),
+          width:  isRunning ? (isConsoleCollapsed ? collapsedNaturalWidth : 300) : undefined,
+          height: isRunning ? (isConsoleCollapsed ? collapsedNaturalHeight : 650) : (toolbarNaturalHeight || undefined),
         }}
       >
         {/* ── Normal toolbar content ── */}
@@ -364,15 +388,12 @@ export default function Toolbar({
               : "opacity-0 scale-90 pointer-events-none",
           )}
         >
-          <RunDetail
+          <ConsoleIndex
             isVisible={isRunning}
-            isRunning={isRunning}
-            isPaused={isPaused}
-            onRun={onRun}
-            onPause={onPause}
-            onResume={onResume}
             onStop={onStop}
-            onOpenLog={onOpenLog}
+            isCollapsed={isConsoleCollapsed}
+            onToggleCollapse={() => setIsConsoleCollapsed((v) => !v)}
+            collapsedContentRef={collapsedContentRef}
           />
         </div>
       </div>
@@ -409,7 +430,7 @@ export default function Toolbar({
         <RunControl
           isRunning={isRunning}
           isPaused={isPaused}
-          onRun={onRun}
+          onRun={handleRunWithConsoleReset}
           onPause={onPause}
           onResume={onResume}
           onStop={onStop}

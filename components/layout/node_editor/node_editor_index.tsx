@@ -23,7 +23,6 @@ import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { AnyNodeData, CustomNodeData } from "../modules/_types"
 import { useUpstreamData } from "@/hooks/useUpstreamData"
-import type { UpstreamNodeData } from "@/hooks/useUpstreamData"
 import { resolvePromptToMultimodal } from "@/lib/prompt-resolver"
 import type { MultimodalContent } from "@/lib/prompt-resolver"
 
@@ -32,7 +31,6 @@ import { ModeToggle }    from "./_panels"
 import type { NodeMode } from "../modules/_types"
 import { MODULE_BY_ID }  from "../modules/_registry"
 import { TemplateOrchestratorContext } from "../modules/_polling"
-import type { BatchInstanceResult } from "../canvas/hooks/useTemplateManager"
 
 // ─────────────────────────────────────────────
 // Layout constants
@@ -48,6 +46,7 @@ const ACTION_BAR_GAP = 30
 // Polling config
 // ─────────────────────────────────────────────
 const POLL_INTERVAL_MS = 1500
+const WORKFLOW_DONE_CLEANUP_DELAY_MS = 3000
 
 // ─────────────────────────────────────────────
 // NodeEditor
@@ -87,13 +86,17 @@ export function NodeEditor({
   const upstreamData = useUpstreamData(nodeId)
 
   // ── Mode toggle ──────────────────────────────
-  const [mode, setMode] = useState<NodeMode>(() => (data?.mode ?? "manual") as NodeMode)
+  const [mode, setMode] = useState<NodeMode>(() => {
+    const rawMode = data?.mode as string | undefined
+    return (rawMode === "done" ? "note" : (rawMode ?? "manual")) as NodeMode
+  })
 
   // Sync mode from data when switching to a different node
   const prevNodeIdRef = useRef(nodeId)
   useEffect(() => {
     if (nodeId !== prevNodeIdRef.current) {
-      setMode((data?.mode ?? "manual") as NodeMode)
+      const rawMode = data?.mode as string | undefined
+      setMode((rawMode === "done" ? "note" : (rawMode ?? "manual")) as NodeMode)
       prevNodeIdRef.current = nodeId
     }
     // Clear any error when the editor opens for this node
@@ -112,8 +115,11 @@ export function NodeEditor({
 
   // ── Workflow execution state (for lasso) ─────
   const [isExecutingWorkflow, setIsExecutingWorkflow] = useState(false)
-  const workflowPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  /** 'idle' | 'running' | 'paused' for lasso action-bar three-state */
+  const [lassoWorkflowStatus, setLassoWorkflowStatus] = useState<"idle" | "running" | "paused">("idle")
+  const workflowEventSourceRef = useRef<EventSource | null>(null)
   const workflowJobRef  = useRef<string | null>(null)
+  const workflowTrackedNodeIdsRef = useRef<string[]>([])
 
   // ── Template seed-ready polling ref ─────────────
   // While seeds are being generated we do a short local poll.
@@ -393,7 +399,7 @@ export function NodeEditor({
 
   const handleModeChange = useCallback((m: NodeMode) => {
     setMode(m)
-    handleUpdate({ mode: m })
+    handleUpdate({ mode: m, done: m === "note" })
   }, [handleUpdate])
 
   // ── Inject onDataChange once on mount ────────
@@ -455,6 +461,11 @@ export function NodeEditor({
 
   // ── Delete ───────────────────────────────────
   const handleDeleteNode = useCallback(() => onDelete(nodeId), [nodeId, onDelete])
+
+  const handleFilterReverseToggle = useCallback(() => {
+    if (data?.type !== "filter") return
+    handleUpdate({ filterReversed: !Boolean(data.filterReversed) })
+  }, [data?.type, data?.filterReversed, handleUpdate])
 
   // ── Template instance controls (flat model) ──────
   const handleTemplateAddInstance = useCallback(() => {
@@ -614,88 +625,210 @@ export function NodeEditor({
     a.click()
   }, [data?.type, data?.videoSrc, data?.pdfSrc, data?.src, data?.fileName])
 
-  // ── Lasso workflow execution ─────────────────
-  const stopWorkflowPolling = useCallback(() => {
-    if (workflowPollRef.current) {
-      clearInterval(workflowPollRef.current)
-      workflowPollRef.current = null
+  // ─────────────────────────────────────────────
+  // applyWorkflowNodeStatuses — shared helper used by both SSE and polling
+  // ─────────────────────────────────────────────
+  const applyWorkflowNodeStatuses = useCallback((
+    nodeStatuses: Record<string, {
+      status?: string
+      jobId?: string
+      error?: string | null
+    }>,
+    trackedIds: string[],
+  ) => {
+    setNodes((ns) => ns.map((n) => {
+      if (!trackedIds.includes(n.id)) return n
+
+      const status = nodeStatuses[n.id]?.status ?? "queueing_in_workflow"
+      const jobId = nodeStatuses[n.id]?.jobId
+      const nextData: Record<string, unknown> = { ...n.data }
+
+      if (status === "queueing_in_workflow" || status === "waiting_upstream" || status === "paused") {
+        nextData.isGenerating = true
+        nextData.generationProgress = 0
+        nextData.generationStatusText =
+          status === "waiting_upstream" ? "Waiting for upstream…" :
+          status === "paused" ? "Paused…" :
+          "Queueing in workflow…"
+        nextData.activeJobId = undefined
+        if (nextData.done !== true) nextData.done = false
+        if (!nextData.generationError) nextData.generationError = undefined
+        return { ...n, data: nextData }
+      }
+
+      if (status === "queueing_job" || status === "pending" || status === "running") {
+        nextData.isGenerating = true
+        if (typeof jobId === "string" && jobId.length > 0) {
+          nextData.activeJobId = jobId
+          if (typeof nextData.generationStatusText !== "string" || nextData.generationStatusText.length === 0) {
+            nextData.generationStatusText = status === "running" ? "Running job…" : "Queueing job…"
+          }
+        } else {
+          nextData.generationStatusText = status === "running" ? "Running job…" : "Queueing job…"
+        }
+        if (nextData.done !== true) nextData.done = false
+        if (!nextData.generationError) nextData.generationError = undefined
+        return { ...n, data: nextData }
+      }
+
+      if (status === "done") {
+        if (typeof jobId === "string" && jobId.length > 0) nextData.activeJobId = jobId
+        return { ...n, data: nextData }
+      }
+
+      if (status === "failed") {
+        nextData.isGenerating = false
+        nextData.generationProgress = 0
+        nextData.generationStatusText = ""
+        nextData.activeJobId = undefined
+        nextData.done = false
+        nextData.generationError = nodeStatuses[n.id]?.error ?? "Generation failed"
+        return { ...n, data: nextData }
+      }
+
+      // Unknown state fallback
+      nextData.isGenerating = true
+      nextData.generationProgress = 0
+      nextData.generationStatusText = "Queueing in workflow…"
+      nextData.activeJobId = undefined
+      nextData.done = false
+      if (!nextData.generationError) nextData.generationError = undefined
+      return { ...n, data: nextData }
+    }))
+  }, [setNodes])
+
+  // ── Lasso workflow — SSE-based execution with pause/resume/stop ───────────
+
+  const stopWorkflowSSE = useCallback(() => {
+    if (workflowEventSourceRef.current) {
+      workflowEventSourceRef.current.close()
+      workflowEventSourceRef.current = null
     }
     workflowJobRef.current = null
+    workflowTrackedNodeIdsRef.current = []
     setIsExecutingWorkflow(false)
+    setLassoWorkflowStatus("idle")
   }, [])
 
-  const startWorkflowPolling = useCallback((workflowJobId: string) => {
+  const startWorkflowSSE = useCallback((workflowJobId: string, trackedNodeIds: string[]) => {
     workflowJobRef.current = workflowJobId
+    workflowTrackedNodeIdsRef.current = trackedNodeIds
     setIsExecutingWorkflow(true)
+    setLassoWorkflowStatus("running")
 
-    workflowPollRef.current = setInterval(async () => {
-      if (workflowJobRef.current !== workflowJobId) {
-        stopWorkflowPolling()
-        return
+    const es = new EventSource(`/api/execute/workflow/${workflowJobId}/stream`)
+    workflowEventSourceRef.current = es
+
+    es.onmessage = (event) => {
+      if (workflowJobRef.current !== workflowJobId) { es.close(); return }
+
+      const json = JSON.parse(event.data) as {
+        status?: string
+        nodeStatuses?: Record<string, { status?: string; jobId?: string; error?: string | null }>
       }
 
-      try {
-        const res = await fetch(`/api/execute/workflow?workflowJobId=${workflowJobId}`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const json = await res.json()
+      const nodeStatuses = json.nodeStatuses ?? {}
+      applyWorkflowNodeStatuses(nodeStatuses, trackedNodeIds)
 
-        if (json.status === "completed") {
-          console.log("[workflow] completed:", json.results)
-          
-          // Apply workflow results to child nodes
-          const results = json.results as Record<string, Record<string, unknown>>
-          if (results) {
-            setNodes((ns) => ns.map((n) => {
-              const nodeResult = results[n.id]
-              if (!nodeResult) return n
+      // Update lasso button state
+      if (json.status === "paused") {
+        setLassoWorkflowStatus("paused")
+      } else if (json.status === "running") {
+        setLassoWorkflowStatus("running")
+      }
 
-              const nodeType = n.data?.type
-              
-              // Handle image node results
-              if (nodeType === "image" && nodeResult.b64 && nodeResult.mime) {
-                // For image nodes, we need to upload and apply the result
-                // Use a helper to handle async image processing
-                handleWorkflowImageResult(n.id, String(nodeResult.b64), String(nodeResult.mime))
-                return { ...n, data: { ...n.data, isGenerating: false } }
-              }
-              
-              // Handle text/filter/seed node results
-              if ((nodeType === "text" || nodeType === "filter" || nodeType === "seed") && nodeResult.content !== undefined) {
-                return {
-                  ...n,
-                  data: { ...n.data, content: String(nodeResult.content), isGenerating: false }
-                }
-              }
-              
-              // Handle video node results
-              if (nodeType === "video" && nodeResult.videoSrc) {
-                return {
-                  ...n,
-                  data: { 
-                    ...n.data, 
-                    videoSrc: String(nodeResult.videoSrc),
-                    videoDuration: nodeResult.videoDuration ? String(nodeResult.videoDuration) : n.data?.videoDuration,
-                    isGenerating: false 
-                  }
-                }
-              }
-              
-              // Default: merge result data into node data
-              return { ...n, data: { ...n.data, ...nodeResult, isGenerating: false } }
-            }))
-          }
-          
-          stopWorkflowPolling()
-        } else if (json.status === "failed") {
-          console.error("[workflow] failed:", json.error, "jobs:", json.jobs)
-          stopWorkflowPolling()
+      if (json.status === "completed") {
+        stopWorkflowSSE()
+        setTimeout(() => {
+          setNodes((ns) => ns.map((n) => {
+            if (!trackedNodeIds.includes(n.id)) return n
+            const isNote = n.data?.mode === "note"
+            return { ...n, data: { ...n.data, done: isNote ? n.data?.done : false } }
+          }))
+        }, WORKFLOW_DONE_CLEANUP_DELAY_MS)
+      } else if (json.status === "failed" || json.status === "stopped") {
+        if (trackedNodeIds.length > 0) {
+          setNodes((ns) => ns.map((n) => {
+            if (!trackedNodeIds.includes(n.id)) return n
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                isGenerating: false,
+                activeJobId: undefined,
+                generationProgress: 0,
+                generationStatusText: "",
+                done: n.data?.mode === "note" ? n.data?.done : false,
+                generationError: nodeStatuses[n.id]?.error ?? n.data?.generationError,
+              },
+            }
+          }))
         }
-        // pending | running → continue polling
-      } catch (err) {
-        console.error("[workflow] poll error:", err)
+        stopWorkflowSSE()
       }
-    }, POLL_INTERVAL_MS)
-  }, [stopWorkflowPolling, setNodes])
+    }
+
+    es.onerror = () => {
+      console.error("[lasso] SSE stream error")
+      es.close()
+      stopWorkflowSSE()
+    }
+  }, [applyWorkflowNodeStatuses, stopWorkflowSSE, setNodes])
+
+  // Lasso pause/resume/stop handlers
+  const handleLassoPause = useCallback(async () => {
+    const jobId = workflowJobRef.current
+    if (!jobId) return
+    await fetch(`/api/execute/workflow/${jobId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "pause" }),
+    })
+    setLassoWorkflowStatus("paused")
+  }, [])
+
+  const handleLassoResume = useCallback(async () => {
+    const jobId = workflowJobRef.current
+    if (!jobId) return
+    await fetch(`/api/execute/workflow/${jobId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "resume" }),
+    })
+    setLassoWorkflowStatus("running")
+  }, [])
+
+  const handleLassoStop = useCallback(async () => {
+    const jobId = workflowJobRef.current
+    if (!jobId) return
+    await fetch(`/api/execute/workflow/${jobId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "stop" }),
+    })
+    stopWorkflowSSE()
+    // Restore node states
+    const trackedIds = workflowTrackedNodeIdsRef.current
+    if (trackedIds.length > 0) {
+      setNodes((ns) => ns.map((n) => {
+        if (!trackedIds.includes(n.id)) return n
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            isGenerating: false,
+            activeJobId: undefined,
+            generationProgress: 0,
+            generationStatusText: "",
+            done: n.data?.mode === "note" ? n.data?.done : false,
+          },
+        }
+      }))
+    }
+  }, [stopWorkflowSSE, setNodes])
+
+  // Keep startWorkflowPolling alias for template rerun (which still uses interval poll)
+  const startWorkflowPolling = startWorkflowSSE
 
   const handleTemplateRerunWorkflow = useCallback(async () => {
     if (!node || data?.type !== "template") return
@@ -726,6 +859,25 @@ export function NodeEditor({
       .map((n) => ({ ...n, data: { ...n.data, _preResolved: true } }))
 
     const workflowNodes = [...instanceNodes, ...externalNodes]
+    const workflowNodeIds = instanceNodes.map((n) => n.id)
+
+    // 预置运行态，等待中的节点进度固定为 0
+    setNodes((ns) => ns.map((n) => {
+      if (!workflowNodeIds.includes(n.id)) return n
+      const isNote = n.data?.mode === "note"
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          isGenerating: true,
+          activeJobId: undefined,
+          generationProgress: 0,
+          generationStatusText: "Queueing in workflow…",
+          generationError: undefined,
+          done: isNote ? n.data?.done : false,
+        },
+      }
+    }))
 
     setIsExecutingWorkflow(true)
     try {
@@ -745,67 +897,25 @@ export function NodeEditor({
       }
 
       const { workflowJobId } = await res.json()
-      startWorkflowPolling(workflowJobId)
+      startWorkflowPolling(workflowJobId, workflowNodeIds)
     } catch (err) {
       console.error("[template] rerun workflow failed:", err)
+      setNodes((ns) => ns.map((n) => {
+        if (!workflowNodeIds.includes(n.id)) return n
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            isGenerating: false,
+            generationProgress: 0,
+            activeJobId: undefined,
+            generationStatusText: "",
+          },
+        }
+      }))
       setIsExecutingWorkflow(false)
     }
-  }, [node, data?.type, data?.currentInstance, nodeId, startWorkflowPolling])
-
-  // Helper to handle async image result from workflow
-  const handleWorkflowImageResult = useCallback(async (targetNodeId: string, b64: string, mime: string) => {
-    const byteString = atob(b64)
-    const ab = new ArrayBuffer(byteString.length)
-    const ia = new Uint8Array(ab)
-    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i)
-    const blob = new Blob([ab], { type: mime })
-
-    // Upload to MinIO → persistent URL
-    let src: string
-    try {
-      const form = new FormData()
-      form.append(
-        'file',
-        new File([blob], `generated.${mime.split('/')[1] || 'png'}`, { type: mime }),
-      )
-      const res = await fetch('/api/upload', { method: 'POST', body: form })
-      const json = await res.json()
-      if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
-      src = json.url as string
-    } catch (err) {
-      console.error('[workflow image] MinIO upload failed, falling back to blob URL:', err)
-      src = URL.createObjectURL(blob)
-    }
-
-    const img = new window.Image()
-    img.src = src
-    await new Promise<void>((resolve) => { img.onload = () => resolve() })
-
-    const nw = img.naturalWidth
-    const nh = img.naturalHeight
-    const minSide = Math.min(nw, nh)
-    const scale = 180 / minSide
-    const w = Math.round(nw * scale)
-    const h = Math.round(nh * scale)
-
-    setNodes((ns) => ns.map((n) => {
-      if (n.id !== targetNodeId) return n
-      return {
-        ...n,
-        style: { ...n.style, width: w, height: h },
-        data: {
-          ...n.data,
-          src,
-          naturalWidth: nw,
-          naturalHeight: nh,
-          width: w,
-          height: h,
-          isGenerating: false,
-          activeJobId: undefined,
-        },
-      }
-    }))
-  }, [setNodes])
+  }, [node, data?.type, data?.currentInstance, nodeId, startWorkflowPolling, setNodes])
 
   const handleExecuteWorkflow = useCallback(async () => {
     if (!node || data?.type !== "lasso") return
@@ -819,9 +929,28 @@ export function NodeEditor({
 
     // Get edges between child nodes
     const childNodeIds = new Set(childNodes.map((n) => n.id))
+    const workflowNodeIds = [...childNodeIds]
     const childEdges = edges.filter(
       (e) => childNodeIds.has(e.source) && childNodeIds.has(e.target)
     )
+
+    // 预置运行态，等待中的节点进度固定为 0
+    setNodes((ns) => ns.map((n) => {
+      if (!childNodeIds.has(n.id)) return n
+      const isNote = n.data?.mode === "note"
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          isGenerating: true,
+          activeJobId: undefined,
+          generationProgress: 0,
+          generationStatusText: "Queueing in workflow…",
+          generationError: undefined,
+          done: isNote ? n.data?.done : false,
+        },
+      }
+    }))
 
     setIsExecutingWorkflow(true)
 
@@ -842,12 +971,25 @@ export function NodeEditor({
       }
 
       const { workflowJobId } = await res.json()
-      startWorkflowPolling(workflowJobId)
+      startWorkflowPolling(workflowJobId, workflowNodeIds)
     } catch (err) {
       console.error("[workflow] execute failed:", err)
+      setNodes((ns) => ns.map((n) => {
+        if (!childNodeIds.has(n.id)) return n
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            isGenerating: false,
+            generationProgress: 0,
+            activeJobId: undefined,
+            generationStatusText: "",
+          },
+        }
+      }))
       setIsExecutingWorkflow(false)
     }
-  }, [node, data?.type, nodeId, nodes, edges, startWorkflowPolling])
+  }, [node, data?.type, nodeId, nodes, edges, startWorkflowPolling, setNodes])
 
   // ── Access batch instance creation via context ────────────────────────────
   const orchestrator = React.useContext(TemplateOrchestratorContext)
@@ -917,6 +1059,12 @@ export function NodeEditor({
       const seeds = await waitForTemplateSeeds(jobId)
       if (!seeds || seeds.length === 0) throw new Error("No seeds returned")
 
+      // Persist real instance count as soon as JSON is known,
+      // before instance nodes are materialized.
+      setNodes(ns => ns.map(n =>
+        n.id !== nodeId ? n : { ...n, data: { ...n.data, templateResolvedInstanceCount: seeds.length } }
+      ))
+
       // ── 4. Batch-create all instances in a single state update ───────────
       // This is the critical fix: handleTemplateAddInstances creates ALL
       // instances atomically, with seed content injected and external nodes
@@ -962,7 +1110,7 @@ export function NodeEditor({
             isGenerating: false,
             activeJobId: undefined,
             generationProgress: 0,
-            generationStatusText: '',
+            generationStatusText: "",
           },
         }
       ))
@@ -970,9 +1118,9 @@ export function NodeEditor({
   }, [node, data?.type, nodeId, upstreamData, orchestrator, setNodes])
 
   /** Poll job until stage='seeds_ready', then return seeds array */
-  const waitForTemplateSeeds = useCallback(async (
+  async function waitForTemplateSeeds(
     jobId: string,
-  ): Promise<Array<{ content: string; description?: string }> | null> => {
+  ): Promise<Array<{ content: string; description?: string }> | null> {
     const TIMEOUT = 30_000
     const deadline = Date.now() + TIMEOUT
 
@@ -1010,7 +1158,7 @@ export function NodeEditor({
         }
       }, POLL_INTERVAL_MS)
     })
-  }, [])
+  }
 
   const handleStopTemplate = useCallback(() => {
     if (templateSeedPollRef.current) {
@@ -1034,8 +1182,12 @@ export function NodeEditor({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (workflowPollRef.current)    clearInterval(workflowPollRef.current)
-      if (templateSeedPollRef.current)   clearInterval(templateSeedPollRef.current)
+      // Close SSE stream if open
+      if (workflowEventSourceRef.current) {
+        workflowEventSourceRef.current.close()
+        workflowEventSourceRef.current = null
+      }
+      if (templateSeedPollRef.current) clearInterval(templateSeedPollRef.current)
     }
   }, [])
 
@@ -1123,6 +1275,7 @@ export function NodeEditor({
           onDownload={handleDownload}
           onDelete={handleDeleteNode}
           onFilterModeChange={(m) => handleUpdate({ filterInputMode: m })}
+          onFilterReverseToggle={data?.type === 'filter' ? handleFilterReverseToggle : undefined}
           onTemplateRelease={handleTemplateReleaseClick}
           onTemplateAddInstance={handleTemplateAddInstance}
           onTemplateDeleteInstance={handleTemplateDeleteInstance}
@@ -1130,8 +1283,13 @@ export function NodeEditor({
           onTemplateRerunWorkflow={handleTemplateRerunWorkflow}
           templateInstanceCount={templateInstanceCount}
           onExecute={handleExecuteWorkflow}
+          onLassoPause={data?.type === 'lasso' ? handleLassoPause : undefined}
+          onLassoResume={data?.type === 'lasso' ? handleLassoResume : undefined}
+          onLassoStop={data?.type === 'lasso' ? handleLassoStop : undefined}
+          workflowStatus={data?.type === 'lasso' ? lassoWorkflowStatus : undefined}
           isExecuting={data?.type === 'template' ? (isGenerating || isExecutingWorkflow) : isExecutingWorkflow}
           onLassoRelease={onLassoRelease ? () => onLassoRelease(nodeId) : undefined}
+          onLassoDelete={data?.type === 'lasso' ? handleDeleteNode : undefined}
           onToggleInlinePreview={() => handleUpdate({ showPromptInline: !data.showPromptInline })}
           inlinePreviewEnabled={!!data.showPromptInline}
           onPdfPrevPage={data?.type === "pdf" ? () => {
@@ -1197,7 +1355,7 @@ export function NodeEditor({
       >
         <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5 border-b border-slate-100">
           <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-            {mode === 'done' ? 'Note' : (MODULE_BY_ID[data.type]?.meta.panelTitle ?? data.type)}
+            {mode === 'note' ? 'Note' : (MODULE_BY_ID[data.type]?.meta.panelTitle ?? data.type)}
           </span>
           <button
             onClick={isGenerating ? undefined : onClose}

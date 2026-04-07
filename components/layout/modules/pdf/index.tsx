@@ -10,7 +10,7 @@ import { RefPromptEditor, type RefPromptEditorHandle } from '@/components/layout
 import { UpstreamReference } from '@/components/layout/node_editor/_upstream_reference'
 import { TEXT_MODELS } from '@/lib/models'
 import { creditLabel } from '@/lib/credits'
-import { clampDpi, formatRulesAsText, resolvePdfOutputPagesWithCurrent, type PdfOutputRule } from '@/lib/pdf-transfer'
+import { clampDpi, formatRulesAsText, resolvePdfOutputPages, resolvePdfOutputPagesWithCurrent, type PdfOutputRule } from '@/lib/pdf-transfer'
 import { buildPdfOutputsFromPages, revokeBlobUrls } from './render'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import {
@@ -217,7 +217,7 @@ export const NodeUI = ({
           borderRadius: data.isEditing ? '0px' : '12px',
           borderColor: isSelected || isEditing
             ? 'rgba(244,63,94,0.62)'
-            : data.mode === 'done'
+            : (data.done === true || data.mode === 'note')
               ? 'rgba(244,63,94,0.52)'
               : 'rgba(100,116,139,0.36)',
           boxShadow: isSelected
@@ -550,12 +550,17 @@ export function ModalContent({
   }, [d.pdfIncludeCurrentPageDpi, d.pdfOutputRules])
 
   const resolvedPages = useMemo(() => {
-    return resolvePdfOutputPagesWithCurrent(rules, d.pdfPageCount, {
+    const manualResolved = resolvePdfOutputPagesWithCurrent(rules, d.pdfPageCount, {
       includeCurrentPage,
       currentPage: d.pdfCurrentPage,
       currentPageDpi,
     })
-  }, [rules, d.pdfPageCount, d.pdfCurrentPage, includeCurrentPage, currentPageDpi])
+    const aiResolved = resolvePdfOutputPages(d.pdfAiRules ?? [], d.pdfPageCount)
+    // Union: AI goes in first, manual overwrites (manual wins on DPI conflict)
+    const map = new Map(aiResolved.map((p) => [p.page, p.dpi]))
+    for (const p of manualResolved) map.set(p.page, p.dpi)
+    return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([page, dpi]) => ({ page, dpi }))
+  }, [rules, d.pdfPageCount, d.pdfCurrentPage, includeCurrentPage, currentPageDpi, d.pdfAiRules])
 
   const outputPreview = useMemo(() => {
     if (resolvedPages.length === 0) return 'Output: -'
@@ -564,7 +569,7 @@ export function ModalContent({
   }, [resolvedPages])
 
   const isAuto = mode === 'auto'
-  const isNote = mode === 'done'
+  const isNote = mode === 'note'
 
   const setPromptValue = (v: string) => {
     setPrompt(v)
@@ -835,7 +840,7 @@ export function ModalContent({
             <span className="ml-auto text-xs text-slate-500">{creditLabel(model, params)}</span>
             <button
               disabled={!prompt.trim()}
-              onClick={() => onGenerate?.(prompt, model, params)}
+              onClick={() => onGenerate?.(prompt, model, { ...params, __pdfPageCount: String(d.pdfPageCount ?? '') })}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all",
                 prompt.trim()

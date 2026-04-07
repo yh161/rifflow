@@ -182,14 +182,14 @@ export function UpstreamReference({
             className={cn(
               "flex items-center gap-1",
               "px-1.5 py-0.5 rounded-md",
-              "border border-slate-200 bg-white text-slate-600",
+              "border border-slate-200 bg-transparent text-slate-600",
               "text-[9px] font-medium",
-              "transition-all duration-150",
+              "transition-all duration-150 hover:bg-[var(--ref-chip-bg)]",
               "active:scale-95",
             )}
             style={{
+              ["--ref-chip-bg" as const]: `${typeColor}10`,
               borderColor: `${typeColor}55`,
-              backgroundColor: `${typeColor}10`,
               color: typeColor,
             }}
           >

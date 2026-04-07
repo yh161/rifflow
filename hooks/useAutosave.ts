@@ -47,6 +47,7 @@ export function useAutosave(
   nodes:                Node[],
   edges:                Edge[],
   favorites:            string[],
+  consoleOpen:          boolean,
   enabled:              boolean,
   viewportRef:          MutableRefObject<{ x: number; y: number; zoom: number }>,
   onSyncStatusChange?:  (status: SyncStatus) => void,
@@ -82,6 +83,7 @@ export function useAutosave(
             nodes:    sanitizeNodes(nodes),
             edges,
             favorites,
+            consoleOpen,
             viewport: viewportRef.current,
           }),
         })
@@ -108,5 +110,5 @@ export function useAutosave(
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
-  }, [nodes, edges, favorites, enabled, viewportRef])
+  }, [nodes, edges, favorites, consoleOpen, enabled, viewportRef])
 }

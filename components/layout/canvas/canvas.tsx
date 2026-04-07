@@ -23,7 +23,10 @@ import ReactFlow, {
   Connection,
   BaseEdge,
   getBezierPath,
+  getSmoothStepPath,
   EdgeLabelRenderer,
+  ConnectionLineComponentProps,
+  Position,
 } from "reactflow"
 import { X } from "lucide-react"
 import "reactflow/dist/style.css"
@@ -61,16 +64,28 @@ import { NodeContextMenu }   from "./components/NodeContextMenu"
 // ─────────────────────────────────────────────
 // DoneAwareEdge — colors upstream edges of "done" nodes
 // ─────────────────────────────────────────────
-function DoneAwareEdge({ id, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, selected }: EdgeProps) {
+function DoneAwareEdge({ id, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, selected }: EdgeProps) {
   const nodes = useNodes<CustomNodeData>()
   const { setEdges } = useReactFlow()
   const targetNode = nodes.find(n => n.id === target)
-  const isDone = targetNode?.data?.mode === 'done'
+  const sourceNode = nodes.find(n => n.id === source)
+  const isDone = targetNode?.data?.done === true || targetNode?.data?.mode === 'note'
   const stroke = isDone
     ? (DONE_COLOR[targetNode?.data?.type ?? ''] ?? 'rgba(148,163,184,0.4)')
     : 'rgba(148,163,184,0.4)'
 
-  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  const isFilterConnected = sourceNode?.data?.type === 'filter' || targetNode?.data?.type === 'filter'
+  const [edgePath, labelX, labelY] = isFilterConnected
+    ? getSmoothStepPath({
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition,
+        borderRadius: 0,
+      })
+    : getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
 
   return (
     <>
@@ -102,6 +117,111 @@ function DoneAwareEdge({ id, target, sourceX, sourceY, targetX, targetY, sourceP
   )
 }
 
+// ─────────────────────────────────────────────
+// Connection preview line (node handle -> mouse)
+// - Filter nodes: dashed orthogonal polyline
+// - Others: keep existing bezier preview
+// ─────────────────────────────────────────────
+function CustomConnectionLine(props: ConnectionLineComponentProps) {
+  const {
+    fromX,
+    fromY,
+    toX,
+    toY,
+    fromPosition,
+    toPosition,
+    fromNode,
+    fromHandle,
+  } = props
+
+  const isFilterDrag = fromNode?.data?.type === "filter"
+  const isFilterReversed = !!fromNode?.data?.filterReversed
+
+  const sideToPosition = (side: 'left' | 'right' | 'top' | 'bottom'): Position => {
+    if (side === 'left') return Position.Left
+    if (side === 'right') return Position.Right
+    if (side === 'top') return Position.Top
+    return Position.Bottom
+  }
+
+  const getFilterVisualPosition = (): Position => {
+    if (!isFilterDrag || !fromHandle?.id) return fromPosition
+    const filterHandles = (MODULE_BY_ID.filter?.handles as Array<{ id: string; side: 'left' | 'right' | 'top' | 'bottom' }> | undefined) ?? []
+    const semanticHandle = filterHandles.find((h) => h.id === fromHandle.id)
+    if (!semanticHandle) return fromPosition
+    const visualSide = isFilterReversed
+      ? (semanticHandle.side === 'left'
+          ? 'right'
+          : semanticHandle.side === 'right'
+            ? 'left'
+            : semanticHandle.side)
+      : semanticHandle.side
+    return sideToPosition(visualSide)
+  }
+
+  const inferHandleType = (): 'source' | 'target' => {
+    // Normal visual rule: left/top = target, right/bottom = source
+    const visualType: 'source' | 'target' =
+      fromPosition === Position.Left || fromPosition === Position.Top ? 'target' : 'source'
+
+    if (!isFilterDrag || !isFilterReversed || !fromHandle?.id) return visualType
+
+    // Filter reverse flips only visual side; semantic handle type remains by original handle def.
+    const filterHandles = (MODULE_BY_ID.filter?.handles as Array<{ id: string; side: 'left' | 'right' | 'top' | 'bottom' }> | undefined) ?? []
+    const semanticHandle = filterHandles.find((h) => h.id === fromHandle.id)
+    if (!semanticHandle) return visualType
+
+    return semanticHandle.side === 'left' || semanticHandle.side === 'top' ? 'target' : 'source'
+  }
+
+  const fromHandleType = inferHandleType()
+  const visualFromPosition = getFilterVisualPosition()
+  // If drag starts from a target handle, preview should flow mouse -> node (same as dashed ghost edge logic)
+  const previewSourceX = fromHandleType === 'target' ? toX : fromX
+  const previewSourceY = fromHandleType === 'target' ? toY : fromY
+  // Keep the same virtual source-handle direction as ghost edge: GHOST source is fixed at right side.
+  // This makes the solid preview path geometry match the dashed ghost path.
+  const previewSourcePosition = fromHandleType === 'target'
+    ? (isFilterDrag ? Position.Right : toPosition)
+    : visualFromPosition
+  const previewTargetX = fromHandleType === 'target' ? fromX : toX
+  const previewTargetY = fromHandleType === 'target' ? fromY : toY
+  // Keep the same virtual target-handle direction as ghost edge for source-drag:
+  // GHOST target is fixed at left side. This keeps solid preview geometry aligned
+  // with dashed ghost when dragging from filter out (including reversed visual side).
+  const previewTargetPosition = fromHandleType === 'target'
+    ? visualFromPosition
+    : (isFilterDrag ? Position.Left : toPosition)
+
+  const [path] = isFilterDrag
+    ? getSmoothStepPath({
+        sourceX: previewSourceX,
+        sourceY: previewSourceY,
+        sourcePosition: previewSourcePosition,
+        targetX: previewTargetX,
+        targetY: previewTargetY,
+        targetPosition: previewTargetPosition,
+        borderRadius: 0,
+      })
+    : getBezierPath({
+        sourceX: previewSourceX,
+        sourceY: previewSourceY,
+        sourcePosition: previewSourcePosition,
+        targetX: previewTargetX,
+        targetY: previewTargetY,
+        targetPosition: previewTargetPosition,
+      })
+
+  return (
+    <path
+      d={path}
+      fill="none"
+      stroke="#94a3b8"
+      strokeWidth={1.5}
+    />
+  )
+}
+
 const EDGE_TYPES = { default: DoneAwareEdge }
 
 // ─────────────────────────────────────────────
@@ -117,11 +237,13 @@ interface CanvasProps {
   importRef?: React.MutableRefObject<(() => void) | null>
   exportRef?: React.MutableRefObject<(() => void) | null>
   isSidebarOpen: boolean
+  sidebarWidth?: number
   isRunning: boolean
   snapToGrid?: boolean
   onSnapToggle?: () => void
   minimapOpen?: boolean
   onSyncStatusChange?: (status: import("@/hooks/useAutosave").SyncStatus) => void
+  onRestoreConsoleOpen?: (open: boolean) => void
 }
 
 // ─────────────────────────────────────────────
@@ -142,17 +264,23 @@ function CanvasLogic({
   importRef,
   exportRef,
   isSidebarOpen,
+  sidebarWidth = 320,
   isRunning,
   snapToGrid: propSnapToGrid,
   minimapOpen = false,
   onSyncStatusChange,
+  onRestoreConsoleOpen,
 }: CanvasProps) {
   const { screenToFlowPosition, fitView, setViewport, getNodes, getViewport } = useReactFlow()
   const { status } = useSession()
   const favoritesRef = useRef(favorites)
+  const onRestoreConsoleOpenRef = useRef(onRestoreConsoleOpen)
   useEffect(() => {
     favoritesRef.current = favorites
   }, [favorites])
+  useEffect(() => {
+    onRestoreConsoleOpenRef.current = onRestoreConsoleOpen
+  }, [onRestoreConsoleOpen])
 
   // ── Stable refs for unstable ReactFlow functions ──
   // useReactFlow() returns NEW function objects on every render, so these
@@ -388,13 +516,25 @@ function CanvasLogic({
         }
         setUndoCount(data.undoCount ?? 0)
         setRedoCount(data.redoCount ?? 0)
+        if (typeof data.consoleOpen === "boolean") {
+          onRestoreConsoleOpenRef.current?.(data.consoleOpen)
+        }
       })
       .catch((err) => console.error("[draft] load failed:", err))
       .finally(() => setIsDraftLoaded(true))
   // setViewport intentionally excluded — use stable ref instead
   }, [status, setNodes, setEdges, setIsDraftLoaded, setUndoCount, setRedoCount])
 
-  useAutosave(nodes, edges, favorites, isDraftLoaded && status === "authenticated", canvasState.viewportRef, onSyncStatusChange, skipAutosaveRef)
+  useAutosave(
+    nodes,
+    edges,
+    favorites,
+    isRunning,
+    isDraftLoaded && status === "authenticated",
+    canvasState.viewportRef,
+    onSyncStatusChange,
+    skipAutosaveRef,
+  )
 
   // ─────────────────────────────────────────────
   // Template — wraps selected nodes in a Template container
@@ -502,8 +642,8 @@ function CanvasLogic({
   // ─────────────────────────────────────────────
   // Edge drag → empty drop → quick-add
   // ─────────────────────────────────────────────
-  const handleConnectStart: OnConnectStart = useCallback((_event, { nodeId, handleId }) => {
-    connectStartRef.current   = nodeId ? { nodeId, handleId } : null
+  const handleConnectStart: OnConnectStart = useCallback((_event, { nodeId, handleId, handleType }) => {
+    connectStartRef.current   = nodeId ? { nodeId, handleId, handleType: handleType ?? undefined } : null
     connectionMadeRef.current = false
   }, [connectStartRef, connectionMadeRef])
 
@@ -524,7 +664,12 @@ function CanvasLogic({
       "touches" in event ? event.changedTouches[0] : (event as MouseEvent)
 
     const flowPos = screenToFlowPosition({ x: clientX, y: clientY })
-    openQuickAdd(flowPos, connectStartRef.current?.nodeId, connectStartRef.current?.handleId ?? undefined)
+    openQuickAdd(
+      flowPos,
+      connectStartRef.current?.nodeId,
+      connectStartRef.current?.handleId ?? undefined,
+      connectStartRef.current?.handleType,
+    )
     connectStartRef.current = null
   }, [screenToFlowPosition, openQuickAdd, connectStartRef, connectionMadeRef])
 
@@ -765,34 +910,40 @@ function CanvasLogic({
         edgeTypes={EDGE_TYPES}
         proOptions={{ hideAttribution: true }}
         connectionMode={ConnectionMode.Loose}
-        onNodesChange={handleNodesChange}
-        onEdgesChange={handleEdgesChange}
-        onConnect={handleConnect}
-        onConnectStart={handleConnectStart}
-        onConnectEnd={handleConnectEnd}
-        onPaneClick={handlePaneClick}
+        onNodesChange={isRunning ? undefined : handleNodesChange}
+        onEdgesChange={isRunning ? undefined : handleEdgesChange}
+        onConnect={isRunning ? undefined : handleConnect}
+        onConnectStart={isRunning ? undefined : handleConnectStart}
+        onConnectEnd={isRunning ? undefined : handleConnectEnd}
+        connectionLineComponent={CustomConnectionLine}
+        onPaneClick={isRunning ? undefined : handlePaneClick}
         onMove={handleMove}
         onMoveStart={() => document.dispatchEvent(new CustomEvent('canvas-move-start'))}
-        onNodeDrag={handleNodeDrag}
-        onNodeDragStop={handleNodeDragStop}
-        onNodeDoubleClick={handleNodeDoubleClick}
-        onNodeClick={handleNodeClick}
-        onNodeContextMenu={(e, node) => {
+        onNodeDrag={isRunning ? undefined : handleNodeDrag}
+        onNodeDragStop={isRunning ? undefined : handleNodeDragStop}
+        onNodeDoubleClick={isRunning ? undefined : handleNodeDoubleClick}
+        onNodeClick={isRunning ? undefined : handleNodeClick}
+        onNodeContextMenu={isRunning ? undefined : (e, node) => {
           e.preventDefault()
+          const nodeType = (node.data as AnyNodeData)?.type
+          if (nodeType === 'lasso' || nodeType === 'template') return
           setContextMenu(null)
           setNodeContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id })
         }}
-        onSelectionChange={handleContainerSelectionChange}
+        onSelectionChange={isRunning ? undefined : handleContainerSelectionChange}
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}
         minZoom={0.1}
         maxZoom={10}
         defaultEdgeOptions={{ type: "default", style: { stroke: "rgba(148,163,184,0.6)", strokeWidth: 1.5 } }}
-        panOnDrag={activeTool !== "template" && activeTool !== "lasso"}
-        selectionOnDrag={activeTool === "template" || activeTool === "lasso"}
-        zoomOnPinch={true}
+        panOnDrag={isRunning ? false : (activeTool !== "template" && activeTool !== "lasso")}
+        selectionOnDrag={isRunning ? false : (activeTool === "template" || activeTool === "lasso")}
+        nodesDraggable={!isRunning}
+        nodesConnectable={!isRunning}
+        elementsSelectable={!isRunning}
+        zoomOnPinch={!isRunning}
         zoomOnScroll={false}
         zoomOnDoubleClick={false}
-        panOnScroll={true}
+        panOnScroll={!isRunning}
         preventScrolling={true}
         snapToGrid={propSnapToGrid ?? internalSnapToGrid}
         snapGrid={[16, 16]}
@@ -807,7 +958,7 @@ function CanvasLogic({
             style={{
               position:      "absolute",
               bottom:        80,
-              left:          isSidebarOpen ? 336 : 16,
+              left:          isSidebarOpen ? sidebarWidth + 16 : 16,
               right:         "unset" as never,
               width:         192,
               height:        128,

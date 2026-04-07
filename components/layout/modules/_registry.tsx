@@ -2,7 +2,7 @@
 
 import React, { memo, useRef, useCallback, useState, useEffect, useContext, createContext } from 'react'
 import { NodeProps } from 'reactflow'
-import { Handle, Position, useReactFlow } from 'reactflow'
+import { Handle, Position, useReactFlow, useUpdateNodeInternals } from 'reactflow'
 import { cn } from '@/lib/utils'
 import type { CustomNodeData, ModuleModalProps } from './_types'
 import type { ActionBarProps } from './_action_bar_types'
@@ -342,6 +342,7 @@ function NodeWrapper({
   const isHovered     = useCallback(() => hoveredRef.current, [])
   const openEditorId  = useContext(EditorOpenContext)
   const { setNodes }  = useReactFlow()
+  const updateNodeInternals = useUpdateNodeInternals()
 
   useEffect(() => {
     const el = wrapperRef.current
@@ -392,6 +393,26 @@ function NodeWrapper({
         : 12
   const squareWhenEditing = data?.type === 'image' || data?.type === 'video' || data?.type === 'pdf'
   const cornerRadius = (squareWhenEditing && data?.isEditing) ? 0 : baseCornerRadius
+  const effectiveHandles =
+    data?.type === 'filter' && data?.filterReversed
+      ? handles.map((def) => ({
+          semanticSide: def.side,
+          visualDef:
+            def.side === 'left'
+              ? { ...def, side: 'right' as const }
+              : def.side === 'right'
+                ? { ...def, side: 'left' as const }
+                : def,
+        }))
+      : handles.map((def) => ({ semanticSide: def.side, visualDef: def }))
+
+  // When filter reverses, force ReactFlow to recalculate actual handle anchors.
+  // This ensures both edge attachment points and magnetic zones follow the flipped side.
+  useEffect(() => {
+    if (!nodeId || data?.type !== 'filter') return
+    updateNodeInternals(nodeId)
+    requestAnimationFrame(() => updateNodeInternals(nodeId))
+  }, [nodeId, data?.type, data?.filterReversed, updateNodeInternals])
 
   return (
     <div
@@ -409,16 +430,16 @@ function NodeWrapper({
         />
       )}
 
-      {handles.map((def) => (
-        <React.Fragment key={def.id}>
+      {effectiveHandles.map(({ semanticSide, visualDef }) => (
+        <React.Fragment key={visualDef.id}>
           <Handle
-            type={sideToHandleType(def.side)}
-            position={SIDE_TO_POSITION[def.side]}
-            id={def.id}
-            className={getHandleClassName(def)}
-            style={getHandleStyle(def)}
+            type={sideToHandleType(semanticSide)}
+            position={SIDE_TO_POSITION[visualDef.side]}
+            id={visualDef.id}
+            className={getHandleClassName(visualDef)}
+            style={getHandleStyle(visualDef)}
           />
-          <MagneticZone def={def} isHovered={isHovered} nodeId={nodeId ?? ''} />
+          <MagneticZone def={visualDef} isHovered={isHovered} nodeId={nodeId ?? ''} />
         </React.Fragment>
       ))}
       {nodeId && (
@@ -508,6 +529,10 @@ export const StandardNode = memo(StandardNodeInner)
 // GhostNode — invisible anchor for quick-add edge preview
 const GhostNodeInner = () => (
   <div style={{ width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}>
+    <Handle type="source" position={Position.Left}   id="left"   style={{ opacity: 0 }} />
+    <Handle type="source" position={Position.Right}  id="right"  style={{ opacity: 0 }} />
+    <Handle type="source" position={Position.Top}    id="top"    style={{ opacity: 0 }} />
+    <Handle type="source" position={Position.Bottom} id="bottom" style={{ opacity: 0 }} />
     <Handle type="target" position={Position.Left}   id="left"   style={{ opacity: 0 }} />
     <Handle type="target" position={Position.Right}  id="right"  style={{ opacity: 0 }} />
     <Handle type="target" position={Position.Top}    id="top"    style={{ opacity: 0 }} />

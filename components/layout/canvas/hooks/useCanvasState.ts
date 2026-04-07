@@ -37,10 +37,11 @@ export function useCanvasState() {
     flowPos: { x: number; y: number }
     sourceNodeId?: string
     sourceHandleId?: string
+    sourceHandleType?: 'source' | 'target'
   } | null>(null)
 
   // ── Refs for edge drag and connection ────────────────
-  const connectStartRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
+  const connectStartRef = useRef<{ nodeId: string; handleId: string | null; handleType?: 'source' | 'target' } | null>(null)
   const connectionMadeRef = useRef(false)
 
   // ── Loop selection ref ───────────────────────────────

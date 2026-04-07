@@ -9,7 +9,6 @@ import Canvas from "@/components/layout/canvas/canvas"
 import CanvasToolbar from "@/components/layout/canvas/canvas-toolbar"
 import Panel from "@/components/layout/browser/browser"
 import Toolbar from "@/components/layout/toolbar"
-import { useDemoLogs } from "@/components/layout/run-console"
 import UserAvatar from "@/components/layout/user-avatar"
 
 import LoginModal from "@/components/layout/login-modal"
@@ -21,6 +20,10 @@ export default function Screen() {
   const { status } = useSession()
   const [activeTool, setActiveTool] = useState<string | null>(null)
 
+  const DEFAULT_SIDEBAR_OPEN = true
+  const DEFAULT_PANEL_OPEN = true
+  const DEFAULT_SIDEBAR_WIDTH = 320
+
   // ── Import / Export refs — populated by Canvas, consumed by Panel menu ──
   const importRef = useRef<(() => void) | null>(null)
   const exportRef = useRef<(() => void) | null>(null)
@@ -29,10 +32,7 @@ export default function Screen() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus | undefined>(undefined)
 
   // ── Track which draft is currently being edited in canvas (persisted across refresh) ──
-  const [currentEditingDraftId, setCurrentEditingDraftId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null
-    return localStorage.getItem("currentEditingDraftId") ?? null
-  })
+  const [currentEditingDraftId, setCurrentEditingDraftId] = useState<string | null>(null)
   // Keep localStorage in sync
   useEffect(() => {
     if (currentEditingDraftId) localStorage.setItem("currentEditingDraftId", currentEditingDraftId)
@@ -41,27 +41,49 @@ export default function Screen() {
 
   // ── UI layout — persisted to localStorage ────────────────────────────
   // Start with SSR-safe defaults (true), then sync from localStorage after mount
-  const [isSidebarOpen, setIsSidebarOpenRaw] = useState(true)
-  const [isPanelOpen, setIsPanelOpenRaw] = useState(true)
+  const [isSidebarOpen, setIsSidebarOpenRaw] = useState(DEFAULT_SIDEBAR_OPEN)
+  const [isPanelOpen, setIsPanelOpenRaw] = useState(DEFAULT_PANEL_OPEN)
+  const [sidebarWidth, setSidebarWidthRaw] = useState(DEFAULT_SIDEBAR_WIDTH)
 
+  // Hydrate persisted UI state after mount to avoid SSR/client initial render mismatch.
   useEffect(() => {
     const s = localStorage.getItem("ui:sidebarOpen")
-    if (s !== null) setIsSidebarOpenRaw(s === "true")
     const p = localStorage.getItem("ui:panelOpen")
-    if (p !== null) setIsPanelOpenRaw(p === "true")
+    const w = localStorage.getItem("ui:sidebarWidth")
+    const currentDraft = localStorage.getItem("currentEditingDraftId")
+
+    setIsSidebarOpenRaw(s !== null ? s === "true" : DEFAULT_SIDEBAR_OPEN)
+    setIsPanelOpenRaw(p !== null ? p === "true" : DEFAULT_PANEL_OPEN)
+
+    const parsed = w !== null ? Number(w) : NaN
+    setSidebarWidthRaw(
+      Number.isFinite(parsed)
+        ? Math.min(560, Math.max(260, Math.round(parsed)))
+        : DEFAULT_SIDEBAR_WIDTH,
+    )
+
+    setCurrentEditingDraftId(currentDraft ?? null)
   }, [])
 
   const setIsSidebarOpen = (val: boolean | ((prev: boolean) => boolean)) => {
     setIsSidebarOpenRaw((prev) => {
       const next = typeof val === "function" ? val(prev) : val
-      localStorage.setItem("ui:sidebarOpen", String(next))
+      if (typeof window !== "undefined") localStorage.setItem("ui:sidebarOpen", String(next))
       return next
     })
   }
   const setIsPanelOpen = (val: boolean | ((prev: boolean) => boolean)) => {
     setIsPanelOpenRaw((prev) => {
       const next = typeof val === "function" ? val(prev) : val
-      localStorage.setItem("ui:panelOpen", String(next))
+      if (typeof window !== "undefined") localStorage.setItem("ui:panelOpen", String(next))
+      return next
+    })
+  }
+  const setSidebarWidth = (val: number | ((prev: number) => number)) => {
+    setSidebarWidthRaw((prev) => {
+      const nextRaw = typeof val === "function" ? val(prev) : val
+      const next = Math.min(560, Math.max(260, Math.round(nextRaw)))
+      if (typeof window !== "undefined") localStorage.setItem("ui:sidebarWidth", String(next))
       return next
     })
   }
@@ -77,16 +99,11 @@ export default function Screen() {
   const [preRunSidebar, setPreRunSidebar] = useState(true)
   const [preRunPanel, setPreRunPanel] = useState(true)
 
-  const { logs, addLog } = useDemoLogs(isRunning, isPaused)
   const [snapToGrid, setSnapToGrid] = useState(false)
   const [minimapOpen, setMinimapOpen] = useState(false)
 
   // Only show login modal when unauthenticated
-  const [isLoginOpen, setIsLoginOpen] = useState(false)
-  useEffect(() => {
-    if (status === "unauthenticated") setIsLoginOpen(true)
-    else if (status === "authenticated") setIsLoginOpen(false)
-  }, [status])
+  const isLoginOpen = status === "unauthenticated"
 
   // Close browser panel when navigating to canvas (new blank or loading a draft/template)
   useEffect(() => {
@@ -137,6 +154,21 @@ export default function Screen() {
     }, 100)
   }
 
+  const handleRestoreConsoleOpen = (open: boolean) => {
+    if (!open) {
+      setIsRunning(false)
+      setIsPaused(false)
+      return
+    }
+    setPreRunSidebar(isSidebarOpen)
+    setPreRunPanel(isPanelOpen)
+    setIsSidebarOpen(false)
+    setIsPanelOpen(false)
+    setActiveTool(null)
+    setIsRunning(true)
+    setIsPaused(false)
+  }
+
   return (
     <ReactFlowProvider>
     <main className="flex h-screen w-screen overflow-hidden bg-slate-50 relative">
@@ -150,16 +182,19 @@ export default function Screen() {
         importRef={importRef}
         exportRef={exportRef}
         isSidebarOpen={isSidebarOpen}
+        sidebarWidth={sidebarWidth}
         isRunning={isRunning}
         snapToGrid={snapToGrid}
         onSnapToggle={() => setSnapToGrid(v => !v)}
         minimapOpen={minimapOpen}
         onSyncStatusChange={setSyncStatus}
+        onRestoreConsoleOpen={handleRestoreConsoleOpen}
       />
 
       {/* Canvas toolbar — outside Canvas so it's above all canvas stacking contexts */}
       <CanvasToolbar
         isSidebarOpen={isSidebarOpen}
+        sidebarWidth={sidebarWidth}
         isRunning={isRunning}
         snapToGrid={snapToGrid}
         onSnapToggle={() => setSnapToGrid(v => !v)}
@@ -174,7 +209,7 @@ export default function Screen() {
       <div
         className="absolute z-30 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
         style={{
-          left: isRunning ? 16 : (isSidebarOpen ? 320 + 16 : 16),
+          left: isRunning ? 16 : (isSidebarOpen ? sidebarWidth + 16 : 16),
           top: "50%",
           transform: "translateY(-50%)",
         }}
@@ -197,6 +232,7 @@ export default function Screen() {
 
       <UserAvatar
         isSidebarOpen={isSidebarOpen}
+        sidebarWidth={sidebarWidth}
         isRunning={isRunning}
         // avatarUrl={user.avatarUrl}
         // displayName={user.name}
@@ -206,11 +242,14 @@ export default function Screen() {
       <Sidebar
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
+        width={sidebarWidth}
+        onWidthChange={setSidebarWidth}
         isRunning={isRunning}
       />
 
       <Panel
         isSidebarOpen={isSidebarOpen}
+        sidebarWidth={sidebarWidth}
         isOpen={isPanelOpen}
         onOpenChange={setIsPanelOpen}
         isRunning={isRunning}
@@ -219,7 +258,7 @@ export default function Screen() {
         exportRef={exportRef}
       />
 
-      <LoginModal open={isLoginOpen} onOpenChange={setIsLoginOpen} />
+      <LoginModal open={isLoginOpen} onOpenChange={() => {}} />
       <InviteGate />
 
     </main>

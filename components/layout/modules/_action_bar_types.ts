@@ -2,6 +2,8 @@
 
 import type { CustomNodeData } from "./_types"
 
+export type WorkflowControlStatus = "idle" | "running" | "paused"
+
 export interface ActionBarProps {
   data: CustomNodeData
 
@@ -16,6 +18,7 @@ export interface ActionBarProps {
 
   // filter
   onFilterModeChange?: (mode: 'label' | 'content') => void
+  onFilterReverseToggle?: () => void
 
   // template
   onTemplateRelease?: () => void
@@ -25,10 +28,16 @@ export interface ActionBarProps {
   templateInstanceCount?: number
   onTemplateRerunWorkflow?: () => void
 
-  // lasso
+  // lasso — workflow control
+  onLassoDelete?: () => void
   onLassoRelease?: () => void
   onExecute?: () => void
+  onLassoPause?: () => void
+  onLassoResume?: () => void
+  onLassoStop?: () => void
   isExecuting?: boolean
+  /** 'idle' | 'running' | 'paused' — drives lasso actionBar button state */
+  workflowStatus?: WorkflowControlStatus
 
   // image
   onRotate?: () => void
@@ -38,4 +47,8 @@ export interface ActionBarProps {
   onPdfNextPage?: () => void
   onPdfSetPage?: (page: number) => void
   onPdfSetPreviewDpi?: (dpi: number) => void
+
+  // inline preview toggle (text, seed)
+  onToggleInlinePreview?: () => void
+  inlinePreviewEnabled?: boolean
 }

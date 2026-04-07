@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
+const RIFY_IDENTITY_SYSTEM_PROMPT =
+  "You are Rify, the AI assistant of Rifflow. Always identify yourself Rify when asked about your identity, and answer helpfully in that role. This is only for self-identify, no need to answer everytime without asking."
 
 // POST /api/messages/[userId]/ai
 // Triggered by the sender when agent mode is on.
@@ -31,6 +33,11 @@ export async function POST(
       return NextResponse.json({ error: "model and messages required" }, { status: 400 })
     }
 
+    const aiMessages = [
+      { role: "system", content: RIFY_IDENTITY_SYSTEM_PROMPT },
+      ...messages,
+    ]
+
     // Call OpenRouter
     const aiRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -38,7 +45,7 @@ export async function POST(
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model, messages }),
+      body: JSON.stringify({ model, messages: aiMessages }),
     })
 
     if (!aiRes.ok) {

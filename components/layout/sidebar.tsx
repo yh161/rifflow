@@ -4,9 +4,9 @@ import React, { useState, useEffect, useRef, useCallback } from "react"
 import { useSession } from "next-auth/react"
 import { cn } from "@/lib/utils"
 import {
-  ArrowLeft, Send, Bot, Info, Plus, ChevronDown, AtSign,
+  ArrowLeft, Send, Bot, Info, Plus, ChevronDown,
   Users, X, Trash2, UserPlus, Crown, Shield, AlertTriangle,
-  Check, Loader2, Globe, Lock, MoreVertical, LogOut, Settings,
+  Check, Loader2, Globe, Lock, MoreVertical, LogOut, Settings, ImagePlus,
 } from "lucide-react"
 import { TEXT_MODELS } from "@/lib/models"
 import { calculateCreditCost } from "@/lib/credits"
@@ -59,6 +59,8 @@ interface RoomDetail extends RoomSummary {
 interface SidebarProps {
   isOpen: boolean
   onClose: () => void
+  width: number
+  onWidthChange: (width: number) => void
   isRunning?: boolean
 }
 
@@ -83,13 +85,28 @@ function getRoomDisplayName(room: RoomSummary, meId: string): string {
   return others.map((m) => m.name?.split(" ")[0] ?? "?").join(", ")
 }
 
-/** Detect @model-id mention in text, return matched model id or null */
-function detectAtMention(text: string): string | null {
-  for (const model of TEXT_MODELS) {
-    const escaped = model.id.replace(/\./g, "\\.").replace(/\+/g, "\\+")
-    if (new RegExp(`@${escaped}(?:\\s|$)`, "i").test(text)) return model.id
-  }
-  return null
+/** Detect @Rify mention */
+function detectRifyMention(text: string): boolean {
+  return /(^|\s)@Rify(?=\s|$)/i.test(text)
+}
+
+function parseMessageContent(content: string): { text: string; imageUrls: string[] } {
+  const imageUrls: string[] = []
+  const text = content
+    .replace(/\[\[image:(.+?)\]\]/g, (_m, p1: string) => {
+      imageUrls.push(String(p1).trim())
+      return ""
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+  return { text, imageUrls }
+}
+
+function messagePreview(content: string): string {
+  const { text, imageUrls } = parseMessageContent(content)
+  if (text) return text
+  if (imageUrls.length > 0) return "[Image]"
+  return ""
 }
 
 const ROLE_LABEL: Record<string, string> = { owner: "Owner", admin: "Admin", member: "" }
@@ -267,13 +284,13 @@ function RoomItem({
         <p className={cn("text-xs truncate mt-0.5", room.unreadCount > 0 ? "text-slate-600" : "text-slate-400")}>
           {last ? (
             last.isAI ? (
-              <><span className="text-violet-400">AI: </span>{last.content}</>
+              <><span className="text-violet-400">Rify: </span>{messagePreview(last.content)}</>
             ) : last.isMe ? (
-              <><span className="text-slate-400">You: </span>{last.content}</>
+              <><span className="text-slate-400">You: </span>{messagePreview(last.content)}</>
             ) : isGroup && last.senderName ? (
-              <><span className="text-slate-500">{last.senderName.split(" ")[0]}: </span>{last.content}</>
+              <><span className="text-slate-500">{last.senderName.split(" ")[0]}: </span>{messagePreview(last.content)}</>
             ) : (
-              last.content
+              messagePreview(last.content)
             )
           ) : (
             <span className="italic">No messages yet</span>
@@ -288,9 +305,11 @@ function RoomItem({
 // Main Sidebar
 // ─────────────────────────────────────────────
 
-export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }: SidebarProps) {
+export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChange, isRunning = false }: SidebarProps) {
   const { data: session } = useSession()
   const meId = session?.user?.id ?? ""
+  const SIDEBAR_MIN_WIDTH = 260
+  const SIDEBAR_MAX_WIDTH = 560
 
   const [isInitial, setIsInitial] = useState(true)
   const [view, setView] = useState<"list" | "new" | "chat" | "detail">("list")
@@ -307,12 +326,10 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
 
   // Chat input
   const [inputText, setInputText] = useState("")
+  const [attachedImages, setAttachedImages] = useState<Array<{ file: File; preview: string }>>([])
   const [sending, setSending] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
   const [creditError, setCreditError] = useState<string | null>(null)
-
-  // @ mention picker
-  const [atPickerOpen, setAtPickerOpen] = useState(false)
 
   // Model params per room per model — { roomId: { modelId: { paramKey: value } } }
   const [roomModelParams, setRoomModelParams] = useState<Record<string, Record<string, Record<string, string>>>>({})
@@ -342,11 +359,47 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesTopRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const atPickerRef = useRef<HTMLDivElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const prevScrollHeightRef = useRef(0)
   const msgContainerRef = useRef<HTMLDivElement>(null)
+  const isResizingRef = useRef(false)
+  const resizeStartXRef = useRef(0)
+  const resizeStartWidthRef = useRef(width)
 
   const effectiveOpen = isOpen && !isRunning
+
+  const stopResize = useCallback(() => {
+    if (!isResizingRef.current) return
+    isResizingRef.current = false
+    document.body.style.cursor = ""
+    document.body.style.userSelect = ""
+    window.removeEventListener("pointermove", handleResizeMove)
+    window.removeEventListener("pointerup", stopResize)
+    window.removeEventListener("pointercancel", stopResize)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleResizeMove = useCallback((e: PointerEvent) => {
+    if (!isResizingRef.current) return
+    const delta = e.clientX - resizeStartXRef.current
+    const next = resizeStartWidthRef.current + delta
+    onWidthChange(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, next)))
+  }, [onWidthChange])
+
+  const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!effectiveOpen || isRunning) return
+    e.preventDefault()
+    isResizingRef.current = true
+    resizeStartXRef.current = e.clientX
+    resizeStartWidthRef.current = width
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+    window.addEventListener("pointermove", handleResizeMove)
+    window.addEventListener("pointerup", stopResize)
+    window.addEventListener("pointercancel", stopResize)
+  }, [effectiveOpen, handleResizeMove, isRunning, stopResize, width])
+
+  useEffect(() => stopResize, [stopResize])
 
   // Current room's model params
   const currentRoomId = activeRoom?.id ?? ""
@@ -368,16 +421,11 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
     []
   )
 
-  // ── Close @ picker when clicking outside ─────────────────────────────────
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (atPickerRef.current && !atPickerRef.current.contains(e.target as Node)) {
-        setAtPickerOpen(false)
-      }
+    return () => {
+      attachedImages.forEach((img) => URL.revokeObjectURL(img.preview))
     }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [])
+  }, [attachedImages])
 
   // ── Fetch room list ───────────────────────────────────────────────────────
   const fetchRooms = useCallback(async () => {
@@ -441,6 +489,7 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
     setIsInitial(false)
     setActiveRoom({ ...room, messages: [] })
     setInputText("")
+    setAttachedImages([])
     setCreditError(null)
     setView("chat")
     setMessagesLoading(true)
@@ -504,9 +553,31 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
 
   // ── Send message ──────────────────────────────────────────────────────────
   const handleSend = async () => {
-    if (!activeRoom || !inputText.trim() || sending || aiLoading) return
-    const content = inputText.trim()
+    if (!activeRoom || sending || aiLoading) return
+    const rawText = inputText.trim()
+    if (!rawText && attachedImages.length === 0) return
+
+    let imageMarkers = ""
+    if (attachedImages.length > 0) {
+      const urls: string[] = []
+      for (const img of attachedImages) {
+        try {
+          const form = new FormData()
+          form.append("file", img.file)
+          const up = await fetch("/api/upload", { method: "POST", body: form })
+          const json = await up.json() as { url?: string }
+          if (up.ok && json.url) urls.push(json.url)
+        } catch {}
+      }
+      imageMarkers = urls.map((u) => `[[image:${u}]]`).join("\n")
+    }
+
+    const content = [rawText, imageMarkers].filter(Boolean).join(rawText && imageMarkers ? "\n" : "")
+    if (!content.trim()) return
+
     setInputText("")
+    attachedImages.forEach((img) => URL.revokeObjectURL(img.preview))
+    setAttachedImages([])
     setCreditError(null)
     if (textareaRef.current) textareaRef.current.style.height = "auto"
     setSending(true)
@@ -535,9 +606,9 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
           .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
       )
 
-      // Detect @model mention → trigger AI
-      const mentionedModel = detectAtMention(content)
-      if (mentionedModel) {
+      // Detect @Rify mention → trigger AI with selected detail model
+      if (detectRifyMention(content)) {
+        const selectedModel = detailModel
         setAiLoading(true)
         try {
           const isGroup = activeRoom.members.length > 2
@@ -547,11 +618,11 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
             return { role: "user" as const, content: prefix + m.content }
           })
 
-          const params = getModelParams(activeRoom.id, mentionedModel)
+          const params = getModelParams(activeRoom.id, selectedModel)
           const aiR = await fetch(`/api/rooms/${activeRoom.id}/ai`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: mentionedModel, messages: history, modelParams: params }),
+            body: JSON.stringify({ model: selectedModel, messages: history, modelParams: params }),
           })
 
           if (aiR.status === 402) {
@@ -575,21 +646,37 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
     } finally { setSending(false) }
   }
 
-  // ── @ picker: insert model mention ───────────────────────────────────────
-  const insertAtMention = (modelId: string) => {
+  const insertRifyMention = () => {
     const ta = textareaRef.current
-    setAtPickerOpen(false)
-    if (!ta) { setInputText((v) => `@${modelId} ${v}`); return }
+    if (!ta) { setInputText((v) => `@Rify ${v}`.trim()); return }
     const pos = ta.selectionStart ?? inputText.length
     const before = inputText.slice(0, pos)
     const after = inputText.slice(pos)
-    const insert = `@${modelId} `
+    const insert = "@Rify "
     const newVal = before + insert + after
     setInputText(newVal)
     setTimeout(() => {
       ta.focus()
       ta.setSelectionRange(pos + insert.length, pos + insert.length)
     }, 10)
+  }
+
+  const handleAttachImages = (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const next: Array<{ file: File; preview: string }> = []
+    Array.from(files).forEach((file) => {
+      if (!file.type.startsWith("image/")) return
+      next.push({ file, preview: URL.createObjectURL(file) })
+    })
+    if (next.length > 0) setAttachedImages((prev) => [...prev, ...next])
+  }
+
+  const removeAttachedImage = (index: number) => {
+    setAttachedImages((prev) => {
+      const item = prev[index]
+      if (item) URL.revokeObjectURL(item.preview)
+      return prev.filter((_, i) => i !== index)
+    })
   }
 
   // ── Add member ────────────────────────────────────────────────────────────
@@ -723,11 +810,12 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
   return (
     <aside
       className={cn(
-        "absolute left-0 top-0 bottom-0 z-20 w-[320px] flex flex-col overflow-hidden",
+        "absolute left-0 top-0 bottom-0 z-20 flex flex-col overflow-hidden",
         "transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]",
         "bg-white/72 backdrop-blur-md border-r border-slate-200/40 shadow-2xl shadow-black/[0.06]",
         effectiveOpen ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-full pointer-events-none"
       )}
+      style={{ width }}
     >
       {/* RIFFLOW intro — fades after first interaction */}
       <div
@@ -841,7 +929,7 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
                 />
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Add members after creating. Use <span className="font-mono text-violet-500 bg-violet-50 px-1 rounded">@model</span> in any message to invoke AI.
+                Add members after creating. Use <span className="font-mono text-violet-500 bg-violet-50 px-1 rounded">@Rify</span> to invoke AI.
               </p>
               <button
                 disabled={creating}
@@ -922,7 +1010,7 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
                   </div>
                   <p className="text-sm font-medium text-slate-600">{getRoomDisplayName(activeRoom, meId)}</p>
                   <p className="text-xs text-slate-400 mt-1">
-                    Say something, or use <span className="font-mono text-violet-500">@model</span> to invoke AI
+                    Say something, or use <span className="font-mono text-violet-500">@Rify</span> to invoke AI
                   </p>
                 </div>
               )}
@@ -940,7 +1028,7 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
                               <Bot size={9} className="text-white" />
                             </div>
                             <span className="text-[10px] text-violet-400 font-medium">
-                              {TEXT_MODELS.find((m) => m.id === msg.aiModel)?.name ?? "AI"}
+                              Rify
                             </span>
                           </>
                         ) : msg.senderImage ? (
@@ -964,7 +1052,24 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
                           : "bg-slate-100/90 text-slate-800 rounded-bl-sm"
                       )}
                     >
-                      <p className="whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
+                      {(() => {
+                        const parsed = parseMessageContent(msg.content)
+                        return (
+                          <>
+                            {parsed.text && (
+                              <p className="whitespace-pre-wrap break-words leading-relaxed">{parsed.text}</p>
+                            )}
+                            {parsed.imageUrls.length > 0 && (
+                              <div className={cn("grid gap-1.5 mt-1.5", parsed.imageUrls.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
+                                {parsed.imageUrls.map((url, idx) => (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img key={`${url}-${idx}`} src={url} alt="attachment" className="rounded-lg w-full max-h-44 object-cover border border-black/5" />
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        )
+                      })()}
                       <p className={cn("text-[10px] mt-1", msg.isMe ? "text-blue-100" : "text-slate-400")}>
                         {formatTime(msg.createdAt)}
                       </p>
@@ -1003,50 +1108,53 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
 
             {/* Input area */}
             <div className="flex-shrink-0 border-t border-slate-100/80">
-              {/* Hint row */}
-              <div className="px-3 pt-1.5 pb-0.5">
-                <p className="text-[10px] text-slate-300">
-                  Use <span className="font-mono text-violet-400">@model</span> to invoke AI · credits deducted from you
-                </p>
+              <div className="px-3 pt-1.5 pb-1 flex items-center gap-1.5">
+                <button
+                  onClick={insertRifyMention}
+                  className="h-6 px-2 rounded-md text-[11px] font-medium bg-violet-50 text-violet-600 hover:bg-violet-100 transition-colors inline-flex items-center gap-1"
+                  title="Mention Rify"
+                >
+                  @Rify
+                </button>
+                <button
+                  onClick={() => imageInputRef.current?.click()}
+                  className="h-6 px-2 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors inline-flex items-center gap-1"
+                  title="Attach image"
+                >
+                  <ImagePlus size={11} />
+                  Image
+                </button>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    handleAttachImages(e.target.files)
+                    e.currentTarget.value = ""
+                  }}
+                />
               </div>
 
-              <div className="flex items-end gap-2 px-3 pb-3 pt-1 relative">
-                {/* @ button */}
-                <div ref={atPickerRef} className="relative flex-shrink-0 self-end mb-0.5">
-                  <button
-                    onClick={() => setAtPickerOpen((v) => !v)}
-                    className={cn(
-                      "w-8 h-8 rounded-lg flex items-center justify-center transition-all",
-                      atPickerOpen ? "bg-violet-500 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                    )}
-                    title="Mention AI model"
-                  >
-                    <AtSign size={15} />
-                  </button>
-
-                  {/* Model picker popup */}
-                  {atPickerOpen && (
-                    <div className="absolute bottom-full left-0 mb-2 w-[220px] bg-white rounded-xl border border-slate-200 shadow-xl z-50 py-1.5 max-h-[260px] overflow-y-auto custom-scrollbar">
-                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest px-3 py-1">Invoke AI Model</p>
-                      {TEXT_MODELS.map((m) => {
-                        const cost = calculateCreditCost(m.id)
-                        return (
-                          <button
-                            key={m.id}
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-violet-50 transition-colors flex items-center justify-between gap-2"
-                            onClick={() => insertAtMention(m.id)}
-                          >
-                            <div className="flex items-center gap-2">
-                              <Bot size={11} className="text-violet-400 flex-shrink-0" />
-                              <span className="font-medium text-slate-700">{m.name}</span>
-                            </div>
-                            <span className="text-[10px] text-slate-400 flex-shrink-0">{cost}cr</span>
-                          </button>
-                        )
-                      })}
+              {attachedImages.length > 0 && (
+                <div className="px-3 pb-1.5 flex gap-2 overflow-x-auto custom-scrollbar">
+                  {attachedImages.map((img, i) => (
+                    <div key={`${img.file.name}-${i}`} className="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-200 bg-slate-50 flex-shrink-0">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.preview} alt={img.file.name} className="w-full h-full object-cover" />
+                      <button
+                        onClick={() => removeAttachedImage(i)}
+                        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/55 text-white flex items-center justify-center"
+                      >
+                        <X size={10} />
+                      </button>
                     </div>
-                  )}
+                  ))}
                 </div>
+              )}
+
+              <div className="flex items-end gap-2 px-3 pb-3 pt-1 relative">
 
                 <textarea
                   ref={textareaRef}
@@ -1060,17 +1168,17 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
                     t.style.height = "auto"
                     t.style.height = Math.min(t.scrollHeight, 120) + "px"
                   }}
-                  placeholder="Message… or @model to invoke AI"
+                  placeholder="Message…"
                   rows={1}
                   maxLength={2000}
                   className="flex-1 resize-none outline-none text-sm bg-slate-100 rounded-xl px-3 py-2 placeholder-slate-400 text-slate-800 min-h-[36px] max-h-[120px]"
                 />
                 <button
                   onClick={handleSend}
-                  disabled={!inputText.trim() || sending || aiLoading}
+                  disabled={(!inputText.trim() && attachedImages.length === 0) || sending || aiLoading}
                   className={cn(
                     "w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all self-end",
-                    inputText.trim() && !sending && !aiLoading
+                    (inputText.trim() || attachedImages.length > 0) && !sending && !aiLoading
                       ? "bg-blue-500 text-white shadow-md shadow-blue-200 hover:bg-blue-600 active:scale-95"
                       : "bg-slate-100 text-slate-300"
                   )}
@@ -1279,7 +1387,7 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
               <div className="px-4 py-4 border-b border-slate-100">
                 <h4 className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">AI Model Settings</h4>
                 <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
-                  Configure params for each model. Settings are remembered per conversation. Use <span className="font-mono text-violet-500">@model</span> in chat to invoke.
+                  Configure params for each model. Settings are remembered per conversation. Use <span className="font-mono text-violet-500">@Rify</span> in chat to invoke.
                 </p>
 
                 {/* Model selector */}
@@ -1384,6 +1492,17 @@ export default function Sidebar({ isOpen, onClose: _onClose, isRunning = false }
         )}
 
       </div>
+
+      {/* Resize handle */}
+      <div
+        className={cn(
+          "absolute right-0 top-0 h-full w-1.5 cursor-col-resize z-30",
+          "bg-transparent",
+          !effectiveOpen && "pointer-events-none"
+        )}
+        onPointerDown={handleResizeStart}
+        title="Drag to resize sidebar"
+      />
     </aside>
   )
 }

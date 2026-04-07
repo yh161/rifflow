@@ -96,16 +96,9 @@ export const HybridEditor = memo(function HybridEditor({
     return (texts.length === 0 ? [''] : texts).map(t => ({ id: makeLineId(), text: t }))
   })
   // No line active initially — user clicks to choose where to edit
-  const [activeIdx, setActiveIdx] = useState(-1)
-
-  // For blank nodes: entering edit mode should immediately focus the first line.
-  useEffect(() => {
-    if (!editable) return
-    if (activeIdx >= 0) return
-    if (lines.length === 1 && lines[0].text === '') {
-      setActiveIdx(0)
-    }
-  }, [editable, activeIdx, lines])
+  const [activeIdx, setActiveIdx] = useState(() => (
+    editable && initialContent === '' ? 0 : -1
+  ))
 
   const linesRef = useRef(lines)
   useEffect(() => {
@@ -592,7 +585,7 @@ export const NodeUI = ({
     borderRadius: 14,
     borderColor: isSelected || isEditing
       ? 'rgba(59,130,246,0.62)'
-      : data.mode === 'done'
+      : (data.done === true || data.mode === 'note')
         ? 'rgba(59,130,246,0.52)'
         : 'rgba(100,116,139,0.36)',
     boxShadow: isSelected

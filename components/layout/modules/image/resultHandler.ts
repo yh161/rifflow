@@ -7,17 +7,18 @@ import type { ResultHandlerContext } from '../_registry'
  * Then measures natural dimensions and resizes the node.
  */
 export async function resultHandler(
-  result: Record<string, any>,
+  result: Record<string, unknown>,
   ctx: ResultHandlerContext,
 ): Promise<void> {
   let src: string
 
-  if (result.src) {
+  if (typeof result.src === 'string' && result.src.length > 0) {
     src = result.src as string
   } else {
     // Legacy b64 format — upload from client
-    const mime   = result.mime || 'image/png'
-    const binary = atob(result.b64)
+    const mime   = typeof result.mime === 'string' ? result.mime : 'image/png'
+    const b64    = typeof result.b64 === 'string' ? result.b64 : ''
+    const binary = atob(b64)
     const ab     = new ArrayBuffer(binary.length)
     const ia     = new Uint8Array(ab)
     for (let i = 0; i < binary.length; i++) ia[i] = binary.charCodeAt(i)
@@ -60,6 +61,7 @@ export async function resultHandler(
         naturalHeight: nh,
         width:         w,
         height:        h,
+        done:          true,
         isGenerating:  false,
         activeJobId:   undefined,
       },

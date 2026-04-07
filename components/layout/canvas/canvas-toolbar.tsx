@@ -10,6 +10,7 @@ import type { SyncStatus } from "@/hooks/useAutosave"
 
 interface CanvasToolbarProps {
   isSidebarOpen:          boolean
+  sidebarWidth?:          number
   isRunning:              boolean
   snapToGrid:             boolean
   onSnapToggle:           () => void
@@ -145,7 +146,7 @@ function SyncBadge({ status }: { status?: SyncStatus }) {
 }
 
 export default function CanvasToolbar({
-  isSidebarOpen, isRunning, snapToGrid, onSnapToggle,
+  isSidebarOpen, sidebarWidth = 320, isRunning, snapToGrid, onSnapToggle,
   syncStatus,
   minimapOpen: propMinimapOpen,
   onMinimapToggle,
@@ -196,7 +197,7 @@ export default function CanvasToolbar({
     return () => window.removeEventListener("canvas:cover-change", handler)
   }, [])
 
-  const leftOffset = isSidebarOpen ? 336 : 16
+  const leftOffset = isSidebarOpen ? sidebarWidth + 16 : 16
 
   const handleFitView = () => {
     const all      = getNodes().filter(n => !n.hidden)
@@ -238,7 +239,7 @@ export default function CanvasToolbar({
     }
     const boundsW = maxX - minX
     const boundsH = maxY - minY
-    const sidebarW = isSidebarOpen ? 320 : 0
+    const sidebarW = isSidebarOpen ? sidebarWidth : 0
     const screenW  = window.innerWidth
     const screenH  = window.innerHeight
     const visibleX = sidebarW

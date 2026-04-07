@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 
 interface UserAvatarProps {
   isSidebarOpen: boolean
+  sidebarWidth?: number
   isRunning: boolean
 }
 
@@ -23,14 +24,14 @@ export function PtIcon({ className }: { className?: string }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-export default function UserAvatar({ isSidebarOpen, isRunning }: UserAvatarProps) {
+export default function UserAvatar({ isSidebarOpen, sidebarWidth = 320, isRunning }: UserAvatarProps) {
   const { data: session } = useSession()
   const [displayCredits, setDisplayCredits] = useState<number>(0)
   const [hovered,     setHovered]     = useState(false)
   const [dbImage,     setDbImage]     = useState<string | null>(null)
   const [dbName,      setDbName]      = useState<string | null>(null)
 
-  const leftOffset  = isSidebarOpen ? 320 + 16 : 16
+  const leftOffset  = isSidebarOpen ? sidebarWidth + 16 : 16
   const avatarUrl   = dbImage   ?? session?.user?.image   ?? undefined
   const displayName = dbName    ?? session?.user?.name    ?? session?.user?.email ?? "User"
   const initials    = displayName.charAt(0).toUpperCase()

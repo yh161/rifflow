@@ -4,17 +4,19 @@
  * Fixes existing ChatRooms that were created before the v2 schema:
  *   - Sets ownerId (picks earliest "admin" member, which in 1-to-1 rooms = the creator)
  *   - Promotes that member's role from "admin" → "owner"
+ *   - Optionally purges legacy DirectMessage rows (already migrated)
  *
- * Safe to run multiple times — skips rooms that already have ownerId set.
+ * Safe to run multiple times.
  *
  * Usage:
- *   DATABASE_URL=<gcp-url> npx tsx scripts/gcp-migrate-v2.ts [--dry-run]
+ *   DATABASE_URL=<gcp-url> npx tsx scripts/gcp-migrate-v2.ts [--dry-run] [--keep-dm]
  */
 
 import { PrismaPg } from "@prisma/adapter-pg"
 import { PrismaClient } from "@prisma/client"
 
 const isDryRun = process.argv.includes("--dry-run")
+const keepDm = process.argv.includes("--keep-dm")
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! })
 const prisma = new PrismaClient({ adapter })
@@ -23,23 +25,28 @@ async function main() {
   if (isDryRun) console.log("🔍 DRY RUN — no writes\n")
 
   // Audit
-  const [roomCount, memberCount, msgCount] = await Promise.all([
+  const [roomCount, memberCount, msgCount, dmCount] = await Promise.all([
     prisma.chatRoom.count(),
     prisma.chatMember.count(),
     prisma.chatMessage.count(),
+    prisma.directMessage.count(),
   ])
   const roomsMissingOwner = await prisma.chatRoom.count({ where: { ownerId: null } })
-  const staleAdmins = await prisma.chatMember.count({ where: { role: "admin" } })
+  const ownerMembers = await prisma.chatMember.count({ where: { role: "owner" } })
+  const adminMembers = await prisma.chatMember.count({ where: { role: "admin" } })
 
   console.log("=== Current state ===")
   console.log(`  ChatRoom    : ${roomCount}`)
   console.log(`  ChatMember  : ${memberCount}`)
   console.log(`  ChatMessage : ${msgCount}`)
+  console.log(`  DirectMessage : ${dmCount}`)
   console.log(`  Missing ownerId : ${roomsMissingOwner}`)
-  console.log(`  Stale admin roles : ${staleAdmins}\n`)
+  console.log(`  Members with role=owner : ${ownerMembers}`)
+  console.log(`  Members with role=admin : ${adminMembers}`)
+  console.log(`  Legacy DM purge : ${keepDm ? "skip" : "enabled"}\n`)
 
-  if (roomsMissingOwner === 0 && staleAdmins === 0) {
-    console.log("✅ All rooms already in v2 format. Nothing to do.")
+  if (roomsMissingOwner === 0 && (keepDm || dmCount === 0)) {
+    console.log("✅ Rooms already in v2 format and no DM purge needed. Nothing to do.")
     return
   }
 
@@ -53,11 +60,13 @@ async function main() {
 
   let fixed = 0
   let skipped = 0
+  let dmDeleted = 0
 
   for (const room of roomsToFix) {
-    // Pick owner: earliest "admin", else earliest "member"
+    // Pick owner: earliest "admin", else earliest member
     const ownerMember =
       room.members.find((m) => m.role === "admin") ??
+      room.members.find((m) => m.role === "owner") ??
       room.members[0]
 
     if (!ownerMember) {
@@ -89,15 +98,30 @@ async function main() {
     fixed++
   }
 
-  console.log(`\nFixed: ${fixed} | Skipped: ${skipped}`)
+  if (!keepDm) {
+    if (isDryRun) {
+      if (dmCount > 0) {
+        console.log(`  [dry-run] Would delete ${dmCount} DirectMessage rows`)
+      }
+    } else {
+      const deleted = await prisma.directMessage.deleteMany({})
+      dmDeleted = deleted.count
+      console.log(`  🧹 Deleted DirectMessage rows: ${dmDeleted}`)
+    }
+  }
+
+  console.log(`\nFixed rooms: ${fixed} | Skipped rooms: ${skipped}`)
+  if (!keepDm) {
+    console.log(`Purged DirectMessage rows: ${isDryRun ? dmCount : dmDeleted}`)
+  }
 
   if (!isDryRun) {
     const remaining = await prisma.chatRoom.count({ where: { ownerId: null } })
-    const remainingAdmins = await prisma.chatMember.count({ where: { role: "admin" } })
-    if (remaining === 0 && remainingAdmins === 0) {
+    const remainingDm = await prisma.directMessage.count()
+    if (remaining === 0 && (keepDm || remainingDm === 0)) {
       console.log("\n🎉 Migration complete.")
     } else {
-      console.log(`\n⚠️  Still ${remaining} rooms missing ownerId, ${remainingAdmins} stale admins.`)
+      console.log(`\n⚠️  Still ${remaining} rooms missing ownerId, ${remainingDm} DirectMessage rows.`)
     }
   }
 }

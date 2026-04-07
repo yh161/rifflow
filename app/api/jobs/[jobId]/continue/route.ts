@@ -6,6 +6,51 @@ import { WorkflowEngine } from "@/app/services/workflow.service"
 import type { TemplateJobResult } from "@/app/services/job.service"
 import type { Prisma } from "@prisma/client"
 
+type TemplateWorkflowStatusRecord = NonNullable<TemplateJobResult['workflowNodeStatuses']>
+
+function buildWorkflowNodeStatuses(
+  workflow: {
+    id: string
+    results: Prisma.JsonValue | null
+    jobs: Array<{
+      id: string
+      nodeId: string
+      nodeType: string
+      status: string
+      error: string | null
+    }>
+  },
+): TemplateWorkflowStatusRecord {
+  const nodeStatuses: TemplateWorkflowStatusRecord = {}
+
+  for (const job of workflow.jobs) {
+    nodeStatuses[job.nodeId] = {
+      nodeId: job.nodeId,
+      nodeType: job.nodeType,
+      status: job.status,
+      jobId: job.id,
+      error: job.error,
+    }
+  }
+
+  const rawResults = (workflow.results ?? {}) as Record<string, unknown>
+  const workflowMeta = (rawResults.__workflow ?? {}) as { nodeStates?: Record<string, string> }
+  const nodeStates = workflowMeta.nodeStates ?? {}
+
+  for (const [nodeId, gateState] of Object.entries(nodeStates)) {
+    if (nodeStatuses[nodeId]) continue
+    nodeStatuses[nodeId] = {
+      nodeId,
+      nodeType: 'unknown',
+      status: gateState,
+      jobId: '',
+      error: null,
+    }
+  }
+
+  return nodeStatuses
+}
+
 // ─────────────────────────────────────────────
 // POST /api/jobs/[jobId]/continue
 //
@@ -22,9 +67,9 @@ import type { Prisma } from "@prisma/client"
 //   }>
 // }
 //
-// This fires off WorkflowEngine for each instance sequentially,
-// updates job.result.workflowProgress after each, and sets
-// job.status='done' when all complete.
+// This starts one WorkflowEngine run per template instance (same engine as lasso),
+// stores workflowJobIds on template job.result, and then aggregates progress
+// by reading workflow job statuses from DB.
 // ─────────────────────────────────────────────
 export async function POST(
   req: NextRequest,
@@ -63,11 +108,36 @@ export async function POST(
     return NextResponse.json({ error: "instances array is required" }, { status: 400 })
   }
 
-  // Transition to executing_workflows immediately
+  // Start one workflow per instance using the same engine/path as lasso
+  const engine = new WorkflowEngine()
+  const workflowJobIds: string[] = []
+
+  for (let i = 0; i < instances.length; i++) {
+    const { nodes, edges } = instances[i]
+    const startRes = await engine.executeWorkflow(session.user.id, { nodes, edges })
+    if (!startRes.success || !startRes.workflowJobId) {
+      return NextResponse.json(
+        { error: `Failed to start workflow for instance ${instances[i]?.instanceIdx ?? i}` },
+        { status: 500 },
+      )
+    }
+    workflowJobIds.push(startRes.workflowJobId)
+  }
+
+  // Transition to executing_workflows immediately (with workflow references)
   const initResult: TemplateJobResult = {
     ...existingResult,
     stage:            "executing_workflows",
     workflowProgress: { current: 0, total: instances.length },
+    workflowJobIds,
+    workflowNodeStatuses: {},
+    workflowSummary: {
+      queued: instances.length,
+      running: 0,
+      completed: 0,
+      failed: 0,
+      total: instances.length,
+    },
     instanceResults:  {},
   }
   await prisma.job.update({
@@ -75,67 +145,153 @@ export async function POST(
     data:  { result: initResult as unknown as Prisma.InputJsonValue },
   })
 
-  // Fire-and-forget: execute each instance workflow sequentially
-  void runTemplateWorkflows(jobId, session.user.id, instances, existingResult)
+  // Fire-and-forget: aggregate running status until all workflow jobs settle
+  void monitorTemplateWorkflows(jobId, workflowJobIds, existingResult)
 
   return NextResponse.json({ ok: true })
 }
 
 // ─────────────────────────────────────────────
-// runTemplateWorkflows — runs in the background
+// monitorTemplateWorkflows — runs in the background
 // ─────────────────────────────────────────────
-async function runTemplateWorkflows(
-  jobId:          string,
-  userId:         string,
-  instances:      Array<{
-    instanceIdx: number
-    nodes: Array<{ id: string; type: string; data: Record<string, unknown> }>
-    edges: Array<{ id: string; source: string; target: string }>
-  }>,
+async function monitorTemplateWorkflows(
+  jobId: string,
+  workflowJobIds: string[],
   existingResult: TemplateJobResult,
 ): Promise<void> {
-  const engine          = new WorkflowEngine()
-  const allResults:      Record<string, unknown> = {}
-  const total           = instances.length
+  const total = workflowJobIds.length
+
+  if (total === 0) {
+    await prisma.job.update({
+      where: { id: jobId },
+      data: {
+        status: "done",
+        result: {
+          ...existingResult,
+          stage: "done",
+          workflowProgress: { current: 0, total: 0 },
+          workflowJobIds: [],
+          workflowSummary: { queued: 0, running: 0, completed: 0, failed: 0, total: 0 },
+          instanceResults: {},
+        } as unknown as Prisma.InputJsonValue,
+      },
+    })
+    return
+  }
 
   try {
-    for (let i = 0; i < instances.length; i++) {
-      const { nodes, edges } = instances[i]
+    const allResults: Record<string, unknown> = {}
 
-      // Start workflow for this instance
-      const { workflowJobId, success } = await engine.executeWorkflow(userId, { nodes, edges })
-      if (!success) {
-        console.error(`[template/continue] Instance ${i} workflow failed to start`)
-        continue
+    while (true) {
+      const workflows = await prisma.workflowJob.findMany({
+        where: { id: { in: workflowJobIds } },
+        include: {
+          jobs: {
+            select: {
+              id: true,
+              nodeId: true,
+              nodeType: true,
+              status: true,
+              error: true,
+            },
+          },
+        },
+      })
+
+      const statusById = new Map(workflows.map((wf) => [wf.id, wf]))
+      const allNodeStatuses: TemplateWorkflowStatusRecord = {}
+
+      for (const wf of workflows) {
+        Object.assign(allNodeStatuses, buildWorkflowNodeStatuses(wf))
       }
 
-      // Poll DB directly until workflow completes (no HTTP round-trip)
-      const wfResult = await waitForWorkflow(workflowJobId)
-      if (wfResult) {
-        Object.assign(allResults, wfResult)
+      let queued = 0
+      let running = 0
+      let completed = 0
+      let failed = 0
+
+      for (const wfId of workflowJobIds) {
+        const wf = statusById.get(wfId)
+        const status = wf?.status
+        if (!status || status === "pending") {
+          queued += 1
+          continue
+        }
+        if (status === "running") {
+          running += 1
+          continue
+        }
+        if (status === "completed") {
+          completed += 1
+          const wfResults = (wf?.results ?? {}) as Record<string, unknown>
+          for (const [key, value] of Object.entries(wfResults)) {
+            if (key === "__workflow") continue
+            allResults[key] = value
+          }
+          continue
+        }
+        if (status === "failed") {
+          failed += 1
+          continue
+        }
       }
 
-      // Update progress in job.result after each instance
-      const current   = i + 1
+      const current = completed + failed
       const progResult: TemplateJobResult = {
         ...existingResult,
-        stage:            "executing_workflows",
+        stage: "executing_workflows",
         workflowProgress: { current, total },
-        instanceResults:  allResults,
+        workflowJobIds,
+        workflowNodeStatuses: allNodeStatuses,
+        workflowSummary: { queued, running, completed, failed, total },
+        instanceResults: allResults,
       }
+
       await prisma.job.update({
         where: { id: jobId },
-        data:  { result: progResult as unknown as Prisma.InputJsonValue },
+        data: { result: progResult as unknown as Prisma.InputJsonValue },
       })
+
+      if (current >= total) break
+      await new Promise((r) => setTimeout(r, 800))
     }
 
-    // All instances done
+    // All workflows reached terminal states
+    const finalWorkflows = await prisma.workflowJob.findMany({
+      where: { id: { in: workflowJobIds } },
+      include: {
+        jobs: {
+          select: {
+            id: true,
+            nodeId: true,
+            nodeType: true,
+            status: true,
+            error: true,
+          },
+        },
+      },
+    })
+    const finalNodeStatuses: TemplateWorkflowStatusRecord = {}
+    for (const wf of finalWorkflows) {
+      Object.assign(finalNodeStatuses, buildWorkflowNodeStatuses(wf))
+    }
+
     const doneResult: TemplateJobResult = {
       ...existingResult,
-      stage:            "done",
+      stage: "done",
       workflowProgress: { current: total, total },
-      instanceResults:  allResults,
+      workflowJobIds,
+      workflowNodeStatuses: finalNodeStatuses,
+      workflowSummary: {
+        queued: 0,
+        running: 0,
+        completed: finalWorkflows.filter((wf) => wf.status === "completed").length,
+        failed: finalWorkflows.filter((wf) => wf.status === "failed").length,
+        total,
+      },
+      instanceResults: allResults,
     }
+
     await prisma.job.update({
       where: { id: jobId },
       data: {
@@ -145,7 +301,7 @@ async function runTemplateWorkflows(
     })
 
   } catch (err: unknown) {
-    console.error("[template/continue] runTemplateWorkflows failed:", err)
+    console.error("[template/continue] monitorTemplateWorkflows failed:", err)
     await prisma.job.update({
       where: { id: jobId },
       data: {
@@ -154,39 +310,4 @@ async function runTemplateWorkflows(
       },
     })
   }
-}
-
-// ─────────────────────────────────────────────
-// waitForWorkflow — polls prisma until completed/failed
-// Returns the results map or null on failure
-// ─────────────────────────────────────────────
-async function waitForWorkflow(
-  workflowJobId: string,
-  timeoutMs = 10 * 60 * 1000, // 10 min max per instance
-): Promise<Record<string, unknown> | null> {
-  const deadline = Date.now() + timeoutMs
-  const POLL_MS  = 800
-
-  while (Date.now() < deadline) {
-    const wfJob = await prisma.workflowJob.findUnique({
-      where: { id: workflowJobId },
-    })
-
-    if (!wfJob) return null
-
-    if (wfJob.status === "completed") {
-      return (wfJob.results ?? {}) as Record<string, unknown>
-    }
-
-    if (wfJob.status === "failed") {
-      console.error(`[template/continue] Workflow ${workflowJobId} failed:`, wfJob.error)
-      return null
-    }
-
-    // pending | running → keep polling
-    await new Promise(r => setTimeout(r, POLL_MS))
-  }
-
-  console.error(`[template/continue] Workflow ${workflowJobId} timed out`)
-  return null
 }

@@ -2,7 +2,7 @@
 
 import { executeTextGeneration } from "./text.handler"
 import { calculateCreditCost } from "@/lib/credits"
-import type { JobHandler, HandlerContext } from "./types"
+import type { JobHandler } from "./types"
 import type { FilterItemParam } from "../job.service"
 
 function parseFilterLLMResponse(
@@ -41,8 +41,8 @@ export const filterHandler: JobHandler = {
       if (filterItems && filterItems.length > 0) {
         const parsed = parseFilterLLMResponse(rawContent, filterItems)
         filterResult = parsed ?? {
-          passed: filterItems.map(i => ({ id: i.id, label: i.label, type: i.type })),
-          filtered: [],
+          passed: [],
+          filtered: filterItems.map(i => ({ id: i.id, label: i.label, type: i.type })),
         }
       } else {
         filterResult = { passed: [], filtered: [] }

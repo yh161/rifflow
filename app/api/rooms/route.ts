@@ -31,34 +31,43 @@ export async function GET() {
       orderBy: { room: { updatedAt: "desc" } },
     })
 
-    const rooms = memberships.map((m) => {
-      const last = m.room.messages[0] ?? null
-      // Count messages after lastReadAt for unread badge
-      return {
-        id: m.room.id,
-        name: m.room.name,
-        ownerId: m.room.ownerId,
-        joinPermission: m.room.joinPermission,
-        updatedAt: m.room.updatedAt,
-        members: m.room.members.map((mb) => ({
-          id: mb.user.id,
-          name: mb.user.name,
-          image: mb.user.image,
-          role: mb.role,
-        })),
-        lastMessage: last
-          ? {
-              content: last.content,
-              createdAt: last.createdAt,
-              isMe: last.senderId === meId,
-              isAI: last.isAI,
-              senderName: last.sender?.name ?? null,
-            }
-          : null,
-        unreadCount: 0,
-        myRole: m.role,
-      }
-    })
+    const rooms = await Promise.all(
+      memberships.map(async (m) => {
+        const last = m.room.messages[0] ?? null
+        const unreadCount = await prisma.chatMessage.count({
+          where: {
+            roomId: m.room.id,
+            createdAt: { gt: m.lastReadAt },
+            NOT: { senderId: meId },
+          },
+        })
+
+        return {
+          id: m.room.id,
+          name: m.room.name,
+          ownerId: m.room.ownerId,
+          joinPermission: m.room.joinPermission,
+          updatedAt: m.room.updatedAt,
+          members: m.room.members.map((mb) => ({
+            id: mb.user.id,
+            name: mb.user.name,
+            image: mb.user.image,
+            role: mb.role,
+          })),
+          lastMessage: last
+            ? {
+                content: last.content,
+                createdAt: last.createdAt,
+                isMe: last.senderId === meId,
+                isAI: last.isAI,
+                senderName: last.sender?.name ?? null,
+              }
+            : null,
+          unreadCount,
+          myRole: m.role,
+        }
+      })
+    )
 
     return NextResponse.json({ rooms })
   } catch (error) {

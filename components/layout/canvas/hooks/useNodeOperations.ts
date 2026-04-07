@@ -6,6 +6,12 @@ import type { AnyNodeData } from "@/components/layout/modules/_types"
 import { CanvasState } from "./useCanvasState"
 import { MODULE_BY_ID } from "@/components/layout/modules/_registry"
 
+type HandleSide = 'left' | 'right' | 'top' | 'bottom'
+
+function sideToHandleType(side: HandleSide): 'source' | 'target' {
+  return (side === 'right' || side === 'bottom') ? 'source' : 'target'
+}
+
 /**
  * Node operations logic extracted from canvas.tsx.
  *
@@ -17,7 +23,6 @@ import { MODULE_BY_ID } from "@/components/layout/modules/_registry"
 export function useNodeOperations(canvasState: CanvasState) {
   const {
     nodesRef,
-    edgesRef,
     setNodes,
     setEdges,
     setPendingPos,
@@ -42,6 +47,47 @@ export function useNodeOperations(canvasState: CanvasState) {
     return { x: position.x - w / 2, y: position.y - h / 2 }
   }, [])
 
+  const getAnchoredNodePlacement = useCallback((
+    type: string,
+    anchor: { x: number; y: number },
+    desiredHandleType: 'source' | 'target',
+  ) => {
+    const mod = MODULE_BY_ID[type]
+    const w = (mod?.defaultData?.width as number | undefined) ?? 180
+    const h = (mod?.defaultData?.height as number | undefined) ?? 180
+    const handles = (mod?.handles as Array<{ id: string; side: HandleSide; offsetPercent?: number }> | undefined) ?? []
+
+    const candidates = handles.filter((hd) => sideToHandleType(hd.side) === desiredHandleType)
+
+    const preferredById = candidates.find((hd) => hd.id === (desiredHandleType === 'target' ? 'in' : 'out'))
+    const preferredByCenter = candidates
+      .slice()
+      .sort((a, b) => Math.abs((a.offsetPercent ?? 50) - 50) - Math.abs((b.offsetPercent ?? 50) - 50))[0]
+    const chosen = preferredById ?? preferredByCenter ?? null
+
+    if (!chosen) {
+      return {
+        position: centerPosition(type, anchor),
+        handleId: null as string | null,
+      }
+    }
+
+    const pct = (chosen.offsetPercent ?? 50) / 100
+    const anchorOffset =
+      chosen.side === 'left'
+        ? { x: 0, y: h * pct }
+        : chosen.side === 'right'
+          ? { x: w, y: h * pct }
+          : chosen.side === 'top'
+            ? { x: w * pct, y: 0 }
+            : { x: w * pct, y: h }
+
+    return {
+      position: { x: anchor.x - anchorOffset.x, y: anchor.y - anchorOffset.y },
+      handleId: chosen.id,
+    }
+  }, [centerPosition])
+
   const GHOST_NODE_ID = "__ghost_drop__"
   const GHOST_EDGE_ID = "__ghost_edge__"
 
@@ -57,6 +103,7 @@ export function useNodeOperations(canvasState: CanvasState) {
     flowPos: { x: number; y: number },
     sourceNodeId?: string,
     sourceHandleId?: string,
+    sourceHandleType?: 'source' | 'target',
   ) => {
     const ghostNode: Node = {
       id: GHOST_NODE_ID,
@@ -69,12 +116,13 @@ export function useNodeOperations(canvasState: CanvasState) {
     setNodes((ns) => [...ns.filter((n) => n.id !== GHOST_NODE_ID), ghostNode])
 
     if (sourceNodeId) {
+      const isFromTargetHandle = sourceHandleType === 'target'
       const ghostEdge: Edge = {
         id: GHOST_EDGE_ID,
-        source: sourceNodeId,
-        sourceHandle: sourceHandleId ?? null,
-        target: GHOST_NODE_ID,
-        targetHandle: "left",
+        source: isFromTargetHandle ? GHOST_NODE_ID : sourceNodeId,
+        sourceHandle: isFromTargetHandle ? 'right' : (sourceHandleId ?? null),
+        target: isFromTargetHandle ? sourceNodeId : GHOST_NODE_ID,
+        targetHandle: isFromTargetHandle ? (sourceHandleId ?? null) : 'left',
         style: { stroke: "#94a3b8", strokeWidth: 1.5, strokeDasharray: "5 4" },
         animated: false,
         deletable: false,
@@ -106,9 +154,10 @@ export function useNodeOperations(canvasState: CanvasState) {
     flowPos: { x: number; y: number },
     sourceNodeId?: string,
     sourceHandleId?: string,
+    sourceHandleType?: 'source' | 'target',
   ) => {
-    setQuickAddMenu({ flowPos, sourceNodeId, sourceHandleId })
-    if (sourceNodeId) placeGhost(flowPos, sourceNodeId, sourceHandleId)
+    setQuickAddMenu({ flowPos, sourceNodeId, sourceHandleId, sourceHandleType })
+    if (sourceNodeId) placeGhost(flowPos, sourceNodeId, sourceHandleId, sourceHandleType)
   }, [setQuickAddMenu, placeGhost])
 
   const dismissQuickAdd = useCallback(() => {
@@ -120,6 +169,7 @@ export function useNodeOperations(canvasState: CanvasState) {
     flowPos: { x: number; y: number }
     sourceNodeId?: string
     sourceHandleId?: string
+    sourceHandleType?: 'source' | 'target'
   } | null) => {
     if (!quickAddMenu) return
     const mod = MODULE_BY_ID[type]
@@ -130,13 +180,16 @@ export function useNodeOperations(canvasState: CanvasState) {
       ? nodesRef.current.find((n) => n.id === quickAddMenu.sourceNodeId)
       : null
 
-    // Calculate base position
-    const pos = quickAddMenu.sourceNodeId
-      ? (() => {
-          const h = (mod?.defaultData?.height as number | undefined) ?? 180
-          return { x: quickAddMenu.flowPos.x, y: quickAddMenu.flowPos.y - h / 2 }
-        })()
-      : centerPosition(type, quickAddMenu.flowPos)
+    // Calculate base position.
+    // If this is quick-add from a handle, anchor the new node so its to-be-connected
+    // handle sits at the exact drop/contact point.
+    const desiredNewNodeHandleType: 'source' | 'target' | null = quickAddMenu.sourceNodeId
+      ? (quickAddMenu.sourceHandleType === 'target' ? 'source' : 'target')
+      : null
+    const anchoredPlacement = desiredNewNodeHandleType
+      ? getAnchoredNodePlacement(type, quickAddMenu.flowPos, desiredNewNodeHandleType)
+      : null
+    const pos = anchoredPlacement?.position ?? centerPosition(type, quickAddMenu.flowPos)
 
     removeGhost()
 
@@ -197,18 +250,20 @@ export function useNodeOperations(canvasState: CanvasState) {
     setNodes((nds) => nds.concat(newNode))
 
     if (quickAddMenu.sourceNodeId) {
+      const isFromTargetHandle = quickAddMenu.sourceHandleType === 'target'
+      const newNodeHandleId = anchoredPlacement?.handleId ?? null
       setEdges((es) => addEdge({
-        source: quickAddMenu.sourceNodeId!,
-        sourceHandle: quickAddMenu.sourceHandleId ?? null,
-        target: id,
-        targetHandle: null,
+        source: isFromTargetHandle ? id : quickAddMenu.sourceNodeId!,
+        sourceHandle: isFromTargetHandle ? newNodeHandleId : (quickAddMenu.sourceHandleId ?? null),
+        target: isFromTargetHandle ? quickAddMenu.sourceNodeId! : id,
+        targetHandle: isFromTargetHandle ? (quickAddMenu.sourceHandleId ?? null) : newNodeHandleId,
       }, es))
     }
 
     clearQuickAddMenu()
 
     // New nodes no longer auto-open editor; user can double-click to open.
-  }, [centerPosition, removeGhost, nodesRef, setNodes, setEdges, clearQuickAddMenu, setEditorNodeId])
+  }, [centerPosition, removeGhost, nodesRef, setNodes, setEdges, clearQuickAddMenu, setEditorNodeId, getAnchoredNodePlacement])
 
   // ─────────────────────────────────────────────
   // Node editing operations

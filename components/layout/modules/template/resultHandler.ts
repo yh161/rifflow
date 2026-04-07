@@ -6,14 +6,17 @@ import type { TemplateJobResult } from '@/app/services/job.service'
  * Applies instanceResults to all instance nodes.
  */
 export async function resultHandler(
-  result: Record<string, any>,
+  result: Record<string, unknown>,
   ctx: ResultHandlerContext,
 ): Promise<void> {
   const templateResult     = result as TemplateJobResult
-  const instanceResults = (templateResult.instanceResults ?? {}) as Record<string, any>
+  const stage = templateResult.stage
+  const instanceResults = (templateResult.instanceResults ?? {}) as Record<string, unknown>
 
   ctx.setNodes(ns => ns.map(n => {
     if (n.id === ctx.nodeId) {
+      // Keep container running state until the template job is truly done.
+      if (stage !== 'done') return n
       return { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
     }
     const nodeResult = instanceResults[n.id]

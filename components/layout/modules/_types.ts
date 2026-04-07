@@ -52,6 +52,10 @@ export interface FilterResult {
   reply?: string  // LLM's explanation / reason for filtering
 }
 
+export interface FilterOutputRule {
+  range: string
+}
+
 export interface CustomNodeData {
   [key: string]: unknown
   label?: string
@@ -83,6 +87,7 @@ export interface CustomNodeData {
   pdfPreviewDpi?: number
   pdfIncludeCurrentPage?: boolean
   pdfIncludeCurrentPageDpi?: number
+  pdfAiRules?: Array<{ pages: string; dpi: number }>
   pdfPlanRaw?: string
   pdfPlanError?: string
   // container data (template)
@@ -93,6 +98,7 @@ export interface CustomNodeData {
   templateCountLegacy?: number
   currentInstance?: number   // -1 = template view, 0+ = instance index
   instanceCount?: number     // total instances (flat model)
+  templateResolvedInstanceCount?: number // known from template seeds JSON before instances are materialized
   // DEPRECATED — old array-based instances (kept for backward compatibility with saved drafts)
   instances?: TemplateInstance[]
   // flat instance fields (on child nodes)
@@ -106,7 +112,8 @@ export interface CustomNodeData {
   // LLM fields
   prompt?:       string
   model?:        string
-  mode?:         "auto" | "manual" | "done"
+  mode?:         "auto" | "manual" | "note"
+  done?:         boolean
   params?:       Record<string, string>  // generation params (duration, fps, style, etc.)
   isGenerating?: boolean
   generationProgress?: number
@@ -114,6 +121,10 @@ export interface CustomNodeData {
   generationError?: string
   // filter
   filterInputMode?: 'label' | 'content'
+  filterLatestInputOnly?: boolean
+  filterReversed?: boolean
+  filterOutputRules?: FilterOutputRule[]
+  filterSelectedIds?: string[]
   filterResult?: FilterResult
   // shared
   isExpanded?: boolean
@@ -129,7 +140,7 @@ export interface CustomNodeData {
 
 export type AnyNodeData = StandardNodeData & CustomNodeData & Record<string, unknown>
 
-export type NodeMode = "auto" | "manual" | "done"
+export type NodeMode = "auto" | "manual" | "note"
 
 export interface ModuleModalProps {
   data: AnyNodeData

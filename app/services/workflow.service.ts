@@ -15,6 +15,7 @@ export interface WorkflowNode {
     prompt?: string
     model?: string
     params?: Record<string, string>
+    mode?: string
     [key: string]: unknown
   }
 }
@@ -45,22 +46,93 @@ export interface WorkflowExecutionContext {
   budget: WorkflowBudget
 }
 
+export type WorkflowGateStatus =
+  | "queueing_in_workflow"
+  | "waiting_upstream"
+  | "queueing_job"
+  | "pending"
+  | "running"
+  | "done"
+  | "failed"
+  | "paused"
+  | "waiting_manual"
+
+interface WorkflowMetaState {
+  nodeStates: Record<string, WorkflowGateStatus>
+  nodeSignals?: Record<string, { signal: string; result?: unknown }>
+}
+
+const CONTROL_POLL_MS = 500
+
 /**
- * DAG-based Workflow Execution Engine
- * 
- * Core algorithm:
- * 1. Build adjacency list and in-degree map from edges
- * 2. Find all source nodes (in-degree = 0)
- * 3. Execute source nodes in parallel
- * 4. When a node completes, decrement in-degree of its neighbors
- * 5. New source nodes (in-degree = 0) join the execution queue
- * 6. Repeat until all nodes are processed
+ * DAG-based Workflow Execution Engine with pause/resume/stop support
+ *
+ * Status lifecycle:
+ *   pending → running → completed | failed | paused | stopped
+ *
+ * Pause semantics:
+ *   - Immediately sets status = 'paused', stops dispatching new nodes
+ *   - Currently executing node Jobs continue to completion
+ *   - Waits in a polling loop for resume or stop signal
+ *
+ * Manual node semantics:
+ *   - Node with data.mode === 'manual' → nodeState set to 'waiting_manual'
+ *   - WorkflowEngine polls for nodeSignals[nodeId] = 'manual_complete'
+ *   - Frontend calls POST /api/execute/workflow/[id]/nodes/[nodeId]/complete to unblock
  */
 export class WorkflowEngine {
   private jobService: JobService
 
   constructor(jobService?: JobService) {
     this.jobService = jobService || new JobService()
+  }
+
+  // ── Control signal helpers ─────────────────────────────────────────────────
+
+  private async readControlSignal(workflowJobId: string): Promise<string | null> {
+    // Use raw select to read the controlSignal column.
+    // Cast through unknown to handle stale TS language-server cache after prisma generate.
+    const wf = await prisma.workflowJob.findUnique({
+      where: { id: workflowJobId },
+    }) as ({ controlSignal?: string | null } & object) | null
+    return wf?.controlSignal ?? null
+  }
+
+  /**
+   * Low-level helper: set controlSignal (and optionally status) via raw SQL.
+   * Used to work around TS language-server caching old Prisma types after
+   * `prisma generate` adds the controlSignal column.
+   */
+  private async setSignal(
+    workflowJobId: string,
+    signal: string | null,
+    status?: string,
+  ): Promise<void> {
+    if (status !== undefined) {
+      await prisma.$executeRaw`
+        UPDATE "WorkflowJob"
+        SET "controlSignal" = ${signal}, "status" = ${status}, "updatedAt" = NOW()
+        WHERE "id" = ${workflowJobId}
+      `
+    } else {
+      await prisma.$executeRaw`
+        UPDATE "WorkflowJob"
+        SET "controlSignal" = ${signal}, "updatedAt" = NOW()
+        WHERE "id" = ${workflowJobId}
+      `
+    }
+  }
+
+  async pauseWorkflow(workflowJobId: string): Promise<void> {
+    await this.setSignal(workflowJobId, "pause")
+  }
+
+  async resumeWorkflow(workflowJobId: string): Promise<void> {
+    await this.setSignal(workflowJobId, "resume")
+  }
+
+  async stopWorkflow(workflowJobId: string): Promise<void> {
+    await this.setSignal(workflowJobId, "stop")
   }
 
   /**
@@ -72,6 +144,10 @@ export class WorkflowEngine {
     entryData?: Record<string, unknown>
   ): Promise<{ workflowJobId: string; success: boolean; error?: string }> {
     // 1. Create WorkflowJob record
+    const initialNodeStates = Object.fromEntries(
+      subgraph.nodes.map((n) => [n.id, "queueing_in_workflow"] as const)
+    ) as Record<string, WorkflowGateStatus>
+
     const workflowJob = await prisma.workflowJob.create({
       data: {
         userId,
@@ -79,7 +155,11 @@ export class WorkflowEngine {
         totalNodes: subgraph.nodes.length,
         completedCount: 0,
         failedCount: 0,
-        results: {},
+        results: {
+          __workflow: {
+            nodeStates: initialNodeStates,
+          },
+        },
       },
     })
 
@@ -216,30 +296,67 @@ export class WorkflowEngine {
     }
   }
 
+  private parseIndexExpression(expr: string, maxIndex?: number): number[] {
+    if (!expr?.trim()) return []
+    const out = new Set<number>()
+    const tokens = expr.split(',').map((s) => s.trim()).filter(Boolean)
+
+    for (const token of tokens) {
+      const m = token.match(/^(\d+)\s*-\s*(\d+)$/)
+      if (m) {
+        const a = Number(m[1])
+        const b = Number(m[2])
+        if (!Number.isFinite(a) || !Number.isFinite(b)) continue
+        const start = Math.min(a, b)
+        const end = Math.max(a, b)
+        for (let i = start; i <= end; i++) {
+          if (i < 1) continue
+          if (maxIndex && i > maxIndex) continue
+          out.add(i)
+        }
+        continue
+      }
+
+      const single = Number(token)
+      if (Number.isFinite(single) && single >= 1) {
+        if (!maxIndex || single <= maxIndex) out.add(single)
+      }
+    }
+
+    return [...out].sort((a, b) => a - b)
+  }
+
   /**
-   * Core DAG execution algorithm
+   * Core DAG execution algorithm with pause/resume/stop state machine
    */
   private async runExecution(
     ctx: WorkflowExecutionContext,
     subgraph: WorkflowSubgraph,
     entryData?: Record<string, unknown>
   ): Promise<void> {
-    const { workflowJobId, userId } = ctx
+    const { workflowJobId } = ctx
 
     // Build DAG structures
     const { adjacency, inDegree, nodeMap } = this.buildDAG(subgraph)
 
-    // Update status to running
-    await prisma.workflowJob.update({
-      where: { id: workflowJobId },
-      data: { status: "running" },
-    })
+    const nodeStates: Record<string, WorkflowGateStatus> = Object.fromEntries(
+      subgraph.nodes.map((n) => [n.id, "queueing_in_workflow"] as const)
+    )
+
+    // Update status to running (use setSignal to include controlSignal reset)
+    await this.setSignal(workflowJobId, null, "running")
 
     // Initialize with source nodes (in-degree = 0)
     const queue: string[] = []
     for (const [nodeId, degree] of inDegree.entries()) {
-      if (degree === 0) queue.push(nodeId)
+      if (degree === 0) {
+        queue.push(nodeId)
+      } else {
+        nodeStates[nodeId] = "waiting_upstream"
+      }
     }
+
+    await this.persistWorkflowSnapshot(ctx, nodeStates, 0, 0)
 
     // If entryData provided, inject into source nodes
     if (entryData) {
@@ -257,39 +374,107 @@ export class WorkflowEngine {
 
     // Main execution loop
     while (queue.length > 0 || executing.size > 0) {
+      // ── Check control signal ──────────────────────────────────────────────
+      const ctrl = await this.readControlSignal(workflowJobId)
+
+      if (ctrl === "stop") {
+        await this.setSignal(workflowJobId, null, "stopped")
+        return
+      }
+
+      if (ctrl === "pause") {
+        // Immediately mark paused — stop dispatching new nodes
+        await this.setSignal(workflowJobId, null, "paused")
+        // Wait for resume or stop (executing nodes continue independently)
+        while (true) {
+          await new Promise((r) => setTimeout(r, CONTROL_POLL_MS))
+          const nextCtrl = await this.readControlSignal(workflowJobId)
+          if (nextCtrl === "resume") {
+            await this.setSignal(workflowJobId, null, "running")
+            break
+          }
+          if (nextCtrl === "stop") {
+            await this.setSignal(workflowJobId, null, "stopped")
+            return
+          }
+        }
+      }
+
       // Start new executions (limited concurrency)
       while (queue.length > 0 && executing.size < 5) {
         const nodeId = queue.shift()!
         const node = nodeMap.get(nodeId)
         if (!node) continue
 
+        // ── Manual node: pause for user input ────────────────────────────────
+        if (node.data.mode === "manual") {
+          nodeStates[nodeId] = "waiting_manual"
+          await this.persistWorkflowSnapshot(ctx, nodeStates, completed.size, failed.size)
+
+          // Wait for frontend signal
+          const manualResult = await this.waitForManualNode(workflowJobId, nodeId)
+
+          if (manualResult === null) {
+            // Stopped while waiting
+            return
+          }
+
+          // Use provided result or empty content
+          ctx.results.set(nodeId, manualResult)
+          completed.add(nodeId)
+          nodeStates[nodeId] = "done"
+
+          const neighbors = adjacency.get(nodeId) || []
+          for (const neighborId of neighbors) {
+            const newDegree = (inDegree.get(neighborId) || 0) - 1
+            inDegree.set(neighborId, newDegree)
+            if (newDegree === 0) {
+              nodeStates[neighborId] = "queueing_in_workflow"
+              queue.push(neighborId)
+            }
+          }
+          await this.persistWorkflowSnapshot(ctx, nodeStates, completed.size, failed.size)
+          continue
+        }
+
         executing.add(nodeId)
-        
+        nodeStates[nodeId] = "queueing_job"
+        await this.persistWorkflowSnapshot(ctx, nodeStates, completed.size, failed.size)
+
         // Execute node asynchronously
         this.executeNode(ctx, node, subgraph.edges, nodeMap).then((result) => {
           executing.delete(nodeId)
-          
+
           if (result.success) {
             completed.add(nodeId)
             ctx.results.set(nodeId, result.data)
-            
+            nodeStates[nodeId] = "done"
+
             // Update in-degrees and add new sources to queue
             const neighbors = adjacency.get(nodeId) || []
             for (const neighborId of neighbors) {
               const newDegree = (inDegree.get(neighborId) || 0) - 1
               inDegree.set(neighborId, newDegree)
               if (newDegree === 0) {
+                nodeStates[neighborId] = "queueing_in_workflow"
                 queue.push(neighborId)
               }
             }
           } else {
             console.error(`[WorkflowEngine] Node ${nodeId} execution failed`)
             failed.add(nodeId)
+            nodeStates[nodeId] = "failed"
           }
+
+          this.persistWorkflowSnapshot(ctx, nodeStates, completed.size, failed.size)
+            .catch((err) => console.error("[WorkflowEngine] persist snapshot failed:", err))
         }).catch((err) => {
           console.error(`[WorkflowEngine] Node ${nodeId} execution error:`, err)
           executing.delete(nodeId)
           failed.add(nodeId)
+          nodeStates[nodeId] = "failed"
+          this.persistWorkflowSnapshot(ctx, nodeStates, completed.size, failed.size)
+            .catch((persistErr) => console.error("[WorkflowEngine] persist snapshot failed:", persistErr))
         })
       }
 
@@ -305,7 +490,122 @@ export class WorkflowEngine {
         status: finalStatus,
         completedCount: completed.size,
         failedCount: failed.size,
-        results: Object.fromEntries(ctx.results) as Prisma.InputJsonValue,
+        results: this.buildWorkflowResultsPayload(ctx.results, nodeStates),
+      },
+    })
+  }
+
+  /**
+   * Wait for a manual node to be completed by the frontend.
+   * Returns the result provided, or null if stopped.
+   */
+  private async waitForManualNode(
+    workflowJobId: string,
+    nodeId: string,
+  ): Promise<Record<string, unknown> | null> {
+    while (true) {
+      await new Promise((r) => setTimeout(r, CONTROL_POLL_MS))
+
+      // Check global stop
+      const ctrl = await this.readControlSignal(workflowJobId)
+      if (ctrl === "stop") {
+        await this.setSignal(workflowJobId, null, "stopped")
+        return null
+      }
+
+      // Check node signal
+      const wf = await prisma.workflowJob.findUnique({
+        where: { id: workflowJobId },
+        select: { results: true },
+      })
+
+      const rawResults = (wf?.results ?? {}) as Record<string, unknown>
+      const workflowMeta = (rawResults.__workflow ?? {}) as Partial<WorkflowMetaState>
+      const nodeSignals = workflowMeta.nodeSignals ?? {}
+      const signal = nodeSignals[nodeId]
+
+      if (signal?.signal === "manual_complete" || signal?.signal === "manual_skip") {
+        // Clear the signal
+        const updatedMeta = {
+          ...workflowMeta,
+          nodeSignals: {
+            ...nodeSignals,
+            [nodeId]: undefined,
+          },
+        }
+        const updatedResults = { ...rawResults, __workflow: updatedMeta }
+        await prisma.workflowJob.update({
+          where: { id: workflowJobId },
+          data: { results: updatedResults as Prisma.InputJsonValue },
+        })
+
+        return (signal.result as Record<string, unknown>) ?? { content: "" }
+      }
+    }
+  }
+
+  /**
+   * Signal a manual node completion from the frontend.
+   * Called by POST /api/execute/workflow/[id]/nodes/[nodeId]/complete
+   */
+  async completeManualNode(
+    workflowJobId: string,
+    nodeId: string,
+    action: "complete" | "skip",
+    result?: Record<string, unknown>,
+  ): Promise<void> {
+    const wf = await prisma.workflowJob.findUnique({
+      where: { id: workflowJobId },
+      select: { results: true },
+    })
+
+    const rawResults = (wf?.results ?? {}) as Record<string, unknown>
+    const workflowMeta = (rawResults.__workflow ?? {}) as Partial<WorkflowMetaState>
+    const nodeSignals = workflowMeta.nodeSignals ?? {}
+
+    const updatedMeta = {
+      ...workflowMeta,
+      nodeSignals: {
+        ...nodeSignals,
+        [nodeId]: {
+          signal: action === "skip" ? "manual_skip" : "manual_complete",
+          result: result ?? { content: "" },
+        },
+      },
+    }
+
+    await prisma.workflowJob.update({
+      where: { id: workflowJobId },
+      data: {
+        results: { ...rawResults, __workflow: updatedMeta } as Prisma.InputJsonValue,
+      },
+    })
+  }
+
+  private buildWorkflowResultsPayload(
+    resultsMap: Map<string, unknown>,
+    nodeStates: Record<string, WorkflowGateStatus>
+  ): Prisma.InputJsonValue {
+    return {
+      __workflow: {
+        nodeStates,
+      },
+      ...Object.fromEntries(resultsMap),
+    } as Prisma.InputJsonValue
+  }
+
+  private async persistWorkflowSnapshot(
+    ctx: WorkflowExecutionContext,
+    nodeStates: Record<string, WorkflowGateStatus>,
+    completedCount: number,
+    failedCount: number,
+  ): Promise<void> {
+    await prisma.workflowJob.update({
+      where: { id: ctx.workflowJobId },
+      data: {
+        completedCount,
+        failedCount,
+        results: this.buildWorkflowResultsPayload(ctx.results, nodeStates),
       },
     })
   }
@@ -330,7 +630,7 @@ export class WorkflowEngine {
       const neighbors = adjacency.get(edge.source) || []
       neighbors.push(edge.target)
       adjacency.set(edge.source, neighbors)
-      
+
       inDegree.set(edge.target, (inDegree.get(edge.target) || 0) + 1)
     }
 
@@ -350,9 +650,6 @@ export class WorkflowEngine {
     const nodeType = node.data.type || node.type
 
     // ── Pre-resolved external nodes ──────────────────────────────────────────
-    // Nodes tagged _preResolved come from outside the template container.
-    // Their existing content is already the correct value — skip LLM execution
-    // and register the result immediately so downstream nodes can reference them.
     if (node.data._preResolved) {
       const d = node.data
       const content = String(d.content ?? d.src ?? d.videoSrc ?? "")
@@ -372,8 +669,6 @@ export class WorkflowEngine {
       }
     }
 
-    // Separate ref vs in edges for filter; for all others use all edges as ref.
-    // inEdges: match 'in', 'left', null, or undefined — keeps parity with useConnectedSources on the frontend
     const refEdges = nodeType === "filter"
       ? upstreamEdges.filter((e) => e.targetHandle === "ref")
       : upstreamEdges
@@ -381,10 +676,6 @@ export class WorkflowEngine {
       ? upstreamEdges.filter((e) => e.targetHandle === "in" || e.targetHandle === "left" || !e.targetHandle)
       : []
 
-    // Build upstream data for prompt resolution (REF edges only).
-    // For image nodes, reconstruct the data URI from b64 + mime so downstream
-    // {{nodeId}} references resolve to image_url content blocks instead of
-    // empty strings.
     const upstreamData = refEdges.map((edge) => {
       const result = results.get(edge.source) as Record<string, unknown> | undefined
       const srcNode = nodeMap.get(edge.source)
@@ -412,34 +703,71 @@ export class WorkflowEngine {
     let shouldExecuteLLM = true
     let passThroughResult: Record<string, unknown> | null = null
 
-    // ── Filter node — special execution path ────────────────────────────────
+    // ── Filter node ──────────────────────────────────────────────────────────
     if (nodeType === "filter") {
       const prompt         = node.data.prompt || ""
       const filterInputMode = (node.data.filterInputMode as string || "label") as "label" | "content"
+      const latestInputOnly = Boolean(node.data.filterLatestInputOnly)
+      const selectedIdsLegacy = Array.isArray(node.data.filterSelectedIds)
+        ? (node.data.filterSelectedIds as string[]).filter((id): id is string => typeof id === 'string')
+        : []
+      const outputRules = Array.isArray(node.data.filterOutputRules)
+        ? (node.data.filterOutputRules as Array<{ range?: unknown }>).map((r) => ({
+            range: String(r?.range ?? '').trim(),
+          }))
+        : []
 
-      // No IN items → pass through with empty result
       if (inEdges.length === 0) {
         shouldExecuteLLM = false
         passThroughResult = { content: "", filterResult: { passed: [], filtered: [] } }
       } else if (!prompt.trim()) {
-        // No condition → pass all through
         const { items } = await this.buildFilterItems(inEdges, results, nodeMap, filterInputMode)
         shouldExecuteLLM = false
-        // Compute joined content of all passed items (same logic as LLM path)
-        const passedContent = items
+
+        let selectedByRules: string[] = []
+        if (outputRules.length > 0) {
+          const selectedIndexSet = new Set<number>()
+          for (const rule of outputRules) {
+            for (const idx of this.parseIndexExpression(rule.range, items.length)) {
+              selectedIndexSet.add(idx)
+            }
+          }
+          if (latestInputOnly && items.length > 0) selectedIndexSet.add(items.length)
+          selectedByRules = [...selectedIndexSet]
+            .sort((a, b) => a - b)
+            .map((idx) => items[idx - 1]?.id)
+            .filter((id): id is string => typeof id === 'string')
+        }
+
+        const fallbackLatest = latestInputOnly && items.length > 0 ? [items[items.length - 1].id] : []
+        const effectiveSelectedIds = selectedByRules.length > 0 || outputRules.length > 0
+          ? selectedByRules
+          : (selectedIdsLegacy.length > 0 || latestInputOnly ? [...new Set([...selectedIdsLegacy, ...fallbackLatest])] : [])
+
+        const selectedSet = new Set(effectiveSelectedIds)
+
+        const passedItems = items.filter((item) => selectedSet.has(item.id))
+        const filteredItems = items.filter((item) => !selectedSet.has(item.id))
+
+        const passedContent = passedItems
           .map((item) => {
             const r = results.get(item.id) as Record<string, unknown> | undefined
             return (r?.content as string) || (r?.src as string) || ''
           })
           .filter(Boolean)
           .join('\n\n')
-        passThroughResult = { content: passedContent, filterResult: { passed: items, filtered: [] } }
+
+        passThroughResult = {
+          content: passedContent,
+          filterResult: {
+            passed: passedItems,
+            filtered: filteredItems,
+          },
+        }
       } else {
-        // Build IN items + resolve REF condition → combined prompt
         const { contentBlocks, items } = await this.buildFilterItems(inEdges, results, nodeMap, filterInputMode)
         const refContent               = await this.resolvePromptWithUpstream(prompt, upstreamData)
 
-        // System prompt to guide the LLM as a filter
         const systemPrompt: MultimodalContent = {
           type: 'text',
           text: `You are a FILTER node in a workflow. Your job is to evaluate items and classify them as PASS or FAIL based on the given condition.
@@ -458,11 +786,7 @@ CRITICAL RULES:
           text: '\nEvaluate each item. Return ONLY JSON: {"passed":[indices],"filtered":[indices]}',
         }
 
-        // Add system prompt at the beginning
         content = [systemPrompt, ...contentBlocks, conditionHeader, ...refContent, instruction]
-
-        // After LLM executes we need `items` to parse the response.
-        // Store on the node data temporarily so the post-execution block can use it.
         ;(node.data as Record<string, unknown>)._filterItems = items
       }
     } else if (nodeType === "text" || nodeType === "seed" || nodeType === "pdf") {
@@ -470,22 +794,17 @@ CRITICAL RULES:
       const textContent = node.data.content || ""
 
       if (!prompt.trim()) {
-        // No prompt - don't execute LLM, pass through content as output
         shouldExecuteLLM = false
         passThroughResult = { content: textContent }
       } else {
-        // Has prompt - resolve any {{nodeId}} references and execute LLM
         content = await this.resolvePromptWithUpstream(prompt, upstreamData)
       }
     } else if (nodeType === "image") {
       const prompt = node.data.prompt || ""
-      // Resolve any {{nodeId}} references in the prompt
       content = await this.resolvePromptWithUpstream(prompt, upstreamData)
     } else if (nodeType === "video") {
       const prompt = node.data.prompt || ""
-      // Resolve any {{nodeId}} references in the prompt
       content = await this.resolvePromptWithUpstream(prompt, upstreamData)
-      // Append upstream image outputs as image_url blocks
       for (const edge of upstreamEdges) {
         const result = results.get(edge.source)
         if (result && typeof result === "object" && "b64" in result && "mime" in result) {
@@ -493,25 +812,83 @@ CRITICAL RULES:
         }
       }
     } else if (nodeType === "standard") {
-      // Standard nodes pass through their name/label as content
       shouldExecuteLLM = false
-      passThroughResult = { 
+      passThroughResult = {
         content: node.data.name || node.data.label || "",
-        data: node.data 
+        data: node.data
       }
     } else {
-      // Default: pass through
       shouldExecuteLLM = false
       passThroughResult = { data: node.data }
     }
 
-    // Create job record for tracking
     const dependsOn = upstreamEdges.map((e) => e.source)
-    
+
+    // ── Template node: execute pre-instance phase (seed generation) ───────────
+    if (nodeType === "template") {
+      try {
+        const prompt = String(node.data.templatePrompt ?? node.data.prompt ?? "")
+        const resolvedPrompt = await this.resolvePromptWithUpstream(prompt, upstreamData)
+        const upstreamContent = upstreamData
+          .map((u) => u.content)
+          .filter(Boolean)
+          .join("\n")
+        const maxInstances = Number(node.data.templateCount ?? node.data.templateCountLegacy ?? 3)
+
+        const jobResult = await this.jobService.createJob({
+          userId,
+          nodeId: node.id,
+          nodeType,
+          content: resolvedPrompt.length > 0 ? resolvedPrompt : [{ type: "text", text: prompt }],
+          model: String(node.data.model || DEFAULT_TEXT_MODEL_ID),
+          templateParams: {
+            maxInstances: Math.max(1, Math.floor(maxInstances)),
+            upstreamContent,
+          },
+        })
+
+        if (!jobResult.success || !jobResult.jobId) {
+          return { success: false }
+        }
+
+        await prisma.job.update({
+          where: { id: jobResult.jobId },
+          data: {
+            ...(dependsOn.length > 0 && { dependsOn }),
+            ...(Object.keys(inputs).length > 0 && { inputData: inputs as Prisma.InputJsonValue }),
+            workflowJobId,
+          } as Prisma.JobUpdateInput,
+        })
+
+        await this.jobService.executeJob(jobResult.jobId, {
+          userId,
+          nodeType,
+          content: resolvedPrompt.length > 0 ? resolvedPrompt : [{ type: "text", text: prompt }],
+          model: String(node.data.model || DEFAULT_TEXT_MODEL_ID),
+          modelParams: node.data.params as Record<string, string> | undefined,
+          templateParams: {
+            maxInstances: Math.max(1, Math.floor(maxInstances)),
+            upstreamContent,
+          },
+        })
+
+        const completedJob = await prisma.job.findUnique({ where: { id: jobResult.jobId } })
+        if (!completedJob || completedJob.status === "failed") {
+          return { success: false }
+        }
+
+        return {
+          success: true,
+          data: (completedJob.result as Record<string, unknown>) ?? { stage: "generating_seeds" },
+        }
+      } catch (err) {
+        console.error(`[WorkflowEngine] Failed to execute template node ${node.id}:`, err)
+        return { success: false }
+      }
+    }
+
     try {
-      // If no LLM execution needed, return pass-through result directly
       if (!shouldExecuteLLM && passThroughResult) {
-        // Still create a job record for tracking (marked as done immediately)
         const jobResult = await this.jobService.createJob({
           userId,
           nodeId: node.id,
@@ -537,7 +914,6 @@ CRITICAL RULES:
         return { success: true, data: passThroughResult }
       }
 
-      // Execute using existing JobService
       const jobResult = await this.jobService.createJob({
         userId,
         nodeId: node.id,
@@ -577,7 +953,7 @@ CRITICAL RULES:
       if (completedJob?.status === "done") {
         const outputData = completedJob.result as Record<string, unknown>
 
-        // ── Filter: parse JSON verdict and attach filterResult + output content
+        // ── Filter: parse JSON verdict
         let augmented = outputData
         if (nodeType === "filter") {
           const filterItems = (node.data as Record<string, unknown>)._filterItems as
@@ -588,8 +964,6 @@ CRITICAL RULES:
             const filterResult = this.parseFilterResponse(rawContent, filterItems)
             const resolved     = filterResult ?? { passed: filterItems, filtered: [] }
 
-            // Compute output content = joined content of passed nodes
-            // Downstream nodes referencing this filter get this value
             const passedContent = resolved.passed
               .map((item) => {
                 const itemResult = ctx.results.get(item.id) as Record<string, unknown> | undefined
@@ -606,7 +980,6 @@ CRITICAL RULES:
           }
         }
 
-        // Update job with output
         await prisma.job.update({
           where: { id: jobResult.jobId },
           data: {
@@ -626,25 +999,18 @@ CRITICAL RULES:
 
   /**
    * Resolve prompt with upstream node references.
-   * Produces an interleaved MultimodalContent[] array:
-   *   text before ref → image_url (for image nodes) or text (for text nodes) → text after ref
-   *
-   * Image nodes must have `src` pre-populated as a data URI (b64 reconstructed
-   * by the caller) so this method stays synchronous and server-safe (no FileReader).
    */
   private async resolvePromptWithUpstream(
     prompt: string,
     upstreamData: Array<{ id: string; type: string; content: string; src?: string }>
   ): Promise<MultimodalContent[]> {
     if (!prompt.includes("{{")) {
-      // No references, return prompt as-is
       return [{ type: "text", text: prompt }]
     }
 
     const nodeMap = new Map(upstreamData.map((n) => [n.id, n]))
     const result: MultimodalContent[] = []
 
-    // Find all {{nodeId}} references
     const regex = /\{\{([^}]+)\}\}/g
     let lastIndex = 0
     let match
@@ -653,7 +1019,6 @@ CRITICAL RULES:
       const nodeId = match[1].trim()
       const node = nodeMap.get(nodeId)
 
-      // Add text before the reference
       if (match.index > lastIndex) {
         const textBefore = prompt.slice(lastIndex, match.index).trim()
         if (textBefore) {
@@ -661,10 +1026,8 @@ CRITICAL RULES:
         }
       }
 
-      // Resolve the referenced node to the appropriate content block
       if (node) {
         if (node.type === "image" && node.src) {
-          // Image node: emit an image_url block (interleaved with surrounding text)
           result.push({ type: "image_url", image_url: { url: node.src, detail: "auto" } })
         } else if (node.content) {
           result.push({ type: "text", text: node.content })
@@ -674,7 +1037,6 @@ CRITICAL RULES:
       lastIndex = match.index + match[0].length
     }
 
-    // Add remaining text after last reference
     if (lastIndex < prompt.length) {
       const textAfter = prompt.slice(lastIndex).trim()
       if (textAfter) {
@@ -682,7 +1044,6 @@ CRITICAL RULES:
       }
     }
 
-    // If no blocks were produced, return the original prompt as plain text
     if (result.length === 0) {
       return [{ type: "text", text: prompt }]
     }
@@ -703,14 +1064,59 @@ CRITICAL RULES:
       return null
     }
 
+    const rawResults = (workflowJob.results ?? {}) as Record<string, unknown>
+    const workflowMeta = (rawResults.__workflow ?? {}) as Partial<WorkflowMetaState>
+    const nodeStates = (workflowMeta.nodeStates ?? {}) as Record<string, WorkflowGateStatus>
+
+    const nodeStatuses = Object.fromEntries(
+      workflowJob.jobs.map((job) => [
+        job.nodeId,
+        {
+          nodeId: job.nodeId,
+          nodeType: job.nodeType,
+          status: job.status,
+          jobId: job.id,
+          error: job.error,
+          startedAt: job.createdAt,
+          completedAt: job.updatedAt,
+        },
+      ])
+    ) as Record<string, {
+      nodeId: string
+      nodeType: string
+      status: string
+      jobId: string
+      error: string | null
+      startedAt: Date
+      completedAt: Date
+    }>
+
+    for (const [nodeId, gateState] of Object.entries(nodeStates)) {
+      if (nodeStatuses[nodeId]) continue
+      nodeStatuses[nodeId] = {
+        nodeId,
+        nodeType: "unknown",
+        status: gateState,
+        jobId: "",
+        error: null,
+        startedAt: workflowJob.createdAt,
+        completedAt: workflowJob.updatedAt,
+      }
+    }
+
+    const publicResults = Object.fromEntries(
+      Object.entries(rawResults).filter(([key]) => key !== "__workflow")
+    )
+
     return {
       id: workflowJob.id,
       status: workflowJob.status,
       totalNodes: workflowJob.totalNodes,
       completedCount: workflowJob.completedCount,
       failedCount: workflowJob.failedCount,
-      results: workflowJob.results as Record<string, unknown>,
+      results: publicResults,
       error: workflowJob.error,
+      nodeStatuses,
       jobs: workflowJob.jobs.map((job) => ({
         id: job.id,
         nodeId: job.nodeId,

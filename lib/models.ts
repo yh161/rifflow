@@ -57,6 +57,38 @@ export interface ModelDef {
   replicateImageSingle?: boolean      // if true, pass only first image as a plain string (Claude: image is single URI, not array)
 }
 
+export interface ProgressProfile {
+  /** asymptotic cap before backend confirms done */
+  max: number
+  /** UI smoothing factor when chasing target progress (higher = faster catch-up) */
+  ease: number
+  /** p50 runtime anchor (ms) */
+  p50Ms?: number
+  /** p90 runtime anchor (ms) */
+  p90Ms?: number
+}
+
+// Model-specific progress pacing for frontend fake progress.
+// Keep this in shared registry to avoid duplicate mapping in polling logic.
+export const MODEL_PROGRESS_PROFILE: Record<string, ProgressProfile> = {
+  // Text models: faster perceived progress
+  "gemini-2.5-flash": { max: 0.95, ease: 0.35, p50Ms: 6000, p90Ms: 12000 },
+  "gemini-3.1-pro":   { max: 0.94, ease: 0.33, p50Ms: 6000, p90Ms: 16000 },
+  "claude-opus-4.6":  { max: 0.93, ease: 0.3,  p50Ms: 6500, p90Ms: 12000 },
+  "gpt-5.2":          { max: 0.93, ease: 0.3,  p50Ms: 6500, p90Ms: 12000 },
+  "deepseek-v3":      { max: 0.94, ease: 0.33, p50Ms: 5000, p90Ms: 10000 },
+  "qwen3-32b":        { max: 0.94, ease: 0.33, p50Ms: 5200, p90Ms: 10200 },
+  "llama-3.3-70b":    { max: 0.92, ease: 0.3,  p50Ms: 6800, p90Ms: 12500 },
+  "llama-3.1-8b":     { max: 0.94, ease: 0.34, p50Ms: 4800, p90Ms: 9200 },
+
+  // Image models: slower than text
+  "nano-banana":      { max: 0.96, ease: 0.24, p50Ms: 8000, p90Ms: 15000 },
+  "nano-banana-pro":  { max: 0.96, ease: 0.22, p50Ms: 9500, p90Ms: 18000 },
+
+  // Video models: slowest
+  "grok-video":       { max: 0.96, ease: 0.18, p50Ms: 14000, p90Ms: 26000 },
+}
+
 // ── Shared param groups ──────────────────────────────────────────────────────
 
 /** OpenRouter text models: temperature only */
