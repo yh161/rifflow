@@ -61,6 +61,7 @@ export function buildExecutionPlan(nodes: Node[], edges: Edge[]): ConsoleTask[] 
         nodeId,
         label: data.label || data.type || nodeId.slice(-6),
         type: data.type || "text",
+        estimatedCost: 0,
         mode: mode || "manual",
         done: data.done === true || rawMode === "note" || rawMode === "done",
         hasPrompt: !!(data.prompt?.trim()),
