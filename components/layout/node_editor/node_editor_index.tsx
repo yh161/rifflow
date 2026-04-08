@@ -1325,6 +1325,7 @@ export function NodeEditor({
           isExecuting={data?.type === 'template' ? (isGenerating || isExecutingWorkflow) : isExecutingWorkflow}
           onLassoRelease={onLassoRelease ? () => onLassoRelease(nodeId) : undefined}
           onLassoDelete={data?.type === 'lasso' ? handleDeleteNode : undefined}
+          onLassoBgColorChange={data?.type === 'lasso' ? (color) => handleUpdate({ lassoBgColor: color ?? undefined }) : undefined}
           onToggleInlinePreview={() => handleUpdate({ showPromptInline: !data.showPromptInline })}
           inlinePreviewEnabled={!!data.showPromptInline}
           onPdfPrevPage={data?.type === "pdf" ? () => {

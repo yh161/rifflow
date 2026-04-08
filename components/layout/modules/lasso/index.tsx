@@ -34,6 +34,15 @@ export const handles: HandleDef[] = []
 // ─────────────────────────────────────────────
 // NodeUI — simple dashed container
 // ─────────────────────────────────────────────
+// Convert hex color to rgba with given alpha
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = hex.replace('#', '')
+  const r = parseInt(clean.substring(0, 2), 16)
+  const g = parseInt(clean.substring(2, 4), 16)
+  const b = parseInt(clean.substring(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 export const NodeUI = ({
   data,
   selected,
@@ -43,26 +52,53 @@ export const NodeUI = ({
 }) => {
   const w = data.width  ?? 400
   const h = data.height ?? 300
+  const bgColor = data.lassoBgColor as string | undefined
+
+  // Derive border color from lassoBgColor when set
+  const customBorderColor = bgColor ? hexToRgba(bgColor, 0.5) : undefined
 
   return (
     <div
       className={cn(
         'relative border-2 border-dashed transition-colors duration-200',
-        selected
-          ? 'border-slate-500/80 bg-slate-50/30'
-          : 'border-slate-300/50 bg-slate-50/10',
-        data.isEditing            && '!border-slate-500/90',
-        data.isDragHovered        && '!border-slate-500/90 !bg-slate-100/40',
-        // Eject tension: border brightens as child node is pushed toward the wall
-        data.isDragEjecting && !data.isDragEjectingReady && '!border-slate-400/80',
-        // Eject ready: threshold crossed — border fully lit, signals "release to pop out"
-        data.isDragEjectingReady  && '!border-slate-600 !bg-slate-100/35',
+        !bgColor && (
+          selected
+            ? 'border-slate-500/80 bg-slate-50/30'
+            : 'border-slate-300/50 bg-slate-50/10'
+        ),
+        !bgColor && data.isEditing            && '!border-slate-500/90',
+        !bgColor && data.isDragHovered        && '!border-slate-500/90 !bg-slate-100/40',
+        !bgColor && data.isDragEjecting && !data.isDragEjectingReady && '!border-slate-400/80',
+        !bgColor && data.isDragEjectingReady  && '!border-slate-600 !bg-slate-100/35',
       )}
-      style={{ width: w, height: h, borderRadius: 16 }}
+      style={{
+        width: w,
+        height: h,
+        borderRadius: 16,
+        // When custom color is set, apply it directly
+        ...(bgColor && {
+          borderColor: customBorderColor,
+          backgroundColor: hexToRgba(bgColor, 0.12),
+        }),
+      }}
     >
+      {/* Custom color background tint overlay — stronger when selected */}
+      {bgColor && (
+        <div
+          className="absolute inset-0 pointer-events-none transition-opacity duration-200"
+          style={{
+            borderRadius: 14,
+            backgroundColor: hexToRgba(bgColor, selected ? 0.03 : 0),
+          }}
+        />
+      )}
+
       {/* Drop hint */}
       <div className="absolute inset-0 flex items-end justify-center pb-6 pointer-events-none">
-        <span className="text-[10px] text-slate-300/70 select-none">
+        <span
+          className="text-[10px] select-none"
+          style={{ color: bgColor ? hexToRgba(bgColor, 0.5) : 'rgba(148,163,184,0.7)' }}
+        >
           drop nodes here · click execute to run
         </span>
       </div>

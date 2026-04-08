@@ -35,6 +35,7 @@ export interface ActionBarProps {
   onLassoPause?: () => void
   onLassoResume?: () => void
   onLassoStop?: () => void
+  onLassoBgColorChange?: (color: string | null) => void
   isExecuting?: boolean
   /** 'idle' | 'running' | 'paused' — drives lasso actionBar button state */
   workflowStatus?: WorkflowControlStatus

@@ -138,6 +138,7 @@ export function NodeActionBar({
   onLassoPause,
   onLassoResume,
   onLassoStop,
+  onLassoBgColorChange,
   isExecuting,
   workflowStatus,
   onRotate,
@@ -168,6 +169,7 @@ export function NodeActionBar({
   onLassoPause?: () => void
   onLassoResume?: () => void
   onLassoStop?: () => void
+  onLassoBgColorChange?: (color: string | null) => void
   isExecuting?: boolean
   workflowStatus?: "idle" | "running" | "paused"
   onRotate?: () => void
@@ -206,6 +208,7 @@ export function NodeActionBar({
           onLassoPause={onLassoPause}
           onLassoResume={onLassoResume}
           onLassoStop={onLassoStop}
+          onLassoBgColorChange={onLassoBgColorChange}
           isExecuting={isExecuting}
           workflowStatus={workflowStatus}
           onRotate={onRotate}

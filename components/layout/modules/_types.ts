@@ -135,6 +135,8 @@ export interface CustomNodeData {
   isDragEjecting?: boolean      // set transiently when a child node is being forced against the container wall
   isDragEjectingReady?: boolean // set transiently when overshoot exceeds eject threshold (about to pop out)
   isSeed?: boolean           // auto-created Seed inside Batch containers
+  // lasso
+  lassoBgColor?: string      // hex color for lasso background tint (applied at ~25% opacity)
   onDataChange?: (updates: Partial<CustomNodeData>) => void
   onDelete?: () => void
 }
