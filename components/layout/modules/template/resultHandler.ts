@@ -9,7 +9,7 @@ export async function resultHandler(
   result: Record<string, unknown>,
   ctx: ResultHandlerContext,
 ): Promise<void> {
-  const templateResult     = result as TemplateJobResult
+  const templateResult     = result as unknown as TemplateJobResult
   const stage = templateResult.stage
   const instanceResults = (templateResult.instanceResults ?? {}) as Record<string, unknown>
 
