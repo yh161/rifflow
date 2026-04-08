@@ -188,10 +188,10 @@ export function UpstreamReference({
               "active:scale-95",
             )}
             style={{
-              ["--ref-chip-bg" as const]: `${typeColor}10`,
+              "--ref-chip-bg": `${typeColor}10`,
               borderColor: `${typeColor}55`,
               color: typeColor,
-            }}
+            } as React.CSSProperties}
           >
             {node.thumbnail ? (
               // eslint-disable-next-line @next/next/no-img-element
