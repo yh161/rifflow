@@ -20,9 +20,9 @@ export async function resultHandler(
       return { ...n, data: { ...n.data, isGenerating: false, activeJobId: undefined } }
     }
     const nodeResult = instanceResults[n.id]
-    if (!nodeResult) return n
+    if (!nodeResult || typeof nodeResult !== 'object') return n
     if ('content' in nodeResult) {
-      return { ...n, data: { ...n.data, content: nodeResult.content, isGenerating: false } }
+      return { ...n, data: { ...n.data, content: (nodeResult as Record<string, unknown>).content, isGenerating: false } }
     }
     return n
   }))
