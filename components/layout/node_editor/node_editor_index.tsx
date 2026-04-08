@@ -137,7 +137,7 @@ export function NodeEditor({
   // Polling and progress live in NodeWrapper (_polling.ts).
   // ─────────────────────────────────────────────
   const handleStartGenerate = useCallback(
-    async (prompt: string, model: string, params: Record<string, string>) => {
+    async (prompt: string, model: string, params: Record<string, string>, imageSlotNodeIds?: Record<string, string>) => {
       // Signal generating immediately so the overlay appears
       setNodes((ns) => ns.map((n) =>
         n.id !== nodeId ? n : {
@@ -154,6 +154,40 @@ export function NodeEditor({
       ))
 
       try {
+        // Resolve image slot nodeIds → actual URLs from upstreamData
+        let imageSlots: Record<string, string | string[]> | undefined
+        if (imageSlotNodeIds && Object.keys(imageSlotNodeIds).length > 0) {
+          const upstreamMap = new Map(upstreamData.map((n) => [n.id, n]))
+          const resolved: Record<string, string | string[]> = {}
+          // Groups indexed slots (e.g. reference_images_0, image_input_0) → baseKey: string[]
+          const arrayGroups: Record<string, Array<string | undefined>> = {}
+
+          for (const [key, nid] of Object.entries(imageSlotNodeIds)) {
+            if (!nid) continue
+            const node = upstreamMap.get(nid)
+            if (!node?.src) continue
+
+            const arrayMatch = key.match(/^(.+)_(\d+)$/)
+            if (arrayMatch) {
+              // Indexed array slot — group by base key (reference_images, image_input, etc.)
+              const baseKey = arrayMatch[1]
+              const idx     = parseInt(arrayMatch[2], 10)
+              if (!arrayGroups[baseKey]) arrayGroups[baseKey] = []
+              arrayGroups[baseKey][idx] = node.src
+            } else {
+              resolved[key] = node.src
+            }
+          }
+
+          // Collapse sparse arrays into dense string[] entries
+          for (const [baseKey, arr] of Object.entries(arrayGroups)) {
+            const filtered = arr.filter((u): u is string => !!u)
+            if (filtered.length > 0) resolved[baseKey] = filtered
+          }
+
+          if (Object.keys(resolved).length > 0) imageSlots = resolved
+        }
+
         const res  = await fetch("/api/jobs", {
           method:  "POST",
           headers: { "Content-Type": "application/json" },
@@ -164,6 +198,7 @@ export function NodeEditor({
             model,
             modelParams: params,
             upstreamData,
+            ...(imageSlots && { imageSlots }),
           }),
         })
         const json = await res.json()

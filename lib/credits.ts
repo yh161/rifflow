@@ -37,6 +37,42 @@ export function calculateCreditCost(
     return duration * 5   // $0.05/s = 5 credits/s
   }
 
+  if (modelId === "kling-v3-video") {
+    // Pricing per second: standard=$0.168, standard+audio=$0.252, pro=$0.224, pro+audio=$0.336
+    const duration = parseInt(params?.duration ?? "5", 10)
+    const mode = params?.mode ?? "pro"
+    const audio = params?.generate_audio === "true"
+    let ratePerSec: number
+    if (mode === "standard") ratePerSec = audio ? 25 : 17   // $0.252 / $0.168
+    else                     ratePerSec = audio ? 34 : 22   // $0.336 / $0.224 (pro)
+    return duration * ratePerSec
+  }
+
+  if (modelId === "kling-v3-omni-video") {
+    // Pricing per second: standard=$0.168, standard+audio=$0.224, pro=$0.224, pro+audio=$0.28
+    const duration = parseInt(params?.duration ?? "5", 10)
+    const mode = params?.mode ?? "pro"
+    const audio = params?.generate_audio === "true"
+    let ratePerSec: number
+    if (mode === "standard") ratePerSec = audio ? 22 : 17   // $0.224 / $0.168
+    else                     ratePerSec = audio ? 28 : 22   // $0.28  / $0.224 (pro)
+    return duration * ratePerSec
+  }
+
+  if (modelId === "veo-3.1") {
+    // Pricing per second: with_audio=$0.40, without_audio=$0.20
+    const duration = parseInt(params?.duration ?? "8", 10)
+    const audio = (params?.generate_audio ?? "true") !== "false"
+    return duration * (audio ? 40 : 20)
+  }
+
+  if (modelId === "veo-3.1-fast") {
+    // Pricing per second: with_audio=$0.15, without_audio=$0.10
+    const duration = parseInt(params?.duration ?? "8", 10)
+    const audio = (params?.generate_audio ?? "true") !== "false"
+    return duration * (audio ? 15 : 10)
+  }
+
   // fallback: 1 credit
   return 1
 }

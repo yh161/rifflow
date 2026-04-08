@@ -30,6 +30,8 @@ export interface JobCreationParams {
   modelParams?: Record<string, string>
   templateParams?: TemplateParams
   filterItems?: FilterItemParam[]
+  /** Resolved image slot URLs for video models: API param key → URL or URL[] */
+  imageSlots?: Record<string, string | string[]>
 }
 
 // ── Shared result shape for template jobs (stored in job.result) ──────────────
@@ -143,7 +145,8 @@ export class JobService {
         modelParams: params.modelParams,
         extra: {
           templateParams: params.templateParams,
-          filterItems: params.filterItems,
+          filterItems:    params.filterItems,
+          imageSlots:     params.imageSlots,
         },
       }, ctx)
 

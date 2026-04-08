@@ -115,6 +115,7 @@ export interface CustomNodeData {
   mode?:         "auto" | "manual" | "note"
   done?:         boolean
   params?:       Record<string, string>  // generation params (duration, fps, style, etc.)
+  videoSlots?:   Record<string, string>  // video model image slots: slotKey → nodeId ref
   isGenerating?: boolean
   generationProgress?: number
   generationStatusText?: string
@@ -151,7 +152,7 @@ export interface ModuleModalProps {
   onDelete?: () => void
   mode?: NodeMode
   isGenerating?: boolean
-  onGenerate?: (prompt: string, model: string, params: Record<string, string>) => void
+  onGenerate?: (prompt: string, model: string, params: Record<string, string>, imageSlotNodeIds?: Record<string, string>) => void
   onStop?: () => void
   // For template — use existing template instance management
   onTemplateAddInstance?: (templateId: string, seedContent?: string) => void

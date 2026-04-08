@@ -58,11 +58,15 @@ export const IMAGE_MODEL_MAP: Record<string, ImageModelDef> = Object.fromEntries
 export interface VideoModelDef {
   modelPath: string
   backend: "openrouter" | "replicate"
+  imageParam?: string      // legacy single-image field (kept for grok fallback)
+  inlineImageRef?: boolean // kling-v3-omni: images in multimodal content → <<<image_N>>> + reference_images[]
 }
 export const VIDEO_MODEL_MAP: Record<string, VideoModelDef> = Object.fromEntries(
   VIDEO_MODELS.map(m => [m.id, {
-    modelPath: m.orModel,
-    backend:   m.backend,
+    modelPath:     m.orModel,
+    backend:       m.backend,
+    imageParam:    m.replicateImageParam,
+    inlineImageRef: m.supportsInlineImageRef,
   }])
 )
 

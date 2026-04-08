@@ -42,6 +42,19 @@ export interface ModelParam {
   default: string   // default value
 }
 
+/**
+ * Image slot definition for video models that accept images as named API params
+ * (as opposed to kling-v3-omni which uses <<<image_N>>> inline prompt syntax).
+ * Each slot maps to an exact Replicate input field name.
+ * Array slots (e.g. reference_images) store as indexed keys: reference_images_0, _1, _2.
+ */
+export interface VideoSlotDef {
+  key: string        // exact Replicate API field name (e.g. "start_image", "image", "reference_images")
+  label: string      // UI display label
+  array?: true       // true = array field; renders maxCount individual slots
+  maxCount?: number  // for array slots: number of individual slot cells to show
+}
+
 export interface ModelDef {
   id: string                          // internal key used in node data & API calls
   name: string                        // display name shown in UI
@@ -55,6 +68,11 @@ export interface ModelDef {
   // If unsure about a new model, run the node snippet above to check!
   replicateImageParam?: string        // field name for images: "images" (Gemini), "image" (Claude), "image_input" (GPT/image models)
   replicateImageSingle?: boolean      // if true, pass only first image as a plain string (Claude: image is single URI, not array)
+  // ── Video-specific image input modes ────────────────────────────────────
+  videoSlots?: VideoSlotDef[]         // explicit named image slots (slot-based models: grok/kling-v3/veo)
+  supportsInlineImageRef?: boolean    // kling-v3-omni: images in prompt become <<<image_N>>> + reference_images[]
+  // ── Image-specific slot input (replicate image models with named image params) ──
+  imageInputSlots?: VideoSlotDef[]    // named image input slots for image models (e.g. nano-banana-pro image_input[])
 }
 
 export interface ProgressProfile {
@@ -86,7 +104,11 @@ export const MODEL_PROGRESS_PROFILE: Record<string, ProgressProfile> = {
   "nano-banana-pro":  { max: 0.96, ease: 0.22, p50Ms: 9500, p90Ms: 18000 },
 
   // Video models: slowest
-  "grok-video":       { max: 0.96, ease: 0.18, p50Ms: 14000, p90Ms: 26000 },
+  "grok-video":           { max: 0.96, ease: 0.18, p50Ms: 14000, p90Ms: 26000 },
+  "kling-v3-video":       { max: 0.96, ease: 0.15, p50Ms: 20000, p90Ms: 50000 },
+  "kling-v3-omni-video":  { max: 0.96, ease: 0.15, p50Ms: 20000, p90Ms: 50000 },
+  "veo-3.1":              { max: 0.96, ease: 0.13, p50Ms: 30000, p90Ms: 90000 },
+  "veo-3.1-fast":         { max: 0.96, ease: 0.15, p50Ms: 20000, p90Ms: 60000 },
 }
 
 // ── Shared param groups ──────────────────────────────────────────────────────
@@ -279,6 +301,8 @@ export const IMAGE_MODELS: ModelDef[] = [
   {
     id: "nano-banana-pro", name: "nano-banana-pro", orModel: "google/nano-banana-pro", backend: "replicate",
     supportsImageInput: true,
+    // image_input[] comes via named image slots (not inline chips in rich text)
+    imageInputSlots: [{ key: "image_input", label: "Reference", array: true, maxCount: 3 }],
     params: [
       { key: "aspect_ratio",  label: "Aspect Ratio", options: ["1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "3:2", "2:3", "21:9"], default: "1:1" },
       { key: "resolution",    label: "Resolution",   options: ["1K", "2K", "4K"],                                                          default: "2K"  },
@@ -300,14 +324,106 @@ export const VIDEO_MODELS: ModelDef[] = [
   //           duration(int,1–15,default:5), resolution(enum 720p/480p,default:720p),
   //           aspect_ratio(enum auto/16:9/…,default:auto)
   //   OUTPUT: string URI  (single video URL, NOT array)
-  //   NOTE:   image field is a single URI string (not array). job.service.ts passes
-  //           input.image = dataUri which is correct.
+  //   NOTE:   image field is a single URI string (not array).
   {
     id: "grok-video", name: "Grok Video", orModel: "xai/grok-imagine-video", backend: "replicate",
+    supportsImageInput: true,
+    videoSlots: [{ key: "image", label: "Image" }],
     params: [
       { key: "duration",     label: "Duration",     options: ["5", "10", "15"],                                            default: "5"    },
       { key: "resolution",   label: "Resolution",   options: ["720p", "480p"],                                             default: "720p" },
       { key: "aspect_ratio", label: "Aspect Ratio", options: ["auto", "16:9", "4:3", "1:1", "9:16", "3:4", "3:2", "2:3"], default: "auto" },
+    ],
+  },
+
+  // ── Kling V3 Video via Replicate ──────────────────────────────────────────
+  // Verified schema (2026-04): https://replicate.com/kwaivgi/kling-v3-video
+  //   INPUT:  prompt[REQ](string), mode(enum standard/pro,default:pro),
+  //           duration(int,3–15,default:5), aspect_ratio(enum 16:9/9:16/1:1,default:16:9),
+  //           generate_audio(bool,default:false), negative_prompt(string),
+  //           start_image(URI — SINGLE, first frame), end_image(URI, requires start_image)
+  //   OUTPUT: string URI
+  //   PRICING: standard=$0.168/s, standard+audio=$0.252/s, pro=$0.224/s, pro+audio=$0.336/s
+  {
+    id: "kling-v3-video", name: "Kling V3 Video", orModel: "kwaivgi/kling-v3-video", backend: "replicate",
+    supportsImageInput: true,
+    videoSlots: [
+      { key: "start_image", label: "Start Frame" },
+      { key: "end_image",   label: "End Frame"   },
+    ],
+    params: [
+      { key: "mode",          label: "Mode",         options: ["standard", "pro"],          default: "pro"   },
+      { key: "duration",      label: "Duration (s)", options: ["5", "10", "15"],             default: "5"     },
+      { key: "aspect_ratio",  label: "Aspect Ratio", options: ["16:9", "9:16", "1:1"],       default: "16:9"  },
+      { key: "generate_audio", label: "Audio",       options: ["false", "true"],             default: "false" },
+    ],
+  },
+
+  // ── Kling V3 Omni Video via Replicate ─────────────────────────────────────
+  // Verified schema (2026-04): https://replicate.com/kwaivgi/kling-v3-omni-video
+  //   INPUT:  prompt[REQ](string), mode(enum standard/pro,default:pro),
+  //           duration(int,3–15,default:5), aspect_ratio(enum 16:9/9:16/1:1,default:16:9),
+  //           generate_audio(bool,default:false), start_image(URI — SINGLE),
+  //           reference_images(URI[]), reference_video(URI)
+  //   OUTPUT: string URI
+  //   PRICING: standard=$0.168/s, standard+audio=$0.224/s, pro=$0.224/s, pro+audio=$0.28/s
+  {
+    id: "kling-v3-omni-video", name: "Kling V3 Omni", orModel: "kwaivgi/kling-v3-omni-video", backend: "replicate",
+    supportsImageInput: true,
+    supportsInlineImageRef: true,  // prompt supports <<<image_1>>>, images → reference_images[]
+    // No videoSlots — images are inserted via rich text chips and sent as reference_images
+    params: [
+      { key: "mode",           label: "Mode",         options: ["standard", "pro"],    default: "pro"   },
+      { key: "duration",       label: "Duration (s)", options: ["5", "10", "15"],       default: "5"     },
+      { key: "aspect_ratio",   label: "Aspect Ratio", options: ["16:9", "9:16", "1:1"], default: "16:9"  },
+      { key: "generate_audio", label: "Audio",        options: ["false", "true"],       default: "false" },
+    ],
+  },
+
+  // ── Google Veo 3.1 via Replicate ──────────────────────────────────────────
+  // Verified schema (2026-04): https://replicate.com/google/veo-3.1
+  //   INPUT:  prompt[REQ](string), duration(enum 4/6/8,default:8),
+  //           aspect_ratio(enum 16:9/9:16,default:16:9), resolution(enum 720p/1080p,default:1080p),
+  //           generate_audio(bool,default:true), image(URI — SINGLE, start frame),
+  //           last_frame(URI), reference_images(URI[1-3]), negative_prompt(string)
+  //   OUTPUT: string URI
+  //   PRICING: with_audio=$0.40/s, without_audio=$0.20/s
+  {
+    id: "veo-3.1", name: "Veo 3.1", orModel: "google/veo-3.1", backend: "replicate",
+    supportsImageInput: true,
+    videoSlots: [
+      { key: "image",            label: "Image"      },
+      { key: "last_frame",       label: "Last Frame" },
+      { key: "reference_images", label: "References", array: true, maxCount: 3 },
+    ],
+    params: [
+      { key: "duration",       label: "Duration (s)", options: ["4", "6", "8"],          default: "8"     },
+      { key: "aspect_ratio",   label: "Aspect Ratio", options: ["16:9", "9:16"],          default: "16:9"  },
+      { key: "resolution",     label: "Resolution",   options: ["720p", "1080p"],         default: "1080p" },
+      { key: "generate_audio", label: "Audio",        options: ["false", "true"],         default: "true"  },
+    ],
+  },
+
+  // ── Google Veo 3.1 Fast via Replicate ─────────────────────────────────────
+  // Verified schema (2026-04): https://replicate.com/google/veo-3.1-fast
+  //   INPUT:  prompt[REQ](string), duration(enum 4/6/8,default:8),
+  //           aspect_ratio(enum 16:9/9:16,default:16:9), resolution(enum 720p/1080p,default:1080p),
+  //           generate_audio(bool,default:true), image(URI — SINGLE, start frame),
+  //           last_frame(URI), negative_prompt(string)
+  //   OUTPUT: string URI
+  //   PRICING: with_audio=$0.15/s, without_audio=$0.10/s
+  {
+    id: "veo-3.1-fast", name: "Veo 3.1 Fast", orModel: "google/veo-3.1-fast", backend: "replicate",
+    supportsImageInput: true,
+    videoSlots: [
+      { key: "image",      label: "Image"      },
+      { key: "last_frame", label: "Last Frame" },
+    ],
+    params: [
+      { key: "duration",       label: "Duration (s)", options: ["4", "6", "8"],          default: "8"     },
+      { key: "aspect_ratio",   label: "Aspect Ratio", options: ["16:9", "9:16"],          default: "16:9"  },
+      { key: "resolution",     label: "Resolution",   options: ["720p", "1080p"],         default: "1080p" },
+      { key: "generate_audio", label: "Audio",        options: ["false", "true"],         default: "true"  },
     ],
   },
 ]

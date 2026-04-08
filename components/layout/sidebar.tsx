@@ -22,10 +22,18 @@ interface RoomMember {
   role: string
 }
 
+interface FriendUser {
+  id: string
+  name: string | null
+  image: string | null
+}
+
 interface RoomSummary {
   id: string
   name: string | null
   ownerId: string | null
+  isDirect?: boolean
+  isRequest?: boolean  // direct room where I haven't replied + not mutual
   joinPermission: string
   updatedAt: string
   members: RoomMember[]
@@ -312,7 +320,7 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
   const SIDEBAR_MAX_WIDTH = 560
 
   const [isInitial, setIsInitial] = useState(true)
-  const [view, setView] = useState<"list" | "new" | "chat" | "detail">("list")
+  const [view, setView] = useState<"list" | "new" | "chat" | "detail" | "requests" | "friendpicker">("list")
 
   // Room list
   const [rooms, setRooms] = useState<RoomSummary[]>([])
@@ -345,16 +353,19 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
   const [nameInput, setNameInput] = useState("")
   const [nameLoading, setNameLoading] = useState(false)
 
-  // Detail — add member
-  const [addMemberId, setAddMemberId] = useState("")
-  const [addMemberLoading, setAddMemberLoading] = useState(false)
-  const [addMemberError, setAddMemberError] = useState("")
-
   // Detail — member action menu
   const [memberMenuId, setMemberMenuId] = useState<string | null>(null)
 
   // Detail — dissolve confirmation
   const [confirmDissolve, setConfirmDissolve] = useState(false)
+
+  // Friend picker (add to room / create group from direct)
+  // Extensible: future invite methods (QR, group ID…) can be added as new picker tabs
+  const [friendPickerMode, setFriendPickerMode] = useState<"addToRoom" | "createGroup">("addToRoom")
+  const [friendPickerSelected, setFriendPickerSelected] = useState<string[]>([])
+  const [friendsList, setFriendsList] = useState<FriendUser[]>([])
+  const [friendsLoading, setFriendsLoading] = useState(false)
+  const [friendPickerConfirming, setFriendPickerConfirming] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesTopRef = useRef<HTMLDivElement>(null)
@@ -473,15 +484,58 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
 
   // ── Sidebar event bus ─────────────────────────────────────────────────────
   useEffect(() => {
-    const handler = (e: Event) => {
+    const handler = async (e: Event) => {
       const detail = (e as CustomEvent<{ contactId: string }>).detail
-      if (detail?.contactId === "__inbox__") {
+      if (!detail?.contactId) return
+
+      if (detail.contactId === "__inbox__") {
         setIsInitial(false)
         setView("list")
+        return
       }
+
+      // Open (or create) a direct 1v1 room with this contact
+      try {
+        const r = await fetch("/api/rooms/direct", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetUserId: detail.contactId }),
+        })
+        if (!r.ok) return
+        const data = await r.json()
+        if (!data?.room) return
+        const room: RoomSummary = data.room
+
+        // Add to rooms list if not already there
+        setRooms((prev) => {
+          const exists = prev.some((rm) => rm.id === room.id)
+          return exists ? prev : [room, ...prev]
+        })
+
+        // Open the room (inline openRoom logic to avoid stale closure)
+        setIsInitial(false)
+        setActiveRoom({ ...room, messages: [] })
+        setInputText("")
+        setAttachedImages([])
+        setCreditError(null)
+        setView("chat")
+        setMessagesLoading(true)
+        setHasMoreMessages(false)
+        try {
+          const r2 = await fetch(`/api/rooms/${room.id}`)
+          const data2 = await r2.json()
+          if (data2?.room) {
+            setActiveRoom({ ...data2.room, myRole: data2.room.myRole ?? room.myRole })
+            setHasMoreMessages(data2.hasMore ?? false)
+            setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "instant" }), 100)
+          }
+        } catch {}
+        finally { setMessagesLoading(false) }
+      } catch {}
     }
     window.addEventListener("sidebar:openChat", handler)
     return () => window.removeEventListener("sidebar:openChat", handler)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ── Open a room ───────────────────────────────────────────────────────────
@@ -587,7 +641,14 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
       })
-      if (!r.ok) { setInputText(content); return }
+      if (!r.ok) {
+        setInputText(content)
+        const errData = await r.json().catch(() => ({})) as { error?: string }
+        if (errData.error === "STRANGER_LIMIT") {
+          setCreditError("You can only send one message until they reply or you follow each other.")
+        }
+        return
+      }
       const { message } = await r.json()
 
       setActiveRoom((prev) => prev ? { ...prev, messages: [...prev.messages, message] } : prev)
@@ -679,26 +740,95 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
     })
   }
 
-  // ── Add member ────────────────────────────────────────────────────────────
-  const handleAddMember = async () => {
-    if (!activeRoom || !addMemberId.trim() || addMemberLoading) return
-    setAddMemberLoading(true)
-    setAddMemberError("")
+  // ── Friend picker — enter ─────────────────────────────────────────────────
+  const enterFriendPicker = async (mode: "addToRoom" | "createGroup") => {
+    if (!activeRoom) return
+    setFriendPickerMode(mode)
+    setFriendPickerSelected([])
+    setView("friendpicker")
+    setFriendsLoading(true)
     try {
-      const r = await fetch(`/api/rooms/${activeRoom.id}/members`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: addMemberId.trim() }),
-      })
+      const r = await fetch("/api/friends")
       const data = await r.json()
-      if (r.ok && data.member) {
-        setActiveRoom((prev) => prev ? { ...prev, members: [...prev.members, data.member] } : prev)
-        setAddMemberId("")
-      } else {
-        setAddMemberError(data.error ?? "Failed")
-      }
-    } catch { setAddMemberError("Something went wrong") }
-    finally { setAddMemberLoading(false) }
+      // Filter out people already in the room
+      const existingIds = new Set(activeRoom.members.map((m) => m.id))
+      setFriendsList((data.friends ?? []).filter((f: FriendUser) => !existingIds.has(f.id)))
+    } catch {}
+    finally { setFriendsLoading(false) }
+  }
+
+  const toggleFriendSelect = (id: string) => {
+    setFriendPickerSelected((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+
+  // ── Friend picker — confirm ───────────────────────────────────────────────
+  const handleFriendPickerConfirm = async () => {
+    if (friendPickerSelected.length === 0 || !activeRoom || friendPickerConfirming) return
+    setFriendPickerConfirming(true)
+
+    if (friendPickerMode === "addToRoom") {
+      // Add each selected friend to the existing room
+      try {
+        await Promise.all(
+          friendPickerSelected.map((userId) =>
+            fetch(`/api/rooms/${activeRoom.id}/members`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ userId }),
+            })
+          )
+        )
+        // Refresh member list
+        const r = await fetch(`/api/rooms/${activeRoom.id}`)
+        const data = await r.json()
+        if (data?.room) {
+          setActiveRoom((prev) => prev ? { ...prev, members: data.room.members } : prev)
+        }
+        setFriendPickerSelected([])
+        setView("detail")
+      } catch {}
+      finally { setFriendPickerConfirming(false) }
+
+    } else {
+      // createGroup: new room with selected friends + the other direct-room member
+      const otherMember = activeRoom.members.find((m) => m.id !== meId)
+      if (!otherMember) { setFriendPickerConfirming(false); return }
+
+      const memberIds = [otherMember.id, ...friendPickerSelected]
+      try {
+        const r = await fetch("/api/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ memberIds }),
+        })
+        const data = await r.json()
+        if (r.ok && data.room) {
+          setFriendPickerSelected([])
+          await fetchRooms()
+          // Navigate into the new group
+          setActiveRoom({ ...data.room, messages: [] })
+          setInputText("")
+          setAttachedImages([])
+          setCreditError(null)
+          setView("chat")
+          setMessagesLoading(true)
+          setHasMoreMessages(false)
+          try {
+            const r2 = await fetch(`/api/rooms/${data.room.id}`)
+            const data2 = await r2.json()
+            if (data2?.room) {
+              setActiveRoom({ ...data2.room, myRole: data2.room.myRole ?? data.room.myRole })
+              setHasMoreMessages(data2.hasMore ?? false)
+              setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "instant" }), 100)
+            }
+          } catch {}
+          finally { setMessagesLoading(false) }
+        }
+      } catch {}
+      finally { setFriendPickerConfirming(false) }
+    }
   }
 
   // ── Member action ─────────────────────────────────────────────────────────
@@ -895,9 +1025,67 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
                   </button>
                 </div>
               )}
-              {rooms.map((room) => (
+              {/* Regular rooms (non-request) */}
+              {rooms.filter((r) => !r.isRequest).map((room) => (
                 <RoomItem key={room.id} room={room} active={activeRoom?.id === room.id} meId={meId} onClick={() => openRoom(room)} />
               ))}
+              {/* Message Requests entry */}
+              {(() => {
+                const requestRooms = rooms.filter((r) => r.isRequest)
+                if (requestRooms.length === 0) return null
+                const requestUnread = requestRooms.reduce((s, r) => s + r.unreadCount, 0)
+                return (
+                  <button
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50/80 transition-colors text-left border-t border-slate-100/80"
+                    onClick={() => { setIsInitial(false); setView("requests") }}
+                  >
+                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0 relative">
+                      <Users size={18} className="text-slate-400" />
+                      {requestUnread > 0 && (
+                        <div className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-blue-500 border-2 border-white" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-slate-700">Message Requests</span>
+                        <span className="text-[10px] text-slate-400 flex-shrink-0 ml-1.5">{requestRooms.length}</span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5 truncate">
+                        {requestRooms[0] ? getRoomDisplayName(requestRooms[0], meId) : ""}
+                        {requestRooms.length > 1 ? ` and ${requestRooms.length - 1} more` : ""}
+                      </p>
+                    </div>
+                  </button>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* ══ REQUESTS ════════════════════════════════════════════════════════ */}
+        {view === "requests" && (
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-100/80 flex-shrink-0">
+              <button
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
+                onClick={() => setView("list")}
+              >
+                <ArrowLeft size={16} />
+              </button>
+              <span className="font-semibold text-sm text-slate-700">Message Requests</span>
+            </div>
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              <p className="px-4 pt-3 pb-1 text-xs text-slate-400 leading-relaxed">
+                These people aren&apos;t in your network. Reply to accept their message.
+              </p>
+              {rooms.filter((r) => r.isRequest).map((room) => (
+                <RoomItem key={room.id} room={room} active={activeRoom?.id === room.id} meId={meId} onClick={() => openRoom(room)} />
+              ))}
+              {rooms.filter((r) => r.isRequest).length === 0 && (
+                <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                  <p className="text-sm text-slate-400">No message requests</p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -960,7 +1148,11 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
                   {getRoomDisplayName(activeRoom, meId)}
                 </p>
                 <p className="text-[10px] text-slate-400 leading-tight">
-                  {activeRoom.members.length === 1 ? "Just you" : `${activeRoom.members.length} members`}
+                  {activeRoom.isDirect
+                    ? "Direct message"
+                    : activeRoom.members.length === 1
+                    ? "Just you"
+                    : `${activeRoom.members.length} members`}
                 </p>
               </div>
               <button
@@ -1247,11 +1439,16 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
                   </div>
                 )}
                 <p className="text-xs text-slate-400 mt-0.5">
-                  {activeRoom.members.length === 1 ? "Solo" : `${activeRoom.members.length} members`}
-                  {" · "}
-                  <span className={cn("capitalize", myRoleInRoom === "owner" ? "text-amber-500" : myRoleInRoom === "admin" ? "text-blue-500" : "text-slate-400")}>
-                    {myRoleInRoom}
-                  </span>
+                  {activeRoom.isDirect
+                    ? "Direct message"
+                    : <>
+                        {activeRoom.members.length === 1 ? "Solo" : `${activeRoom.members.length} members`}
+                        {" · "}
+                        <span className={cn("capitalize", myRoleInRoom === "owner" ? "text-amber-500" : myRoleInRoom === "admin" ? "text-blue-500" : "text-slate-400")}>
+                          {myRoleInRoom}
+                        </span>
+                      </>
+                  }
                 </p>
               </div>
 
@@ -1357,30 +1554,22 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
                       </div>
                     )
                   })}
-                </div>
 
-                {/* Add member — admin/owner only */}
-                {isAdminOrOwner && (
-                  <div className="mt-3 pt-3 border-t border-slate-50">
-                    <div className="flex gap-2">
-                      <input
-                        value={addMemberId}
-                        onChange={(e) => { setAddMemberId(e.target.value); setAddMemberError("") }}
-                        onKeyDown={(e) => { if (e.key === "Enter") handleAddMember() }}
-                        placeholder="Add by User ID…"
-                        className="flex-1 text-xs bg-slate-100 rounded-lg px-3 py-2 outline-none placeholder-slate-400 text-slate-700 border border-transparent focus:border-blue-300 transition-colors"
-                      />
-                      <button
-                        disabled={!addMemberId.trim() || addMemberLoading}
-                        className="flex items-center justify-center w-9 h-9 rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-40 transition-all active:scale-95"
-                        onClick={handleAddMember}
-                      >
-                        {addMemberLoading ? <Loader2 size={13} className="animate-spin" /> : <UserPlus size={13} />}
-                      </button>
-                    </div>
-                    {addMemberError && <p className="text-xs text-red-500 mt-1.5">{addMemberError}</p>}
-                  </div>
-                )}
+                  {/* (+) Add people — same row as members, no divider */}
+                  {((!activeRoom.isDirect && isAdminOrOwner) || activeRoom.isDirect) && (
+                    <button
+                      className="flex items-center gap-2.5 w-full rounded-xl py-0.5 hover:bg-slate-50 transition-colors group"
+                      onClick={() => enterFriendPicker(activeRoom.isDirect ? "createGroup" : "addToRoom")}
+                    >
+                      <div className="w-8 h-8 rounded-full border-2 border-dashed border-slate-300 group-hover:border-blue-400 flex items-center justify-center flex-shrink-0 transition-colors">
+                        <Plus size={14} className="text-slate-400 group-hover:text-blue-500 transition-colors" />
+                      </div>
+                      <span className="text-sm text-slate-400 group-hover:text-blue-500 transition-colors">
+                        {activeRoom.isDirect ? "Add people to new group" : "Add people"}
+                      </span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* AI Model Settings */}
@@ -1440,8 +1629,8 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
 
               {/* Danger zone */}
               <div className="px-4 py-4 space-y-2">
-                {/* Leave (non-owners only) */}
-                {!isOwner && (
+                {/* Leave — group rooms only (non-owner); direct rooms cannot be left */}
+                {!isOwner && !activeRoom.isDirect && (
                   <button
                     className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-slate-200 text-slate-500 text-sm hover:bg-slate-50 transition-all"
                     onClick={handleLeave}
@@ -1450,8 +1639,8 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
                   </button>
                 )}
 
-                {/* Dissolve (owner only) */}
-                {isOwner && !confirmDissolve && (
+                {/* Dissolve (owner only, group rooms only) */}
+                {isOwner && !activeRoom.isDirect && !confirmDissolve && (
                   <button
                     className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-red-200 text-red-500 text-sm hover:bg-red-50 transition-all"
                     onClick={() => setConfirmDissolve(true)}
@@ -1461,7 +1650,7 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
                 )}
 
                 {/* Confirm dissolve */}
-                {isOwner && confirmDissolve && (
+                {isOwner && !activeRoom.isDirect && confirmDissolve && (
                   <div className="rounded-xl border border-red-200 bg-red-50 p-3">
                     <div className="flex items-center gap-2 mb-2">
                       <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
@@ -1487,6 +1676,103 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ FRIEND PICKER ════════════════════════════════════════════════════ */}
+        {view === "friendpicker" && activeRoom && (
+          <div className="flex-1 flex flex-col min-h-0">
+            {/* Top bar: back (left) · title (center) · confirm (right) */}
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-100/80 flex-shrink-0">
+              <button
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
+                onClick={() => { setView("detail"); setFriendPickerSelected([]) }}
+              >
+                <ArrowLeft size={16} />
+              </button>
+              <span className="font-semibold text-sm text-slate-700">
+                {friendPickerMode === "addToRoom" ? "Add People" : "New Group Chat"}
+              </span>
+              <button
+                disabled={friendPickerSelected.length === 0 || friendPickerConfirming}
+                onClick={handleFriendPickerConfirm}
+                className={cn(
+                  "flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                  friendPickerSelected.length > 0 && !friendPickerConfirming
+                    ? "bg-blue-500 text-white hover:bg-blue-600 active:scale-95"
+                    : "text-slate-300 pointer-events-none"
+                )}
+              >
+                {friendPickerConfirming
+                  ? <Loader2 size={13} className="animate-spin" />
+                  : <Check size={13} />
+                }
+                {friendPickerSelected.length > 0 && (
+                  <span className="ml-0.5">{friendPickerSelected.length}</span>
+                )}
+              </button>
+            </div>
+
+            {/* Friends list */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              {friendsLoading && (
+                <div className="p-4 space-y-3">
+                  {[0, 1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center gap-3 animate-pulse">
+                      <div className="w-10 h-10 rounded-full bg-slate-200 flex-shrink-0" />
+                      <div className="h-3 bg-slate-200 rounded w-28" />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!friendsLoading && friendsList.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mb-3">
+                    <Users size={20} className="text-slate-400" />
+                  </div>
+                  <p className="text-sm font-medium text-slate-600">No friends to add</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Mutual followers will appear here
+                  </p>
+                </div>
+              )}
+
+              {friendsList.map((friend) => {
+                const selected = friendPickerSelected.includes(friend.id)
+                return (
+                  <button
+                    key={friend.id}
+                    className="flex items-center gap-3 px-4 py-2.5 w-full hover:bg-slate-50/80 transition-colors text-left"
+                    onClick={() => toggleFriendSelect(friend.id)}
+                  >
+                    {/* Avatar with selection overlay */}
+                    <div className="relative flex-shrink-0">
+                      <MemberAvatar member={friend} className="w-10 h-10 text-sm" />
+                      {selected && (
+                        <div className="absolute inset-0 rounded-full bg-blue-500/20 flex items-center justify-center">
+                          <div className="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center">
+                            <Check size={9} className="text-white" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <span className="flex-1 text-sm text-slate-700 font-medium truncate">
+                      {friend.name ?? "Unknown"}
+                    </span>
+
+                    {/* Checkbox */}
+                    <div className={cn(
+                      "w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all",
+                      selected ? "bg-blue-500 border-blue-500" : "border-slate-300"
+                    )}>
+                      {selected && <Check size={10} className="text-white" />}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}

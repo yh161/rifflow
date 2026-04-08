@@ -42,10 +42,30 @@ export async function GET() {
           },
         })
 
+        // isRequest: true if this is a direct room where I haven't replied yet
+        // and the other person is not a mutual follower.
+        // Used to show "Message Requests" section in the sidebar.
+        let isRequest = false
+        if (m.room.isDirect) {
+          const otherMember = m.room.members.find((mb) => mb.userId !== meId)
+          if (otherMember) {
+            const otherId = otherMember.userId
+            const [iFollowCount, theyFollowCount, mySentCount] = await Promise.all([
+              prisma.follow.count({ where: { followerId: meId, followingId: otherId } }),
+              prisma.follow.count({ where: { followerId: otherId, followingId: meId } }),
+              prisma.chatMessage.count({ where: { roomId: m.room.id, senderId: meId } }),
+            ])
+            const isMutual = iFollowCount > 0 && theyFollowCount > 0
+            isRequest = !isMutual && mySentCount === 0
+          }
+        }
+
         return {
           id: m.room.id,
           name: m.room.name,
           ownerId: m.room.ownerId,
+          isDirect: m.room.isDirect,
+          isRequest,
           joinPermission: m.room.joinPermission,
           updatedAt: m.room.updatedAt,
           members: m.room.members.map((mb) => ({
@@ -113,6 +133,7 @@ export async function POST(req: Request) {
         id: room.id,
         name: room.name,
         ownerId: room.ownerId,
+        isDirect: false,
         joinPermission: room.joinPermission,
         updatedAt: room.updatedAt,
         members: room.members.map((m) => ({

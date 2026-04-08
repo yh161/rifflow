@@ -33,6 +33,9 @@ export async function POST(req: Request, { params }: { params: Params }) {
     if (!room) {
       return NextResponse.json({ error: "Room not found" }, { status: 404 })
     }
+    if (room.isDirect) {
+      return NextResponse.json({ error: "Cannot add members to a direct conversation" }, { status: 400 })
+    }
     if (room.joinPermission === "invite_only" && !["owner", "admin"].includes(myMembership.role)) {
       return NextResponse.json({ error: "Admin required to add members" }, { status: 403 })
     }

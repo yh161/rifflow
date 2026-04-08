@@ -8,7 +8,7 @@ import StarterKit from "@tiptap/starter-kit"
 import { Node as TiptapNode, mergeAttributes, type JSONContent, type Editor as TiptapEditor } from "@tiptap/core"
 import type { DOMOutputSpec } from "@tiptap/pm/model"
 import { TextSelection } from "@tiptap/pm/state"
-import { Sparkles, Zap, RefreshCw, Square, Bot, Hand, ChevronUp, Infinity, Hash, StickyNote, Lock, SlidersHorizontal, AlertTriangle } from "lucide-react"
+import { Sparkles, Zap, RefreshCw, Square, Bot, Hand, ChevronUp, Infinity, Hash, StickyNote, Lock, SlidersHorizontal, AlertTriangle, X as XIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   DropdownMenu,
@@ -21,7 +21,8 @@ import * as SliderPrimitive from "@radix-ui/react-slider"
 import type { CustomNodeData, NodeMode } from "../modules/_types"
 import { UpstreamReference } from "./_upstream_reference"
 import { getRefChipIconDataUri } from "./_ref_chip_icon"
-import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, type ModelDef } from "@/lib/models"
+import { TEXT_MODELS, IMAGE_MODELS, VIDEO_MODELS, type ModelDef, type VideoSlotDef } from "@/lib/models"
+import { useUpstreamNodes, type UpstreamNode } from "./_upstream_reference"
 import { getNodeThemeColor, getThumbnail } from "@/lib/image-compress"
 import { MODULE_BY_ID } from "../modules/_registry"
 
@@ -766,10 +767,21 @@ export function GenerateTextPanel({
   const textModelDef = TEXT_MODELS.find(m => m.id === model)
   const showImageInputWarning = hasUpstreamImage && !textModelDef?.supportsImageInput
 
-  // Insert chip at current cursor position inside the editor
+  // Refs to avoid stale closures in useCallback with empty deps
+  const getNodesRef_text = useRef(getNodes)
+  getNodesRef_text.current = getNodes
+  const modelSupportsImages_text = textModelDef?.supportsImageInput ?? false
+  const modelSupportsImagesRef_text = useRef(modelSupportsImages_text)
+  modelSupportsImagesRef_text.current = modelSupportsImages_text
+
+  // Insert chip — blocks image chips for non-vision models
   const handleInsertReference = useCallback((ref: string) => {
-    const nodeId = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
-    editorRef.current?.insertReference(nodeId)
+    const nid = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
+    if (!modelSupportsImagesRef_text.current) {
+      const nodeType = (getNodesRef_text.current().find(n => n.id === nid)?.data as { type?: string })?.type
+      if (nodeType === 'image') return
+    }
+    editorRef.current?.insertReference(nid)
   }, [])
 
   return (
@@ -870,24 +882,41 @@ export function GenerateImagePanel({
   hasSrc: boolean
   mode: NodeMode
   isGenerating: boolean
-  onGenerate: (prompt: string, model: string, params: Record<string, string>) => void
+  onGenerate: (prompt: string, model: string, params: Record<string, string>, imageSlotNodeIds?: Record<string, string>) => void
   onStop: () => void
 }) {
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? IMAGE_MODELS[0].id)
   const [params, setParamsLocal] = useState<Record<string, string>>(data.params ?? defaultParamsForModel(IMAGE_MODELS, data.model ?? IMAGE_MODELS[0].id))
+  // Image slot state (for slot-based models like nano-banana-pro)
+  const [imageSlotValues, setImageSlotValuesLocal] = useState<Record<string, string>>(data.videoSlots ?? {})
+  const imageSlotValuesRef = useRef<Record<string, string>>(data.videoSlots ?? {})
+  const [activeSlot, setActiveSlotState] = useState<string | null>(null)
+  const activeSlotRef = useRef<string | null>(null)
   const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
+
+  const setActiveSlot = (v: string | null) => {
+    activeSlotRef.current = v
+    setActiveSlotState(v)
+  }
+
+  const setImageSlotValues = (updated: Record<string, string>) => {
+    imageSlotValuesRef.current = updated
+    setImageSlotValuesLocal(updated)
+  }
 
   const setPrompt = (v: string) => { setPromptLocal(v); persistChange?.({ prompt: v }) }
   const setModel  = (v: string) => {
     setModelLocal(v)
     const newDefaults = defaultParamsForModel(IMAGE_MODELS, v)
     setParamsLocal(newDefaults)
-    persistChange?.({ model: v, params: newDefaults })
+    setImageSlotValues({})
+    setActiveSlot(null)
+    persistChange?.({ model: v, params: newDefaults, videoSlots: {} })
   }
   const handleParamChange = (id: string, val: string) => {
     const p = { ...params, [id]: val }
@@ -901,6 +930,32 @@ export function GenerateImagePanel({
     persistChange?.(update)
   }
 
+  const handleSlotClick = (key: string) => {
+    setActiveSlot(activeSlotRef.current === key ? null : key)
+  }
+
+  const handleSlotClear = (key: string) => {
+    const updated = { ...imageSlotValuesRef.current }
+    delete updated[key]
+    setImageSlotValues(updated)
+    persistChange?.({ videoSlots: updated })
+    if (activeSlotRef.current === key) setActiveSlot(null)
+  }
+
+  // Derive current model definition (slot defs + image support)
+  const currentImageModelDef = useMemo(() => IMAGE_MODELS.find(m => m.id === model), [model])
+  const imageSlotDefs = currentImageModelDef?.imageInputSlots ?? []
+
+  // Refs to avoid stale closures in useCallback
+  const { getNodes, getEdges } = useReactFlow()
+  const getNodesRef_img = useRef(getNodes)
+  getNodesRef_img.current = getNodes
+  const modelSupportsImages_img = currentImageModelDef?.supportsImageInput ?? false
+  const modelSupportsImagesRef_img = useRef(modelSupportsImages_img)
+  modelSupportsImagesRef_img.current = modelSupportsImages_img
+  const imageSlotDefsRef = useRef(imageSlotDefs)
+  imageSlotDefsRef.current = imageSlotDefs
+
   const isAuto      = mode === "auto"
   const isNote      = mode === "note"
   const canSubmit   = prompt.trim().length > 0
@@ -908,7 +963,6 @@ export function GenerateImagePanel({
   const buttonLabel = hasSrc ? "Regenerate" : "Generate"
 
   // Detect upstream image nodes to warn if model doesn't support image input
-  const { getNodes, getEdges } = useReactFlow()
   const hasUpstreamImage = nodeId ? (() => {
     const edges = getEdges().filter(e => e.target === nodeId)
     const nodes = getNodes()
@@ -917,14 +971,32 @@ export function GenerateImagePanel({
       return src?.data?.type === "image"
     })
   })() : false
-  const modelDef = IMAGE_MODELS.find(m => m.id === model)
-  const showImageInputWarning = hasUpstreamImage && modelDef?.supportsImageInput === false
+  const showImageInputWarning = hasUpstreamImage && currentImageModelDef?.supportsImageInput === false
 
-  // Insert chip at current cursor position inside the editor
+  // Route ref chip clicks: fill active slot, or block image chips for non-inline models
   const handleInsertReference = useCallback((ref: string) => {
-    const nodeId = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
-    editorRef.current?.insertReference(nodeId)
-  }, [])
+    const nid = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
+
+    if (activeSlotRef.current) {
+      const key = activeSlotRef.current
+      const updated = { ...imageSlotValuesRef.current, [key]: nid }
+      imageSlotValuesRef.current = updated
+      setImageSlotValuesLocal(updated)
+      persistChange?.({ videoSlots: updated })
+      setActiveSlot(null)
+      return
+    }
+
+    // For image chips: block insertion if model uses slots or doesn't support images at all
+    const nodeType = (getNodesRef_img.current().find(n => n.id === nid)?.data as { type?: string })?.type
+    if (nodeType === 'image') {
+      const hasSlots = imageSlotDefsRef.current.length > 0
+      const supportsInline = modelSupportsImagesRef_img.current && !hasSlots
+      if (!supportsInline) return
+    }
+
+    editorRef.current?.insertReference(nid)
+  }, [persistChange])
 
   return (
     <div className="flex flex-col">
@@ -935,6 +1007,19 @@ export function GenerateImagePanel({
           onInsertReference={handleInsertReference}
         />
       )}
+
+      {/* Image slot row — only for slot-based models (nano-banana-pro) */}
+      {nodeId && imageSlotDefs.length > 0 && (
+        <VideoImageSlots
+          nodeId={nodeId}
+          slotDefs={imageSlotDefs}
+          values={imageSlotValues}
+          activeSlot={activeSlot}
+          onSlotClick={handleSlotClick}
+          onSlotClear={handleSlotClear}
+        />
+      )}
+
       <RefPromptEditor
         ref={editorRef}
         value={prompt}
@@ -985,7 +1070,7 @@ export function GenerateImagePanel({
             </span>
             <button
               disabled={!canSubmit}
-              onClick={() => onGenerate(prompt, model, params)}
+              onClick={() => onGenerate(prompt, model, params, Object.keys(imageSlotValues).length > 0 ? imageSlotValues : undefined)}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
                 canSubmit
@@ -999,6 +1084,118 @@ export function GenerateImagePanel({
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// VideoImageSlots — image slot row for video models that take images as
+// named API params (start_image, image, last_frame, reference_images[]).
+// For models with supportsInlineImageRef (kling-v3-omni), this is not shown.
+// ─────────────────────────────────────────────
+
+function VideoImageSlots({
+  nodeId,
+  slotDefs,
+  values,
+  activeSlot,
+  onSlotClick,
+  onSlotClear,
+}: {
+  nodeId: string
+  slotDefs: VideoSlotDef[]
+  values: Record<string, string>
+  activeSlot: string | null
+  onSlotClick: (key: string) => void
+  onSlotClear: (key: string) => void
+}) {
+  const upstreamNodes = useUpstreamNodes(nodeId)
+  const nodeInfoMap = useMemo(() => {
+    const m = new Map<string, UpstreamNode>()
+    upstreamNodes.forEach(n => m.set(n.id, n))
+    return m
+  }, [upstreamNodes])
+
+  if (slotDefs.length === 0) return null
+
+  // Expand slot defs: array slots → individual indexed slots
+  const expandedSlots: Array<{ key: string; label: string; groupLabel?: string; isFirst?: boolean }> = []
+  slotDefs.forEach(def => {
+    if (def.array && def.maxCount) {
+      for (let i = 0; i < def.maxCount; i++) {
+        expandedSlots.push({
+          key: `${def.key}_${i}`,
+          label: String(i + 1),
+          groupLabel: i === 0 ? def.label : undefined,
+          isFirst: i === 0,
+        })
+      }
+    } else {
+      expandedSlots.push({ key: def.key, label: def.label })
+    }
+  })
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+      {slotDefs.map(def => {
+        const isArray = def.array && def.maxCount
+        const slotKeys = isArray
+          ? Array.from({ length: def.maxCount! }, (_, i) => `${def.key}_${i}`)
+          : [def.key]
+
+        return (
+          <div key={def.key} className="flex items-center gap-1">
+            <span className="text-[10px] font-medium text-slate-400 whitespace-nowrap">{def.label}</span>
+            {slotKeys.map(slotKey => {
+              const nodeId_ = values[slotKey]
+              const info = nodeId_ ? nodeInfoMap.get(nodeId_) : undefined
+              const isActive = activeSlot === slotKey
+
+              if (nodeId_ && info) {
+                // Filled slot — show chip
+                return (
+                  <span
+                    key={slotKey}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-slate-200 bg-white text-[9px] font-medium text-slate-600"
+                  >
+                    {info.thumbnail ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={info.thumbnail} alt="" className="w-3.5 h-3.5 rounded object-cover flex-shrink-0" />
+                    ) : (
+                      <span className="w-3.5 h-3.5 rounded flex-shrink-0 bg-slate-100" />
+                    )}
+                    <span className="truncate max-w-[48px]">{info.label || nodeId_.slice(-6)}</span>
+                    <button
+                      onMouseDown={e => { e.preventDefault(); onSlotClear(slotKey) }}
+                      className="ml-0.5 text-slate-400 hover:text-rose-400 transition-colors"
+                    >
+                      <XIcon size={8} />
+                    </button>
+                  </span>
+                )
+              }
+
+              // Empty slot
+              return (
+                <button
+                  key={slotKey}
+                  onMouseDown={e => { e.preventDefault(); onSlotClick(slotKey) }}
+                  className={cn(
+                    "inline-flex items-center justify-center px-2 py-0.5 rounded-md text-[9px] transition-all duration-150",
+                    "border border-dashed",
+                    isActive
+                      ? "border-blue-400 bg-blue-50 text-blue-500"
+                      : "border-slate-200 text-slate-300 hover:border-slate-300 hover:text-slate-400",
+                  )}
+                  title={isActive ? "Now click a Ref chip to fill this slot" : "Click to activate, then click a Ref chip"}
+                >
+                  {isActive ? "pick ref" : "—"}
+                </button>
+              )
+            })}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -1025,17 +1222,35 @@ export function GenerateVideoPanel({
   hasSrc: boolean
   mode: NodeMode
   isGenerating: boolean
-  onGenerate: (prompt: string, model: string, params: Record<string, string>) => void
+  onGenerate: (prompt: string, model: string, params: Record<string, string>, imageSlotNodeIds?: Record<string, string>) => void
   onStop: () => void
 }) {
   // Local state for responsive UI — initialized once from data (key-remount handles node switching)
   const [prompt, setPromptLocal] = useState(data.prompt ?? "")
   const [model,  setModelLocal]  = useState(data.model  ?? VIDEO_MODELS[0].id)
   const [params, setParamsLocal] = useState<Record<string, string>>(data.params ?? defaultParamsForModel(VIDEO_MODELS, data.model ?? VIDEO_MODELS[0].id))
+  const [imageSlotValues, setImageSlotValuesLocal] = useState<Record<string, string>>(data.videoSlots ?? {})
+  // Mirror of imageSlotValues as a ref — lets handleInsertReference read the latest value
+  // without a stale closure and without nesting setState calls inside updater functions.
+  const imageSlotValuesRef = useRef<Record<string, string>>(data.videoSlots ?? {})
+  const [activeSlot, setActiveSlotState] = useState<string | null>(null)
+  // Ref for activeSlot avoids stale closures in useCallback handlers
+  const activeSlotRef = useRef<string | null>(null)
   const editorRef = useRef<RefPromptEditorHandle>(null)
 
   // Prefer the direct prop; fall back to data.onDataChange for legacy callers
   const persistChange = onDataChange ?? data.onDataChange
+
+  const setActiveSlot = (v: string | null) => {
+    activeSlotRef.current = v
+    setActiveSlotState(v)
+  }
+
+  /** Update imageSlotValues state + ref together (never call inside another setState updater) */
+  const setImageSlotValues = (updated: Record<string, string>) => {
+    imageSlotValuesRef.current = updated
+    setImageSlotValuesLocal(updated)
+  }
 
   const setPrompt = (v: string) => {
     setPromptLocal(v)
@@ -1045,11 +1260,9 @@ export function GenerateVideoPanel({
     setModelLocal(v)
     const newDefaults = defaultParamsForModel(VIDEO_MODELS, v)
     setParamsLocal(newDefaults)
-    persistChange?.({ model: v, params: newDefaults })
-  }
-  const setParams = (p: Record<string, string>) => {
-    setParamsLocal(p)
-    persistChange?.({ params: p })
+    setImageSlotValues({})
+    setActiveSlot(null)
+    persistChange?.({ model: v, params: newDefaults, videoSlots: {} })
   }
 
   const handleParamChange = (id: string, val: string) => {
@@ -1064,16 +1277,54 @@ export function GenerateVideoPanel({
     persistChange?.(update)
   }
 
+  const handleSlotClick = (key: string) => {
+    setActiveSlot(activeSlotRef.current === key ? null : key)
+  }
+
+  const handleSlotClear = (key: string) => {
+    const updated = { ...imageSlotValuesRef.current }
+    delete updated[key]
+    setImageSlotValues(updated)
+    persistChange?.({ videoSlots: updated })
+    if (activeSlotRef.current === key) setActiveSlot(null)
+  }
+
+  // Derive current model definition (slot defs + inline ref support)
+  const currentModelDef = useMemo(
+    () => VIDEO_MODELS.find(m => m.id === model),
+    [model]
+  )
+  const slotDefs      = currentModelDef?.videoSlots ?? []
+  const supportsInlineRef = currentModelDef?.supportsInlineImageRef ?? false
+
+  // Route ref chip clicks: fill active slot OR insert into rich text (inline-ref models only)
+  const handleInsertReference = useCallback((ref: string) => {
+    const nid = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
+
+    if (activeSlotRef.current) {
+      const key = activeSlotRef.current
+      // Compute updated value from the ref (NOT inside a setState updater) to avoid
+      // the "setState during render" React error caused by calling persistChange (setNodes)
+      // inside another setState's updater function.
+      const updated = { ...imageSlotValuesRef.current, [key]: nid }
+      imageSlotValuesRef.current = updated
+      setImageSlotValuesLocal(updated)
+      persistChange?.({ videoSlots: updated })
+      setActiveSlot(null)
+      return
+    }
+
+    // Only insert into editor if this model supports inline image refs
+    if (supportsInlineRef) {
+      editorRef.current?.insertReference(nid)
+    }
+    // else: no-op — slot-based models don't mix images into the prompt text
+  }, [supportsInlineRef, persistChange])
+
   const isAuto      = mode === "auto"
   const isNote      = mode === "note"
   const canSubmit   = prompt.trim().length > 0
   const buttonLabel = hasSrc ? "Regenerate" : "Generate"
-
-  // Insert chip at current cursor position inside the editor
-  const handleInsertReference = useCallback((ref: string) => {
-    const nodeId = ref.replace(/^\{\{/, '').replace(/\}\}$/, '')
-    editorRef.current?.insertReference(nodeId)
-  }, [])
 
   return (
     <div className="flex flex-col">
@@ -1084,6 +1335,19 @@ export function GenerateVideoPanel({
           onInsertReference={handleInsertReference}
         />
       )}
+
+      {/* Image slot row — only for models with defined slots */}
+      {nodeId && slotDefs.length > 0 && (
+        <VideoImageSlots
+          nodeId={nodeId}
+          slotDefs={slotDefs}
+          values={imageSlotValues}
+          activeSlot={activeSlot}
+          onSlotClick={handleSlotClick}
+          onSlotClear={handleSlotClear}
+        />
+      )}
+
       <RefPromptEditor
         ref={editorRef}
         value={prompt}
@@ -1128,7 +1392,7 @@ export function GenerateVideoPanel({
             </span>
             <button
               disabled={!canSubmit}
-              onClick={() => onGenerate(prompt, model, params)}
+              onClick={() => onGenerate(prompt, model, params, Object.keys(imageSlotValues).length > 0 ? imageSlotValues : undefined)}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all duration-150",
                 canSubmit

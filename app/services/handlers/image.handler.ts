@@ -6,34 +6,61 @@ import type { MultimodalContent } from "@/lib/prompt-resolver"
 import type { JobHandler, HandlerContext } from "./types"
 import { uploadFile, ensureStorage } from "@/lib/storage"
 
+/** Convert a URL to a data URI if it's a local/blob URL that Replicate can't access */
+async function ensurePublicUrl(url: string): Promise<string> {
+  if (!url.startsWith("data:") && !url.startsWith("blob:")) return url
+  if (url.startsWith("data:")) return url
+  try {
+    const { b64, mime } = await urlToBase64(url)
+    return `data:${mime};base64,${b64}`
+  } catch {
+    return url
+  }
+}
+
 async function executeImageGeneration(
   content: MultimodalContent[],
   model: string,
   modelParams: Record<string, string> | undefined,
+  imageSlots: Record<string, string | string[]> | undefined,
   ctx: HandlerContext,
 ): Promise<{ b64: string; mime: string }> {
   const modelDef = IMAGE_MODEL_MAP[model] ?? DEFAULT_IMAGE_MODEL_DEF
-  const promptText = content.find(c => c.type === "text")?.text ?? ""
+  // Join all text blocks (handles multimodal content with interleaved text+chips)
+  const promptText = content.filter(c => c.type === "text").map(c => c.text).join("").trim()
 
   if (modelDef.backend === "replicate") {
     const input: Record<string, unknown> = { prompt: promptText }
 
-    const imageDataUris = await Promise.all(
-      content
-        .filter(c => c.type === "image_url")
-        .map(c => (c as { type: string; image_url: { url: string } }).image_url.url)
-        .filter(url => url.startsWith("http") || url.startsWith("data:"))
-        .map(async url => {
-          if (url.startsWith("data:")) return url
-          try {
-            const { b64, mime } = await urlToBase64(url)
-            return `data:${mime};base64,${b64}`
-          } catch {
-            return url
-          }
-        })
-    )
-    if (imageDataUris.length > 0) input.image_input = imageDataUris
+    if (imageSlots && Object.keys(imageSlots).length > 0) {
+      // Slot-based image input (e.g. nano-banana-pro with named image_input[] slots)
+      for (const [k, v] of Object.entries(imageSlots)) {
+        if (Array.isArray(v)) {
+          const urls = await Promise.all(v.map(ensurePublicUrl))
+          if (urls.length > 0) input[k] = urls
+        } else if (v) {
+          input[k] = await ensurePublicUrl(v)
+        }
+      }
+    } else {
+      // Legacy / OpenRouter-style: extract image_url blocks from multimodal content
+      const imageDataUris = await Promise.all(
+        content
+          .filter(c => c.type === "image_url")
+          .map(c => (c as { type: string; image_url: { url: string } }).image_url.url)
+          .filter(url => url.startsWith("http") || url.startsWith("data:"))
+          .map(async url => {
+            if (url.startsWith("data:")) return url
+            try {
+              const { b64, mime } = await urlToBase64(url)
+              return `data:${mime};base64,${b64}`
+            } catch {
+              return url
+            }
+          })
+      )
+      if (imageDataUris.length > 0) input.image_input = imageDataUris
+    }
 
     if (modelParams) {
       for (const [k, v] of Object.entries(modelParams)) {
@@ -92,8 +119,9 @@ async function executeImageGeneration(
 }
 
 export const imageHandler: JobHandler = {
-  async execute({ content, model, modelParams, userId }, ctx) {
-    const { b64, mime } = await executeImageGeneration(content, model, modelParams, ctx)
+  async execute({ content, model, modelParams, userId, extra }, ctx) {
+    const imageSlots = extra?.imageSlots as Record<string, string | string[]> | undefined
+    const { b64, mime } = await executeImageGeneration(content, model, modelParams, imageSlots, ctx)
 
     // Upload to MinIO server-side
     try {

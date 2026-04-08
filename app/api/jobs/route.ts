@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { nodeId, nodeType, prompt, content, model, modelParams, upstreamData, templateParams, filterItems } = await req.json()
+    const { nodeId, nodeType, prompt, content, model, modelParams, upstreamData, templateParams, filterItems, imageSlots } = await req.json()
 
     // Support both legacy string prompt and new multimodal content format
     const hasContent = content && Array.isArray(content) && content.length > 0
@@ -73,9 +73,10 @@ export async function POST(req: NextRequest) {
         nodeType,
         content: normalizedContent,
         model,
-        ...(modelParams   && { modelParams }),
-        ...(templateParams   && { templateParams }),
-        ...(filterItems   && { filterItems }),
+        ...(modelParams    && { modelParams }),
+        ...(templateParams && { templateParams }),
+        ...(filterItems    && { filterItems }),
+        ...(imageSlots     && { imageSlots }),
       })
     }
 

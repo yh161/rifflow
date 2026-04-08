@@ -74,6 +74,7 @@ export async function GET(req: Request, { params }: { params: Params }) {
         id: room.id,
         name: room.name,
         ownerId: room.ownerId,
+        isDirect: room.isDirect,
         joinPermission: room.joinPermission,
         updatedAt: room.updatedAt,
         members: room.members.map((m) => ({
