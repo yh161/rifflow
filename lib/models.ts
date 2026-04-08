@@ -100,15 +100,16 @@ export const MODEL_PROGRESS_PROFILE: Record<string, ProgressProfile> = {
   "llama-3.1-8b":     { max: 0.94, ease: 0.34, p50Ms: 4800, p90Ms: 9200 },
 
   // Image models: slower than text
-  "nano-banana":      { max: 0.96, ease: 0.24, p50Ms: 8000, p90Ms: 15000 },
-  "nano-banana-pro":  { max: 0.96, ease: 0.22, p50Ms: 9500, p90Ms: 18000 },
+  "nano-banana":      { max: 0.96, ease: 0.24, p50Ms: 8000,  p90Ms: 15000 },
+  "nano-banana-pro":  { max: 0.96, ease: 0.22, p50Ms: 30000,  p90Ms: 50000 },
+  "seedream-4.5":     { max: 0.96, ease: 0.22, p50Ms: 10000, p90Ms: 20000 },
 
   // Video models: slowest
   "grok-video":           { max: 0.96, ease: 0.18, p50Ms: 14000, p90Ms: 26000 },
   "kling-v3-video":       { max: 0.96, ease: 0.15, p50Ms: 20000, p90Ms: 50000 },
   "kling-v3-omni-video":  { max: 0.96, ease: 0.15, p50Ms: 20000, p90Ms: 50000 },
   "veo-3.1":              { max: 0.96, ease: 0.13, p50Ms: 30000, p90Ms: 90000 },
-  "veo-3.1-fast":         { max: 0.96, ease: 0.15, p50Ms: 20000, p90Ms: 60000 },
+  "veo-3.1-fast":         { max: 0.96, ease: 0.15, p50Ms: 100000, p90Ms: 240000 },
 }
 
 // ── Shared param groups ──────────────────────────────────────────────────────
@@ -307,6 +308,22 @@ export const IMAGE_MODELS: ModelDef[] = [
       { key: "aspect_ratio",  label: "Aspect Ratio", options: ["1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "3:2", "2:3", "21:9"], default: "1:1" },
       { key: "resolution",    label: "Resolution",   options: ["1K", "2K", "4K"],                                                          default: "2K"  },
       { key: "output_format", label: "Format",       options: ["jpg", "png"],                                                               default: "jpg" },
+    ],
+  },
+
+  // ── ByteDance Seedream 4.5 via OpenRouter ─────────────────────────────────
+  // Verified schema (2026-04): https://openrouter.ai/bytedance-seed/seedream-4.5
+  //   INPUT:  text prompt (string) + optional image(s) via multimodal content blocks
+  //           supported_parameters: temperature, top_p, max_tokens, frequency_penalty
+  //   OUTPUT: message.images[0].image_url.url (data URI, JPEG)
+  //   NOTE:   supportsImageInput=true — upstream image nodes sent as image_url blocks
+  //           in the user message content (standard OpenAI multimodal format).
+  //           Prompt uses plain rich-text chips (no slots, no inline <<<image_N>>>).
+  {
+    id: "seedream-4.5", name: "Seedream 4.5", orModel: "bytedance-seed/seedream-4.5", backend: "openrouter",
+    supportsImageInput: true,
+    params: [
+      { key: "temperature", label: "Temperature", options: ["0.3", "0.7", "1.0", "1.5"], default: "0.7" },
     ],
   },
 ]

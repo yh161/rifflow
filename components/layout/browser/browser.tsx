@@ -196,19 +196,17 @@ export default function Panel({ isSidebarOpen = true, sidebarWidth = 320, isOpen
               className="font-bold"
               onClick={() => navigate("watch")}
             >
-              Navigator
+              Rifflow
             </MenubarTrigger>
           </MenubarMenu>
           <MenubarMenu>
             <MenubarTrigger onClick={() => navigate("account")}>
-              <User className="h-3.5 w-3.5 mr-1" />
               Account
             </MenubarTrigger>
           </MenubarMenu>
           <MenubarMenu>
             <MenubarTrigger onClick={() => navigate("pricing")}>
-              <Zap className="h-3.5 w-3.5 mr-1 text-blue-500" />
-              Pricing Plans
+              Pricing
             </MenubarTrigger>
           </MenubarMenu>
         
@@ -233,7 +231,7 @@ export default function Panel({ isSidebarOpen = true, sidebarWidth = 320, isOpen
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                     <Input
-                      placeholder="Search workflows & people…"
+                      placeholder="Search…"
                       value={searchInput}
                       onChange={(e) => handleSearchChange(e.target.value)}
                       onKeyDown={(e) => {

@@ -23,7 +23,8 @@ export function calculateCreditCost(
   if (textModelIds.includes(modelId)) return 1
 
   // ── Image models ─────────────────────────────────────────────────────────
-  if (modelId === "nano-banana") return 4   // $0.039 → round up to 4¢
+  if (modelId === "nano-banana")   return 4   // $0.039 → round up to 4¢
+  if (modelId === "seedream-4.5") return 4   // ~$0.04/image via OpenRouter
 
   if (modelId === "nano-banana-pro") {
     const res = params?.resolution ?? "2K"
