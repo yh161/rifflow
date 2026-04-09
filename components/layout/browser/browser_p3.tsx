@@ -200,7 +200,7 @@ export function P3({ currentEditingDraftId, importRef }: P3Props) {
           </Button>
           <Button size="sm" onClick={() => {
             setActiveTab("drafts")
-            window.dispatchEvent(new CustomEvent("canvas:new", { detail: { keepPanelOpen: true, currentDraftId: currentEditingDraftId } }))
+            window.dispatchEvent(new CustomEvent("canvas:new", { detail: { currentDraftId: currentEditingDraftId } }))
           }}>
             <PlusCircle className="mr-2 h-4 w-4" />
             New Workflow

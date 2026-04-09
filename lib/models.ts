@@ -285,7 +285,8 @@ export const IMAGE_MODELS: ModelDef[] = [
   //   NOTE:   image_input accepts an array of upstream images (img2img / reference)
   {
     id: "nano-banana", name: "nano-banana", orModel: "google/nano-banana", backend: "replicate",
-    supportsImageInput: false,
+    supportsImageInput: true,
+    imageInputSlots: [{ key: "image_input", label: "Reference", array: true, maxCount: 3 }],
     params: [
       { key: "aspect_ratio",  label: "Aspect Ratio", options: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"], default: "1:1" },
       { key: "output_format", label: "Format",        options: ["jpg", "png"],                                                default: "jpg" },
