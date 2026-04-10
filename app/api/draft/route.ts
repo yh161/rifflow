@@ -3,6 +3,8 @@ import { authOptions } from "@/lib/auth"
 import { DraftService } from "@/app/services/draft.service"
 import { RiffDraftSnapshotRepository } from "@/app/repositories/riffDraftSnapshot.repository"
 import { NextResponse } from "next/server"
+import { normalizeDraftNodes } from "@/lib/draft-assets"
+import { Prisma } from "@prisma/client"
 
 const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 }
 
@@ -106,7 +108,16 @@ export async function POST(req: Request) {
   // Push history snapshot (throttled — at most once per 5 s, max 40 snapshots)
   // Fire-and-forget: snapshot failure should never block the autosave response
   const snapshotRepo = new RiffDraftSnapshotRepository()
-  snapshotRepo.pushIfThrottled(session.user.id, nodes, edges, { ...viewport, favorites }).catch(() => {})
+  const snapshotNodes = normalizeDraftNodes(nodes, {
+    stripEphemeral: true,
+    stripRuntimeFields: true,
+  })
+  snapshotRepo.pushIfThrottled(
+    session.user.id,
+    snapshotNodes as Prisma.InputJsonValue,
+    edges as Prisma.InputJsonValue,
+    { ...viewport, favorites } as Prisma.InputJsonValue,
+  ).catch(() => {})
 
   return NextResponse.json({ ok: true })
 }

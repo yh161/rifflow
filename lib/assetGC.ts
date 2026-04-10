@@ -12,10 +12,7 @@
  *   // compare with minioClient.listObjects(bucket, `${userId}/`, true)
  */
 
-import { STORAGE_PUBLIC_BASE } from "@/lib/storage"
-
-/** Prefix that every stored asset URL starts with. */
-const MINIO_BASE = `${STORAGE_PUBLIC_BASE}/`
+import { extractStorageObjectKey } from "@/lib/asset-ref"
 
 // ─────────────────────────────────────────────
 // Types
@@ -43,9 +40,7 @@ interface AnyNode {
  * or return null if the URL doesn't belong to our MinIO bucket.
  */
 export function urlToMinioKey(url: unknown): string | null {
-  if (typeof url !== "string") return null
-  if (url.startsWith(MINIO_BASE)) return url.slice(MINIO_BASE.length)
-  return null
+  return extractStorageObjectKey(url)
 }
 
 /**

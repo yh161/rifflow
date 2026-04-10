@@ -7,7 +7,9 @@ import { randomUUID } from 'crypto'
 // ─────────────────────────────────────────────
 // POST /api/upload
 // Accepts multipart/form-data with a "file" field (image).
-// Uploads to storage and returns { url } — a persistent, public URL.
+// Uploads to storage and returns:
+//   - objectKey: stable storage key (preferred for persistence)
+//   - url:       derived public URL (for immediate preview)
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -32,7 +34,7 @@ export async function POST(req: NextRequest) {
     const objectKey = `${session.user.id}/${randomUUID()}.${ext}`
 
     const url = await uploadFile(objectKey, buffer, mimeType)
-    return NextResponse.json({ url })
+    return NextResponse.json({ url, objectKey })
 
   } catch (error: unknown) {
     console.error('[upload] error:', error)

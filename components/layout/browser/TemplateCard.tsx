@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { cn } from "@/lib/utils"
+import { resolveFileUrl } from "@/lib/file-url"
 import { Heart, Play, Zap, Lock, Star, Trash2, EyeOff, RefreshCw, DownloadCloud, Copy, LogIn } from "lucide-react"
 import {
   ContextMenu,
@@ -44,6 +45,7 @@ export function TemplateCard({
   onDelete,
   onUnpublish,
   onRepublish,
+  onMakePublic,
   onLoadToCanvas,
   onCopyToDraft,
   onCopyAndLoadToCanvas,
@@ -82,7 +84,7 @@ export function TemplateCard({
           {template.thumbnail && !imgFailed ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={template.thumbnail}
+              src={resolveFileUrl(template.thumbnail)}
               alt={template.name}
               onError={() => setImgFailed(true)}
               className={cn(
@@ -138,7 +140,7 @@ export function TemplateCard({
             {template.thumbnail && !imgFailed ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={template.thumbnail}
+                src={resolveFileUrl(template.thumbnail)}
                 alt={template.name}
                 onError={() => setImgFailed(true)}
                 className={cn(
@@ -274,6 +276,17 @@ export function TemplateCard({
               <ContextMenuItem onClick={() => onRepublish(template.id)}>
                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
                 Republish
+              </ContextMenuItem>
+            </>
+          )}
+
+          {/* Make public (limited/private card creator only) */}
+          {onMakePublic && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => onMakePublic(template.id)}>
+                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                设为公开
               </ContextMenuItem>
             </>
           )}

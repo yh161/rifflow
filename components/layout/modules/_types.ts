@@ -68,6 +68,7 @@ export interface CustomNodeData {
   align?: 'left' | 'center' | 'right'
   // image
   src?: string
+  srcKey?: string
   naturalWidth?: number
   naturalHeight?: number
   fileName?: string
@@ -75,10 +76,13 @@ export interface CustomNodeData {
   rotation?: number  // rotation angle in degrees (0, 90, 180, 270)
   // video
   videoSrc?: string
+  videoSrcKey?: string
   videoPoster?: string
+  videoPosterKey?: string
   videoDuration?: string
   // pdf
   pdfSrc?: string
+  pdfSrcKey?: string
   pdfPageCount?: number
   pdfCurrentPage?: number
   pdfOutputRules?: Array<{ pages: string; dpi: number }>

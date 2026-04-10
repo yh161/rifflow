@@ -7,6 +7,7 @@ import { Image as ImageIcon } from 'lucide-react'
 import type { CustomNodeData, ModuleModalProps } from '../_types'
 import type { HandleDef } from '../_handle'
 import { GenerateImagePanel } from '@/components/layout/node_editor/_panels'
+import { resolveFileUrl } from '@/lib/file-url'
 
 export const meta = {
   id: 'image',
@@ -70,18 +71,21 @@ export const NodeUI = ({
   const displayH = data.height ?? 180
   const { setNodes } = useReactFlow()
 
+  // Resolve stored key/URL to full URL for rendering
+  const src = resolveFileUrl(data.src)
+
   // Subscribe to canvas zoom directly — re-renders when zoom changes
   const zoom = useStore((s) => s.transform[2])
 
   // When src first appears (generation/upload), resize node to natural image dimensions
   const prevSrcRef = useRef<string | undefined>(undefined)
   useEffect(() => {
-    if (!data.src || data.src === prevSrcRef.current) return
+    if (!data.src || src === prevSrcRef.current) return
     if (data.naturalWidth && data.naturalHeight) {
-      prevSrcRef.current = data.src
+      prevSrcRef.current = src
       return // already have dims, no need to reload
     }
-    prevSrcRef.current = data.src
+    prevSrcRef.current = src
     const img = new window.Image()
     img.onload = () => {
       if (!nodeId || !img.naturalWidth || !img.naturalHeight) return
@@ -101,25 +105,25 @@ export const NodeUI = ({
         }
       }))
     }
-    img.src = data.src
-  }, [data.src, data.naturalWidth, data.naturalHeight, nodeId, setNodes])
+    img.src = src
+  }, [data.src, data.naturalWidth, data.naturalHeight, nodeId, setNodes, src])
 
   // displaySrc is the rasterized blob for the current zoom.
-  // src (original objectURL) is the source of truth and is never touched here.
+  // src (resolved URL) is the source of truth and is never touched here.
   const [displaySrc, setDisplaySrc] = useState<string | null>(null)
   const displaySrcRef   = useRef<string | null>(null)
   const lastRasterRef   = useRef<{ src: string; zoom: number } | null>(null)
   const timerRef        = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    if (!data.src) {
+    if (!src) {
       setDisplaySrc(null)
       return
     }
 
     // Skip re-raster if zoom change is < 30% and same src
     const last = lastRasterRef.current
-    if (last && last.src === data.src) {
+    if (last && last.src === src) {
       const delta = Math.abs(zoom - last.zoom) / Math.max(last.zoom, 0.001)
       if (delta < 0.3) return
     }
@@ -139,18 +143,18 @@ export const NodeUI = ({
         data.naturalHeight ?? 99999,
       )
       try {
-        const newBlob = await rasterizeToSize(data.src!, targetW, targetH)
+        const newBlob = await rasterizeToSize(src, targetW, targetH)
         // Revoke previous display blob (never the original src)
         if (displaySrcRef.current) URL.revokeObjectURL(displaySrcRef.current)
         displaySrcRef.current = newBlob
-        lastRasterRef.current = { src: data.src!, zoom }
+        lastRasterRef.current = { src, zoom }
         setDisplaySrc(newBlob)
       } catch {
         // fallback: show original directly
-        setDisplaySrc(data.src ?? null)
+        setDisplaySrc(src || null)
       }
     }, 250)
-  }, [data.src, zoom, displayW, displayH, data.naturalWidth, data.naturalHeight])
+  }, [data.src, zoom, displayW, displayH, data.naturalWidth, data.naturalHeight, src])
 
   // Revoke display blob on unmount
   useEffect(() => () => {
@@ -217,7 +221,7 @@ export const NodeUI = ({
           transformOrigin: 'bottom center',
           transition: initialScale ? 'none' : 'transform 300ms cubic-bezier(0.4,0,0.2,1)',
         }}>
-          {(displaySrc ?? data.src)
+          {(displaySrc ?? src)
             ? (
               <div
                 style={{
@@ -239,7 +243,7 @@ export const NodeUI = ({
                 >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={displaySrc ?? data.src}
+                    src={displaySrc ?? src}
                     alt={data.fileName || 'image'}
                     style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                   />

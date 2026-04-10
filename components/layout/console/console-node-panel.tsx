@@ -95,9 +95,9 @@ export function ConsoleNodePanel({
           const form = new FormData()
           form.append("file", file)
           const res = await fetch("/api/upload", { method: "POST", body: form })
-          const json = (await res.json()) as { url?: string }
-          if (res.ok && json.url) {
-            handleUpdate({ src: json.url })
+          const json = (await res.json()) as { url?: string; objectKey?: string }
+          if (res.ok && json.objectKey) {
+            handleUpdate({ src: json.objectKey })
             URL.revokeObjectURL(tempSrc)
           }
         } catch {}
@@ -116,9 +116,9 @@ export function ConsoleNodePanel({
         const form = new FormData()
         form.append("file", file)
         const res = await fetch("/api/upload", { method: "POST", body: form })
-        const json = (await res.json()) as { url?: string }
-        if (res.ok && json.url) {
-          handleUpdate({ videoSrc: json.url })
+        const json = (await res.json()) as { url?: string; objectKey?: string }
+        if (res.ok && json.objectKey) {
+          handleUpdate({ videoSrc: json.objectKey })
           URL.revokeObjectURL(tempSrc)
         }
       } catch {}
@@ -135,9 +135,9 @@ export function ConsoleNodePanel({
         const form = new FormData()
         form.append("file", file)
         const res = await fetch("/api/upload", { method: "POST", body: form })
-        const json = (await res.json()) as { url?: string }
-        if (res.ok && json.url) {
-          handleUpdate({ pdfSrc: json.url })
+        const json = (await res.json()) as { url?: string; objectKey?: string }
+        if (res.ok && json.objectKey) {
+          handleUpdate({ pdfSrc: json.objectKey })
           URL.revokeObjectURL(tempSrc)
         }
       } catch {}

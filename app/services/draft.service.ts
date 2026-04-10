@@ -3,6 +3,7 @@
 import { RiffDraftRepository } from "@/app/repositories/riffDraft.repository"
 import { IRiffDraftRepository } from "@/app/repositories/types"
 import { Prisma } from "@prisma/client"
+import { normalizeDraftNode } from "@/lib/draft-assets"
 
 // ─────────────────────────────────────────────
 // Sanitize a single node before persisting to the database.
@@ -10,24 +11,10 @@ import { Prisma } from "@prisma/client"
 // (File objects, callbacks) so the stored draft is always safe to reload.
 // ─────────────────────────────────────────────
 function sanitizeNode(node: Prisma.JsonValue): Prisma.JsonValue {
-  if (typeof node !== "object" || node === null || Array.isArray(node)) return node
-
-  const n    = node as Record<string, Prisma.JsonValue>
-  const data = n.data as Record<string, Prisma.JsonValue> | undefined
-  if (!data) return node
-
-  const cleanData: Record<string, Prisma.JsonValue> = { ...data }
-
-  // Remove blob: URLs — they are only valid in the current browser tab
-  if (typeof cleanData.src      === "string" && cleanData.src.startsWith("blob:"))      delete cleanData.src
-  if (typeof cleanData.videoSrc === "string" && cleanData.videoSrc.startsWith("blob:")) delete cleanData.videoSrc
-
-  // Remove non-serialisable / runtime-only fields
-  delete cleanData.rawFile
-  delete cleanData.onDataChange
-  delete cleanData.onDelete
-
-  return { ...n, data: cleanData as unknown as Prisma.JsonValue }
+  return normalizeDraftNode(node, {
+    stripEphemeral: true,
+    stripRuntimeFields: true,
+  }) as Prisma.JsonValue
 }
 
 const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 }
@@ -82,7 +69,13 @@ export class DraftService {
         }
       }
 
-      const nodes    = Array.isArray(draft.nodesJson) ? draft.nodesJson : []
+      const nodesRaw = Array.isArray(draft.nodesJson) ? draft.nodesJson : []
+      const nodes = nodesRaw.map((n) =>
+        normalizeDraftNode(n, {
+          stripEphemeral: false,
+          stripRuntimeFields: false,
+        }) as Prisma.JsonValue,
+      )
       const edges    = Array.isArray(draft.edgesJson) ? draft.edgesJson : []
       const viewport = parseViewport(draft.viewportJson)
       const favorites = parseFavorites(draft.viewportJson)

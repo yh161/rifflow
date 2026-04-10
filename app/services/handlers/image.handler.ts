@@ -129,8 +129,8 @@ export const imageHandler: JobHandler = {
       const ext = mime.split("/")[1]?.replace("jpeg", "jpg") || "png"
       const key = `${userId}/gen_${Date.now()}.${ext}`
       const buf = Buffer.from(b64, "base64")
-      const src = await uploadFile(key, buf, mime)
-      return { jobResult: { src, mime }, inputTokens: 0, outputTokens: 0 }
+      await uploadFile(key, buf, mime)
+      return { jobResult: { src: key, mime }, inputTokens: 0, outputTokens: 0 }
     } catch (uploadErr) {
       console.warn("[imageHandler] MinIO upload failed, falling back to b64 storage:", uploadErr)
       return { jobResult: { b64, mime }, inputTokens: 0, outputTokens: 0 }

@@ -31,8 +31,8 @@ export async function resultHandler(
       )
       const upRes  = await fetch('/api/upload', { method: 'POST', body: form })
       const upJson = await upRes.json()
-      if (!upRes.ok || !upJson.url) throw new Error('upload failed')
-      src = upJson.url as string
+      if (!upRes.ok || (!upJson.objectKey && !upJson.url)) throw new Error('upload failed')
+      src = (upJson.objectKey ?? upJson.url) as string
     } catch {
       src = URL.createObjectURL(blob)
     }

@@ -3,6 +3,8 @@ import { authOptions } from "@/lib/auth"
 import { NextResponse } from "next/server"
 import { RiffDraftSnapshotRepository } from "@/app/repositories/riffDraftSnapshot.repository"
 import { RiffDraftRepository } from "@/app/repositories/riffDraft.repository"
+import { normalizeDraftNodes } from "@/lib/draft-assets"
+import { Prisma } from "@prisma/client"
 
 // ─────────────────────────────────────────────
 // POST /api/draft/undo  — 撤回到上一个快照
@@ -21,12 +23,17 @@ export async function POST() {
     return NextResponse.json({ error: "Nothing to undo" }, { status: 404 })
   }
 
+  const normalizedNodes = normalizeDraftNodes(
+    Array.isArray(previous.nodesJson) ? previous.nodesJson : [],
+    { stripEphemeral: false, stripRuntimeFields: false },
+  )
+
   // Restore the previous snapshot into RiffDraft
   await draftRepo.upsertByUserId(session.user.id, {
     user:         { connect: { id: session.user.id } },
-    nodesJson:    previous.nodesJson as any,
-    edgesJson:    previous.edgesJson as any,
-    viewportJson: previous.viewportJson as any,
+    nodesJson:    normalizedNodes as Prisma.InputJsonValue,
+    edgesJson:    previous.edgesJson as Prisma.InputJsonValue,
+    viewportJson: previous.viewportJson as Prisma.InputJsonValue,
   })
 
   const [undoCount, redoCount] = await Promise.all([
@@ -36,7 +43,7 @@ export async function POST() {
 
   return NextResponse.json({
     ok: true,
-    nodesJson:    previous.nodesJson,
+    nodesJson:    normalizedNodes,
     edgesJson:    previous.edgesJson,
     viewportJson: previous.viewportJson,
     undoCount,

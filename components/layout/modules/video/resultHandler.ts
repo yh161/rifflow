@@ -38,12 +38,12 @@ export async function resultHandler(
       form.append('file', new File([blob], `generated.${ext}`, { type: mime }))
       const upRes  = await fetch('/api/upload', { method: 'POST', body: form })
       const upJson = await upRes.json()
-      if (!upRes.ok || !upJson.url) throw new Error('upload failed')
-      // Replace Replicate URL with permanent MinIO URL
+      if (!upRes.ok || (!upJson.objectKey && !upJson.url)) throw new Error('upload failed')
+      // Replace Replicate URL with permanent storage key
       ctx.setNodes(ns => ns.map(n =>
         n.id !== ctx.nodeId ? n : {
           ...n,
-          data: { ...n.data, videoSrc: upJson.url as string },
+          data: { ...n.data, videoSrc: (upJson.objectKey ?? upJson.url) as string },
         }
       ))
     } catch (err) {

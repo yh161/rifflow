@@ -191,12 +191,12 @@ export function useCanvasCommands({
               form.append('file', file)
               const res = await fetch('/api/upload', { method: 'POST', body: form })
               if (!res.ok) return
-              const { url: persistentUrl } = await res.json()
-              if (!persistentUrl) return
+              const { objectKey } = await res.json() as { objectKey?: string }
+              if (!objectKey) return
 
               canvasState.setNodes((nds) => nds.map((n) => {
                 if (n.id !== id) return n
-                return { ...n, data: { ...n.data, src: persistentUrl } }
+                return { ...n, data: { ...n.data, src: objectKey } }
               }))
               URL.revokeObjectURL(tempUrl)
             } catch {

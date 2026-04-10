@@ -10,6 +10,10 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 # prisma.config.ts requires DATABASE_URL at generate time (no real connection needed)
 ENV DATABASE_URL=postgresql://dummy:dummy@localhost/dummy
+# Storage public URL baked into the client bundle at build time.
+# Pass via: docker build --build-arg NEXT_PUBLIC_STORAGE_URL=https://storage.googleapis.com/<bucket>
+ARG NEXT_PUBLIC_STORAGE_URL
+ENV NEXT_PUBLIC_STORAGE_URL=${NEXT_PUBLIC_STORAGE_URL}
 RUN npx prisma generate
 RUN npm run build
 

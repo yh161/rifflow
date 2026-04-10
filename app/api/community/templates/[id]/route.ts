@@ -91,6 +91,7 @@ export async function PATCH(
       "name", "description", "thumbnail", "category", "tags", "parameters",
       "pricingType", "priceInPoints", "canvasSnapshot", "status", "publishedAt",
       "isFeatured", "executionsCount", "favoritesCount", "rating",
+      "visibility", "visibilityList",
     ]
     const updateData: Record<string, unknown> = {}
     for (const key of allowed) {

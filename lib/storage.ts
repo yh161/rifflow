@@ -25,6 +25,11 @@ export const STORAGE_PUBLIC_BASE = IS_PROD
   ? `https://storage.googleapis.com/${GCS_BUCKET_NAME}`
   : `${MINIO_PUBLIC_URL}/${MINIO_BUCKET_NAME}`
 
+/** Resolve an object key to its full public URL (server-side). */
+export function getFileUrl(key: string): string {
+  return `${STORAGE_PUBLIC_BASE}/${key}`
+}
+
 // ─── 懒加载客户端（避免在不需要的环境中初始化） ──────────
 
 let _minio: import('minio').Client | null = null

@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react"
 import { useSession } from "next-auth/react"
 import {
   Camera, Tag, ChevronRight, Loader2,
-  ImageIcon, Sparkles,
+  ImageIcon, Sparkles, Globe, Users, UserCheck, Lock,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -57,8 +57,8 @@ function CoverUpload({
       ) : (
         <>
           <ImageIcon className="h-8 w-8 text-slate-300 mb-2" />
-          <span className="text-xs text-slate-400">上传封面图</span>
-          <span className="text-[10px] text-slate-300 mt-0.5">推荐 1:1 比例</span>
+          <span className="text-xs text-slate-400">Upload cover</span>
+          <span className="text-[10px] text-slate-300 mt-0.5">Recommended 1:1 ratio</span>
         </>
       )}
       <input
@@ -94,7 +94,7 @@ function AICoverGen({
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        throw new Error(d.error ?? "生成失败")
+        throw new Error(d.error ?? "Generation failed")
       }
       const { url } = await res.json()
       // Convert data URL (base64) or remote URL to a File blob
@@ -112,7 +112,7 @@ function AICoverGen({
       const previewUrl = URL.createObjectURL(blob)
       onGenerated(previewUrl, file)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "生成失败")
+      setError(e instanceof Error ? e.message : "Generation failed")
     } finally {
       setGen(false)
     }
@@ -185,7 +185,7 @@ function TagInput({
           if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add() }
         }}
         onBlur={add}
-        placeholder="输入标签后按 Enter（最多 8 个）"
+        placeholder="Type a tag and press Enter (max 8)"
         className="h-8 text-sm"
       />
     </div>
@@ -214,18 +214,33 @@ const EMPTY_FORM: FormState = {
   coverFile: null, coverPreview: null,
 }
 
+type Visibility = "public" | "friends" | "selected" | "only_me"
+
+const VISIBILITY_OPTIONS: {
+  value: Visibility
+  label: string
+  desc: string
+  icon: React.ReactNode
+}[] = [
+  { value: "public",   label: "Public",        desc: "Discoverable in community", icon: <Globe className="h-3.5 w-3.5" /> },
+  { value: "friends",  label: "Friends",       desc: "Visible to your friends",   icon: <Users className="h-3.5 w-3.5" /> },
+  { value: "selected", label: "Selected",      desc: "Choose specific friends",   icon: <UserCheck className="h-3.5 w-3.5" /> },
+  { value: "only_me",  label: "Only me",       desc: "Completely private",        icon: <Lock className="h-3.5 w-3.5" /> },
+]
+
 export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCoverChange }: PublishModalProps) {
   const { data: session } = useSession()
-  const [form,     setForm]     = useState<FormState>(EMPTY_FORM)
-  const [draftId,  setDraftId]  = useState<string | null>(null)
-  const [loading,  setLoading]  = useState<"draft" | "publish" | null>(null)
-  const [error,    setError]    = useState<string | null>(null)
+  const [form,       setForm]       = useState<FormState>(EMPTY_FORM)
+  const [draftId,    setDraftId]    = useState<string | null>(null)
+  const [loading,    setLoading]    = useState<"draft" | "publish" | null>(null)
+  const [error,      setError]      = useState<string | null>(null)
   const [metaLoading, setMetaLoading] = useState(false)
+  const [visibility, setVisibility] = useState<Visibility>("public")
 
   const set = <K extends keyof FormState>(key: K, val: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: val }))
 
-  const reset = () => { setForm(EMPTY_FORM); setDraftId(null); setError(null) }
+  const reset = () => { setForm(EMPTY_FORM); setDraftId(null); setError(null); setVisibility("public") }
   const close  = () => { if (!loading) { reset(); onOpenChange(false) } }
 
   // ── 打开时读取当前编辑草稿的元数据 ─────────────────────────────────
@@ -265,7 +280,7 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
 
   // ── 提交 ──────────────────────────────────────────────────────────
   const submit = async (mode: "draft" | "publish") => {
-    if (!form.name.trim()) { setError("请填写工作流名称"); return }
+    if (!form.name.trim()) { setError("Please enter a workflow name"); return }
     setError(null)
     setLoading(mode)
 
@@ -279,8 +294,8 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
         fd.append("file", form.coverFile)
         const upRes = await fetch("/api/upload", { method: "POST", body: fd })
         if (upRes.ok) {
-          const { url } = await upRes.json()
-          thumbnailUrl = url
+          const { objectKey } = await upRes.json() as { objectKey?: string }
+          thumbnailUrl = objectKey ?? null
         }
       }
 
@@ -313,6 +328,7 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
             ...baseFields,
             status:      publish ? "published" : "draft",
             publishedAt: publish ? new Date().toISOString() : null,
+            ...(publish && { visibility }),
           }),
         })
       } else {
@@ -320,13 +336,13 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
         res = await fetch("/api/community/templates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...baseFields, publish }),
+          body: JSON.stringify({ ...baseFields, publish, ...(publish && { visibility }) }),
         })
       }
 
       if (!res.ok) {
         const d = await res.json()
-        throw new Error(d.error ?? "保存失败")
+        throw new Error(d.error ?? "Save failed")
       }
 
       // 同步封面预览到 toolbar
@@ -336,7 +352,7 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
 
       close()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "保存失败，请重试")
+      setError(e instanceof Error ? e.message : "Save failed, please try again")
     } finally {
       setLoading(null)
     }
@@ -348,7 +364,7 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="max-w-xl gap-0 p-0 overflow-hidden">
         <DialogHeader className="px-6 pt-5 pb-4 border-b">
-          <DialogTitle className="text-base font-semibold">工作流详情</DialogTitle>
+          <DialogTitle className="text-base font-semibold">Workflow Details</DialogTitle>
         </DialogHeader>
 
         <div className="flex gap-5 p-5 overflow-y-auto max-h-[72vh]">
@@ -374,11 +390,11 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
 
             {/* 名称 */}
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">名称 *</Label>
+              <Label className="text-xs font-medium">Name *</Label>
               <Input
                 value={form.name}
                 onChange={(e) => set("name", e.target.value)}
-                placeholder="给你的工作流起个名字"
+                placeholder="Name your workflow"
                 className="h-9"
                 maxLength={60}
               />
@@ -386,7 +402,7 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
 
             {/* 描述 */}
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium">描述</Label>
+              <Label className="text-xs font-medium">Description</Label>
               <Textarea
                 value={form.description}
                 onChange={(e) => set("description", e.target.value)}
@@ -403,6 +419,34 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
                 <Tag className="h-3 w-3" /> 标签
               </Label>
               <TagInput tags={form.tags} onChange={(t) => set("tags", t)} />
+            </div>
+
+            {/* Visibility */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Visibility</Label>
+              <div className="grid grid-cols-2 gap-1.5">
+                {VISIBILITY_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setVisibility(opt.value)}
+                    className={cn(
+                      "flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-colors text-xs",
+                      visibility === opt.value
+                        ? "border-primary bg-primary/5 text-primary"
+                        : "border-slate-200 hover:border-slate-300 text-slate-600",
+                    )}
+                  >
+                    <span className={cn(visibility === opt.value ? "text-primary" : "text-slate-400")}>
+                      {opt.icon}
+                    </span>
+                    <div>
+                      <div className="font-medium leading-none mb-0.5">{opt.label}</div>
+                      <div className="text-[10px] text-slate-400">{opt.desc}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
 
           </div>
@@ -432,7 +476,7 @@ export function PublishModal({ open, onOpenChange, currentEditingDraftId, onCove
                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 : <ChevronRight className="h-3.5 w-3.5" />
               }
-              发布到社区
+              {visibility === "public" ? "发布到社区" : "保存并发布"}
             </Button>
           </div>
         </DialogFooter>

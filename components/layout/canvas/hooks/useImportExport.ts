@@ -4,6 +4,7 @@ import { Node, Edge } from "reactflow"
 import JSZip from "jszip"
 import type { CanvasState } from "./useCanvasState"
 import type { CustomNodeData, StandardNodeData } from "@/components/layout/modules/_types"
+import { resolveFileUrl } from "@/lib/file-url"
 
 const GHOST_NODE_ID = "__ghost_drop__"
 const GHOST_EDGE_ID = "__ghost_edge__"
@@ -16,14 +17,27 @@ function isRemoteUrl(s: unknown): s is string {
   return typeof s === "string" && (s.startsWith("http://") || s.startsWith("https://"))
 }
 
+/**
+ * Returns true for any value that represents a stored asset:
+ * - Remote URL (http/https) — old format
+ * - Object key (userId/uuid.ext) — new format
+ * Excludes blob: and data: URLs which are session-only.
+ */
+function isStorageAsset(s: unknown): s is string {
+  if (typeof s !== "string" || !s) return false
+  if (s.startsWith("blob:") || s.startsWith("data:")) return false
+  return true
+}
+
 function extFromUrl(url: string, fallback: string): string {
   return url.split("?")[0].split(".").pop()?.toLowerCase() || fallback
 }
 
 interface AssetEntry {
-  url: string       // original remote URL
-  zipPath: string   // path inside ZIP, e.g. "assets/abc123_src.png"
-  file?: File       // populated during import
+  url: string            // resolved URL for fetching
+  zipPath: string        // path inside ZIP, e.g. "assets/abc123_src.png"
+  originalValue?: string // original stored value (key or url) for substitution
+  file?: File            // populated during import
 }
 
 type NodeDataWithRuntimeFields = (CustomNodeData & StandardNodeData) & {
@@ -50,22 +64,22 @@ function collectNodeAssets(node: Node): AssetEntry[] {
   const d = node.data as CustomNodeData & StandardNodeData
 
   if (node.type === "CustomNode") {
-    if (isRemoteUrl(d.src)) {
-      entries.push({ url: d.src!, zipPath: `assets/${node.id}_src.${extFromUrl(d.src!, "png")}` })
+    if (isStorageAsset(d.src)) {
+      entries.push({ url: resolveFileUrl(d.src!), zipPath: `assets/${node.id}_src.${extFromUrl(d.src!, "png")}`, originalValue: d.src! })
     }
-    if (isRemoteUrl(d.videoSrc)) {
-      entries.push({ url: d.videoSrc!, zipPath: `assets/${node.id}_videoSrc.${extFromUrl(d.videoSrc!, "mp4")}` })
+    if (isStorageAsset(d.videoSrc)) {
+      entries.push({ url: resolveFileUrl(d.videoSrc!), zipPath: `assets/${node.id}_videoSrc.${extFromUrl(d.videoSrc!, "mp4")}`, originalValue: d.videoSrc! })
     }
-    if (isRemoteUrl(d.videoPoster)) {
-      entries.push({ url: d.videoPoster!, zipPath: `assets/${node.id}_videoPoster.${extFromUrl(d.videoPoster!, "jpg")}` })
+    if (isStorageAsset(d.videoPoster)) {
+      entries.push({ url: resolveFileUrl(d.videoPoster!), zipPath: `assets/${node.id}_videoPoster.${extFromUrl(d.videoPoster!, "jpg")}`, originalValue: d.videoPoster! })
     }
-    if (isRemoteUrl(d.pdfSrc)) {
-      entries.push({ url: d.pdfSrc!, zipPath: `assets/${node.id}_pdfSrc.${extFromUrl(d.pdfSrc!, "pdf")}` })
+    if (isStorageAsset(d.pdfSrc)) {
+      entries.push({ url: resolveFileUrl(d.pdfSrc!), zipPath: `assets/${node.id}_pdfSrc.${extFromUrl(d.pdfSrc!, "pdf")}`, originalValue: d.pdfSrc! })
     }
     if (Array.isArray(d.pdfOutputImages)) {
-      d.pdfOutputImages.forEach((url, i) => {
-        if (isRemoteUrl(url)) {
-          entries.push({ url, zipPath: `assets/${node.id}_pdfOutput${i}.${extFromUrl(url, "jpg")}` })
+      d.pdfOutputImages.forEach((val, i) => {
+        if (isStorageAsset(val)) {
+          entries.push({ url: resolveFileUrl(val), zipPath: `assets/${node.id}_pdfOutput${i}.${extFromUrl(val, "jpg")}`, originalValue: val })
         }
       })
     }
@@ -74,8 +88,8 @@ function collectNodeAssets(node: Node): AssetEntry[] {
   if (node.type === "StandardNode") {
     const mediaFiles = d.mediaFiles || []
     mediaFiles.forEach((mf, i) => {
-      if (isRemoteUrl(mf.src)) {
-        entries.push({ url: mf.src!, zipPath: `assets/${node.id}_media${i}.${extFromUrl(mf.src!, "bin")}` })
+      if (isStorageAsset(mf.src)) {
+        entries.push({ url: resolveFileUrl(mf.src!), zipPath: `assets/${node.id}_media${i}.${extFromUrl(mf.src!, "bin")}`, originalValue: mf.src! })
       }
     })
   }
@@ -197,7 +211,7 @@ export function useImportExport(canvasState: CanvasState) {
       const snapshots: Array<{ nodesJson: Node[]; edgesJson: Edge[]; viewportJson: unknown; createdAt: string }> =
         snapshotsData.snapshots ?? []
 
-      // 2. Collect all unique remote-URL assets across nodes + snapshots
+      // 2. Collect all unique assets across nodes + snapshots
       const urlToZipPath = new Map<string, string>()
 
       const allNodeSets = [
@@ -208,8 +222,9 @@ export function useImportExport(canvasState: CanvasState) {
       for (const nodeSet of allNodeSets) {
         for (const node of nodeSet) {
           for (const entry of collectNodeAssets(node)) {
-            if (!urlToZipPath.has(entry.url)) {
-              urlToZipPath.set(entry.url, entry.zipPath)
+            const key = entry.originalValue ?? entry.url
+            if (!urlToZipPath.has(key)) {
+              urlToZipPath.set(key, entry.zipPath)
             }
           }
         }
@@ -218,15 +233,30 @@ export function useImportExport(canvasState: CanvasState) {
       // 3. Fetch assets and build ZIP
       const zip = new JSZip()
 
+      // Build a map from originalValue -> resolved URL for fetching
+      const allEntries: AssetEntry[] = []
+      for (const nodeSet of allNodeSets) {
+        for (const node of nodeSet) {
+          for (const entry of collectNodeAssets(node)) {
+            const key = entry.originalValue ?? entry.url
+            if (!allEntries.some(e => (e.originalValue ?? e.url) === key)) {
+              allEntries.push(entry)
+            }
+          }
+        }
+      }
+
       await Promise.all(
-        Array.from(urlToZipPath.entries()).map(async ([url, zipPath]) => {
+        allEntries.map(async (entry) => {
+          const zipPath = urlToZipPath.get(entry.originalValue ?? entry.url)
+          if (!zipPath) return
           try {
-            const res = await fetch(url)
+            const res = await fetch(entry.url)
             if (!res.ok) return
             const blob = await res.blob()
             zip.file(zipPath, blob)
           } catch {
-            // If an asset can't be fetched, skip it (URL remains in canvas.json as fallback)
+            // If an asset can't be fetched, skip it (originalValue remains in canvas.json as fallback)
           }
         })
       )
@@ -248,12 +278,13 @@ export function useImportExport(canvasState: CanvasState) {
       // 6. Download cover image if available
       const coverUrl: string | undefined = meta.thumbnail
       let coverZipPath: string | null = null
-      if (coverUrl) {
+      const resolvedCoverUrl = coverUrl ? resolveFileUrl(coverUrl) : undefined
+      if (resolvedCoverUrl) {
         try {
-          const coverRes = await fetch(coverUrl)
+          const coverRes = await fetch(resolvedCoverUrl)
           if (coverRes.ok) {
             const coverBlob = await coverRes.blob()
-            const ext = coverUrl.split("?")[0].split(".").pop()?.toLowerCase() || "jpg"
+            const ext = resolvedCoverUrl.split("?")[0].split(".").pop()?.toLowerCase() || "jpg"
             coverZipPath = `cover.${ext}`
             zip.file(coverZipPath, coverBlob)
           }
@@ -406,8 +437,9 @@ export function useImportExport(canvasState: CanvasState) {
               form.append("file", assetFile)
               const res  = await fetch("/api/upload", { method: "POST", body: form })
               if (!res.ok) return
-              const { url } = await res.json()
-              if (url) zipPathToMinioUrl.set(zipPath, url)
+              const { objectKey, url } = await res.json() as { objectKey?: string; url?: string }
+              const stored = objectKey ?? url
+              if (stored) zipPathToMinioUrl.set(zipPath, stored)
             } catch {
               // keep blob URL if upload fails
             }
@@ -446,8 +478,9 @@ export function useImportExport(canvasState: CanvasState) {
                 form.append("file", assetFile)
                 const uploadRes = await fetch("/api/upload", { method: "POST", body: form })
                 if (!uploadRes.ok) return
-                const { url: newUrl } = await uploadRes.json()
-                if (newUrl) legacyUrlToStorage.set(url, newUrl)
+                const { objectKey: newKey, url: newUrl } = await uploadRes.json() as { objectKey?: string; url?: string }
+                const stored = newKey ?? newUrl
+                if (stored) legacyUrlToStorage.set(url, stored)
               } catch {
                 // URL unreachable in this environment (e.g. localhost:9000 on GCP) — skip silently
               }

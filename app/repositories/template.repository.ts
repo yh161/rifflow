@@ -11,6 +11,7 @@ export type TemplateSummary = Prisma.TemplateGetPayload<{
     category: true; tags: true; pricingType: true; priceInPoints: true
     executionsCount: true; favoritesCount: true; rating: true
     isFeatured: true; publishedAt: true; creatorId: true
+    visibility: true; visibilityList: true
     creator: { select: { id: true; name: true; image: true } }
   }
 }>
@@ -22,6 +23,7 @@ export interface TemplateListFilter {
   isFeatured?: boolean
   creatorId?: string
   status?: string
+  visibility?: string   // "public" | "friends" | "selected" | "only_me" | "limited" (=non-public)
   limit?: number
   offset?: number
   orderBy?: "newest" | "popular" | "rating"
@@ -33,12 +35,27 @@ export const templateRepository = {
     const {
       category, pricingType, search, isFeatured,
       creatorId, limit = 20, offset = 0, orderBy = "newest",
+      visibility,
     } = filter
     // 未指定 status 时默认只查已发布，草稿需显式传 "draft"
     const status = filter.status ?? "published"
 
+    // visibility 过滤逻辑
+    let visibilityWhere: Prisma.TemplateWhereInput = {}
+    if (visibility === "limited") {
+      visibilityWhere = { visibility: { not: "public" } }
+    } else if (visibility === "public") {
+      visibilityWhere = { visibility: "public" }
+    } else if (visibility) {
+      visibilityWhere = { visibility }
+    } else if (!creatorId) {
+      // 公开浏览时只返回 public 模板
+      visibilityWhere = { visibility: "public" }
+    }
+
     const where: Prisma.TemplateWhereInput = {
       status,
+      ...visibilityWhere,
       ...(category && { category }),
       ...(pricingType && { pricingType }),
       ...(isFeatured !== undefined && { isFeatured }),
@@ -67,6 +84,7 @@ export const templateRepository = {
         category: true, tags: true, pricingType: true, priceInPoints: true,
         executionsCount: true, favoritesCount: true, rating: true,
         isFeatured: true, publishedAt: true, creatorId: true,
+        visibility: true, visibilityList: true,
         creator: { select: { id: true, name: true, image: true } },
       },
     })
@@ -91,6 +109,7 @@ export const templateRepository = {
         category: true, tags: true, pricingType: true, priceInPoints: true,
         executionsCount: true, favoritesCount: true, rating: true,
         isFeatured: true, publishedAt: true, creatorId: true,
+        visibility: true, visibilityList: true,
         creator: { select: { id: true, name: true, image: true } },
       },
     })

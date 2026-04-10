@@ -567,9 +567,9 @@ export function NodeEditor({
         const form = new FormData()
         form.append('file', file)
         const res  = await fetch('/api/upload', { method: 'POST', body: form })
-        const json = await res.json() as { url?: string; error?: string }
-        if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
-        handleUpdateRef.current({ src: json.url })
+        const json = await res.json() as { url?: string; objectKey?: string; error?: string }
+        if (!res.ok || !json.objectKey) throw new Error(json.error ?? 'Upload failed')
+        handleUpdateRef.current({ src: json.objectKey })
         URL.revokeObjectURL(tempSrc)
       } catch (err) {
         console.error('[handleUploadImage] MinIO upload failed, keeping blob URL:', err)
@@ -607,9 +607,9 @@ export function NodeEditor({
         const form = new FormData()
         form.append('file', file)
         const res  = await fetch('/api/upload', { method: 'POST', body: form })
-        const json = await res.json() as { url?: string; error?: string }
-        if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
-        handleUpdateRef.current({ videoSrc: json.url })
+        const json = await res.json() as { url?: string; objectKey?: string; error?: string }
+        if (!res.ok || !json.objectKey) throw new Error(json.error ?? 'Upload failed')
+        handleUpdateRef.current({ videoSrc: json.objectKey })
         URL.revokeObjectURL(tempSrc)
       } catch (err) {
         console.error('[handleUploadVideo] MinIO upload failed, keeping blob URL:', err)
@@ -635,9 +635,9 @@ export function NodeEditor({
         const form = new FormData()
         form.append('file', file)
         const res  = await fetch('/api/upload', { method: 'POST', body: form })
-        const json = await res.json() as { url?: string; error?: string }
-        if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
-        handleUpdateRef.current({ pdfSrc: json.url })
+        const json = await res.json() as { url?: string; objectKey?: string; error?: string }
+        if (!res.ok || !json.objectKey) throw new Error(json.error ?? 'Upload failed')
+        handleUpdateRef.current({ pdfSrc: json.objectKey })
         URL.revokeObjectURL(tempSrc)
       } catch (err) {
         console.error('[handleUploadPdf] MinIO upload failed, keeping blob URL:', err)

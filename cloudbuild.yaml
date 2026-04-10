@@ -1,0 +1,17 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - '--build-arg'
+      - 'NEXT_PUBLIC_STORAGE_URL=https://storage.googleapis.com/graph-app-storage-681c7dd7'
+      - '-t'
+      - 'asia-northeast1-docker.pkg.dev/project-681c7dd7-ea4e-4ca9-96f/graph-app/rifflow:latest'
+      - '.'
+    timeout: 600s
+
+images:
+  - 'asia-northeast1-docker.pkg.dev/project-681c7dd7-ea4e-4ca9-96f/graph-app/rifflow:latest'
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY

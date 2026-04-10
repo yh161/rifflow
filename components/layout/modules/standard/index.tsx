@@ -1,6 +1,7 @@
 "use client"
 
 import React, { memo, useState, useRef } from 'react'
+import { resolveFileUrl } from '@/lib/file-url'
 import { NodeProps } from 'reactflow'
 import { cn } from '@/lib/utils'
 import {
@@ -316,7 +317,7 @@ export function ModalContent({ data, onUpdate, onConfirm, onClose, onDelete }: M
               {currentMedia ? (
                 <>
                   {currentMedia.type === 'image' ? (
-                    <img src={currentMedia.src} alt={currentMedia.fileName} className="w-full h-full object-cover" />
+                    <img src={resolveFileUrl(currentMedia.src)} alt={currentMedia.fileName} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center bg-slate-900">
                       <Video size={32} className="text-white/30" />

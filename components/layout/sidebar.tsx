@@ -619,8 +619,8 @@ export default function Sidebar({ isOpen, onClose: _onClose, width, onWidthChang
           const form = new FormData()
           form.append("file", img.file)
           const up = await fetch("/api/upload", { method: "POST", body: form })
-          const json = await up.json() as { url?: string }
-          if (up.ok && json.url) urls.push(json.url)
+          const json = await up.json() as { objectKey?: string }
+          if (up.ok && json.objectKey) urls.push(json.objectKey)
         } catch {}
       }
       imageMarkers = urls.map((u) => `[[image:${u}]]`).join("\n")

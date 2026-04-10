@@ -1,6 +1,7 @@
 "use client"
 
 import React, { memo, useRef, useCallback, useState, useEffect, useContext, createContext } from 'react'
+import { resolveFileUrl } from '@/lib/file-url'
 import { NodeProps } from 'reactflow'
 import { Handle, Position, useReactFlow, useUpdateNodeInternals } from 'reactflow'
 import { cn } from '@/lib/utils'
@@ -221,7 +222,7 @@ function InlinePromptPreview({ prompt, truncate }: { prompt: string; truncate?: 
       if (!src || thumbCache.has(src) || loadingThumbsRef.current.has(src)) continue
 
       loadingThumbsRef.current.add(src)
-      getThumbnail(src, 28)
+      getThumbnail(resolveFileUrl(src), 28)
         .then((thumb) => {
           if (!thumb || cancelled) return
           setThumbCache((prev) => {

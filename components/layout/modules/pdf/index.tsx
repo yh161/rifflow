@@ -13,6 +13,7 @@ import { creditLabel } from '@/lib/credits'
 import { clampDpi, formatRulesAsText, resolvePdfOutputPages, resolvePdfOutputPagesWithCurrent, type PdfOutputRule } from '@/lib/pdf-transfer'
 import { buildPdfOutputsFromPages, revokeBlobUrls } from './render'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { resolveFileUrl } from '@/lib/file-url'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -146,7 +147,7 @@ export const NodeUI = ({
           if (pdfDocRef.current) { pdfDocRef.current.destroy(); pdfDocRef.current = null }
           await ensureWorker()
           const pdfjs = await import('pdfjs-dist')
-          pdfDocRef.current = await pdfjs.getDocument(data.pdfSrc).promise
+          pdfDocRef.current = await pdfjs.getDocument(resolveFileUrl(data.pdfSrc)).promise
           pdfDocSrcRef.current = data.pdfSrc!
         }
         const { blob, pw, ph, totalPages } = await renderPageWithDoc(pdfDocRef.current!, page, previewDpi)
@@ -644,7 +645,7 @@ export function ModalContent({
         return
       }
 
-      const { images, pages, summary } = await buildPdfOutputsFromPages(d.pdfSrc, resolved)
+      const { images, pages, summary } = await buildPdfOutputsFromPages(resolveFileUrl(d.pdfSrc), resolved)
       if (runId !== applySeqRef.current) {
         revokeBlobUrls(images)
         return

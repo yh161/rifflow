@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react"
 import { useSession, signOut } from "next-auth/react"
 import {
   LogOut, ChevronRight, ChevronDown,
-  Zap, Star, GitBranch, Code2, Camera, Pencil, Check, X, Copy, User
+  Zap, Star, GitBranch, Code2, Camera, Pencil, Check, X, Copy, User, ArrowLeft
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -185,8 +185,8 @@ function EditableAvatar({ avatarUrl, displayName, onImageChange, isEditing }: Ed
 
       if (!res.ok) throw new Error("Upload failed")
 
-      const data = await res.json()
-      onImageChange(data.url)
+      const data = await res.json() as { objectKey?: string; url?: string }
+      onImageChange(data.objectKey ?? data.url ?? '')
     } catch (err) {
       console.error("Upload error:", err)
       alert("Upload failed, please try again")
@@ -354,7 +354,7 @@ function EditableName({ name, onSave, isEditing, onEditStart, onEditCancel }: Ed
 
 // ── Main component ────────────────────────────────────────────────────
 
-export function AccountPage({ onPricing }: { onPricing: () => void }) {
+export function AccountPage({ onPricing, onBack }: { onPricing: () => void; onBack?: () => void }) {
   const { data: session, update: updateSession } = useSession()
   const [me, setMe] = useState<UserMe | null>(null)
   const [txs, setTxs] = useState<TxItem[]>([])
@@ -441,6 +441,17 @@ export function AccountPage({ onPricing }: { onPricing: () => void }) {
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 space-y-8">
+
+      {/* ── Back button ── */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </button>
+      )}
 
       {/* ── Profile card ── */}
       <div className="flex items-start gap-5">

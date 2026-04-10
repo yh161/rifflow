@@ -10,11 +10,16 @@ export async function GET(req: NextRequest) {
     const { searchParams } = req.nextUrl
     const session = await getServerSession(authOptions)
 
-    const creatorId = searchParams.get("creatorId") ?? undefined
-    const status    = searchParams.get("status")    ?? undefined
+    const creatorId  = searchParams.get("creatorId")  ?? undefined
+    const status     = searchParams.get("status")     ?? undefined
+    const visibility = searchParams.get("visibility") ?? undefined
 
-    // 草稿和已下架内容只能由创作者本人查询
-    if (status === "draft" || status === "unpublished") {
+    // 非公开内容只能由创作者本人查询
+    if (
+      status === "draft" || status === "unpublished" ||
+      visibility === "limited" || visibility === "friends" ||
+      visibility === "selected" || visibility === "only_me"
+    ) {
       if (!session?.user?.id || session.user.id !== creatorId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
       }
@@ -29,6 +34,7 @@ export async function GET(req: NextRequest) {
       offset:      Number(searchParams.get("offset") ?? 0),
       creatorId,
       status,
+      visibility,
     }
 
     const templates = await templateRepository.list(filter)
@@ -65,6 +71,7 @@ export async function POST(req: NextRequest) {
       name, description, thumbnail, category = "general",
       tags = [], parameters = [], pricingType = "free",
       priceInPoints, canvasSnapshot, publish = false,
+      visibility = "public", visibilityList = [],
     } = body
 
     if (!name?.trim()) {
@@ -86,6 +93,8 @@ export async function POST(req: NextRequest) {
       canvasSnapshot,
       status: publish ? "published" : "draft",
       publishedAt: publish ? new Date() : undefined,
+      visibility: publish ? visibility : "public",
+      visibilityList: publish && visibility === "selected" ? visibilityList : [],
       creator: { connect: { id: session.user.id } },
     })
 
